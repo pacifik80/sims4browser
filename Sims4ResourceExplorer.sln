@@ -1,0 +1,85 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{E245641D-229F-46B8-9DBA-18F4AA7DE9C7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Export", "src\Sims4ResourceExplorer.Export\Sims4ResourceExplorer.Export.csproj", "{D2306BEB-5047-444B-A211-4C051342144D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.App", "src\Sims4ResourceExplorer.App\Sims4ResourceExplorer.App.csproj", "{38C017B2-85AB-4CBB-BD65-C36752FE4329}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Core", "src\Sims4ResourceExplorer.Core\Sims4ResourceExplorer.Core.csproj", "{04FEC384-A9CA-478E-86FE-91CC15823D0A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Indexing", "src\Sims4ResourceExplorer.Indexing\Sims4ResourceExplorer.Indexing.csproj", "{262DD10C-E655-4373-876F-5D7DB7FA2C2A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Packages", "src\Sims4ResourceExplorer.Packages\Sims4ResourceExplorer.Packages.csproj", "{806C6D87-9D17-4C1F-9297-D44BA3724776}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Assets", "src\Sims4ResourceExplorer.Assets\Sims4ResourceExplorer.Assets.csproj", "{E144B48C-E6F5-4759-8BB7-F244E9B1CAA7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Preview", "src\Sims4ResourceExplorer.Preview\Sims4ResourceExplorer.Preview.csproj", "{52FFB485-DC14-454C-A440-8E2BF83BBF6C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Audio", "src\Sims4ResourceExplorer.Audio\Sims4ResourceExplorer.Audio.csproj", "{C7ECDE39-44D6-4A5D-BF72-CE24F3A780A2}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{30AB858D-97C2-4224-942A-E69387C01A40}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sims4ResourceExplorer.Tests", "tests\Sims4ResourceExplorer.Tests\Sims4ResourceExplorer.Tests.csproj", "{E63B7177-17C3-45F3-AF7B-CF4BD2D01928}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D2306BEB-5047-444B-A211-4C051342144D}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{D2306BEB-5047-444B-A211-4C051342144D}.Debug|Any CPU.Build.0 = Debug|x64
+		{D2306BEB-5047-444B-A211-4C051342144D}.Release|Any CPU.ActiveCfg = Release|x64
+		{D2306BEB-5047-444B-A211-4C051342144D}.Release|Any CPU.Build.0 = Release|x64
+		{38C017B2-85AB-4CBB-BD65-C36752FE4329}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{38C017B2-85AB-4CBB-BD65-C36752FE4329}.Debug|Any CPU.Build.0 = Debug|x64
+		{38C017B2-85AB-4CBB-BD65-C36752FE4329}.Release|Any CPU.ActiveCfg = Release|x64
+		{38C017B2-85AB-4CBB-BD65-C36752FE4329}.Release|Any CPU.Build.0 = Release|x64
+		{04FEC384-A9CA-478E-86FE-91CC15823D0A}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{04FEC384-A9CA-478E-86FE-91CC15823D0A}.Debug|Any CPU.Build.0 = Debug|x64
+		{04FEC384-A9CA-478E-86FE-91CC15823D0A}.Release|Any CPU.ActiveCfg = Release|x64
+		{04FEC384-A9CA-478E-86FE-91CC15823D0A}.Release|Any CPU.Build.0 = Release|x64
+		{262DD10C-E655-4373-876F-5D7DB7FA2C2A}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{262DD10C-E655-4373-876F-5D7DB7FA2C2A}.Debug|Any CPU.Build.0 = Debug|x64
+		{262DD10C-E655-4373-876F-5D7DB7FA2C2A}.Release|Any CPU.ActiveCfg = Release|x64
+		{262DD10C-E655-4373-876F-5D7DB7FA2C2A}.Release|Any CPU.Build.0 = Release|x64
+		{806C6D87-9D17-4C1F-9297-D44BA3724776}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{806C6D87-9D17-4C1F-9297-D44BA3724776}.Debug|Any CPU.Build.0 = Debug|x64
+		{806C6D87-9D17-4C1F-9297-D44BA3724776}.Release|Any CPU.ActiveCfg = Release|x64
+		{806C6D87-9D17-4C1F-9297-D44BA3724776}.Release|Any CPU.Build.0 = Release|x64
+		{E144B48C-E6F5-4759-8BB7-F244E9B1CAA7}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{E144B48C-E6F5-4759-8BB7-F244E9B1CAA7}.Debug|Any CPU.Build.0 = Debug|x64
+		{E144B48C-E6F5-4759-8BB7-F244E9B1CAA7}.Release|Any CPU.ActiveCfg = Release|x64
+		{E144B48C-E6F5-4759-8BB7-F244E9B1CAA7}.Release|Any CPU.Build.0 = Release|x64
+		{52FFB485-DC14-454C-A440-8E2BF83BBF6C}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{52FFB485-DC14-454C-A440-8E2BF83BBF6C}.Debug|Any CPU.Build.0 = Debug|x64
+		{52FFB485-DC14-454C-A440-8E2BF83BBF6C}.Release|Any CPU.ActiveCfg = Release|x64
+		{52FFB485-DC14-454C-A440-8E2BF83BBF6C}.Release|Any CPU.Build.0 = Release|x64
+		{C7ECDE39-44D6-4A5D-BF72-CE24F3A780A2}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{C7ECDE39-44D6-4A5D-BF72-CE24F3A780A2}.Debug|Any CPU.Build.0 = Debug|x64
+		{C7ECDE39-44D6-4A5D-BF72-CE24F3A780A2}.Release|Any CPU.ActiveCfg = Release|x64
+		{C7ECDE39-44D6-4A5D-BF72-CE24F3A780A2}.Release|Any CPU.Build.0 = Release|x64
+		{E63B7177-17C3-45F3-AF7B-CF4BD2D01928}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{E63B7177-17C3-45F3-AF7B-CF4BD2D01928}.Debug|Any CPU.Build.0 = Debug|x64
+		{E63B7177-17C3-45F3-AF7B-CF4BD2D01928}.Release|Any CPU.ActiveCfg = Release|x64
+		{E63B7177-17C3-45F3-AF7B-CF4BD2D01928}.Release|Any CPU.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D2306BEB-5047-444B-A211-4C051342144D} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{38C017B2-85AB-4CBB-BD65-C36752FE4329} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{04FEC384-A9CA-478E-86FE-91CC15823D0A} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{262DD10C-E655-4373-876F-5D7DB7FA2C2A} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{806C6D87-9D17-4C1F-9297-D44BA3724776} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{E144B48C-E6F5-4759-8BB7-F244E9B1CAA7} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{52FFB485-DC14-454C-A440-8E2BF83BBF6C} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{C7ECDE39-44D6-4A5D-BF72-CE24F3A780A2} = {E245641D-229F-46B8-9DBA-18F4AA7DE9C7}
+		{E63B7177-17C3-45F3-AF7B-CF4BD2D01928} = {30AB858D-97C2-4224-942A-E69387C01A40}
+	EndGlobalSection
+EndGlobal

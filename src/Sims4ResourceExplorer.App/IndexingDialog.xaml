@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Sims4ResourceExplorer.App.IndexingDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="Indexing Progress"
+    mc:Ignorable="d">
+    <Grid Padding="20" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Spacing="10">
+            <TextBlock Text="Indexing Progress" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding OverallSummary}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <ProgressBar Maximum="{Binding PackagesProgressMaximum}" Value="{Binding PackagesProgressValue}" />
+            <Grid ColumnSpacing="16" RowSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding WorkerCountText}" />
+                    <TextBlock Text="{Binding BacklogText}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock Text="{Binding PackagesText}" />
+                    <TextBlock Text="{Binding ResourcesText}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="4">
+                    <TextBlock Text="{Binding ElapsedEtaText}" />
+                    <TextBlock Text="{Binding ThroughputText}" />
+                </StackPanel>
+                <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Text="{Binding SummaryText}" TextWrapping="WrapWholeWords" />
+            </Grid>
+        </StackPanel>
+
+        <Grid Grid.Row="1" RowSpacing="10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock Text="Workers" FontSize="16" FontWeight="SemiBold" />
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Enabled" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+                <ItemsRepeater ItemsSource="{Binding Workers}">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout MinItemWidth="320" MinColumnSpacing="12" MinRowSpacing="12" ItemsStretch="Fill" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                                <StackPanel Spacing="4">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding WorkerLabel}" FontWeight="SemiBold" />
+                                        <TextBlock Grid.Column="1" Text="{Binding StatusBadgeText}" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding PackageNameText}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding StageText}" MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding ProcessedText}" />
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding WrittenText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ThroughputText}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding ElapsedText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{Binding EtaText}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </ScrollViewer>
+        </Grid>
+
+        <Grid Grid.Row="2" ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button Content="Cancel" IsEnabled="{Binding CanCancel}" Click="OnCancelClick" />
+            <Button Grid.Column="1" Content="Close" IsEnabled="{Binding CanClose}" Click="OnCloseClick" />
+        </Grid>
+    </Grid>
+</Window>

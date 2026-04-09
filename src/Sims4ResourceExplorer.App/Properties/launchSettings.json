@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Sims4ResourceExplorer.App (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Sims4ResourceExplorer.App (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Sims4ResourceExplorer.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="Sims4 Resource Explorer"
+    mc:Ignorable="d">
+    <Grid Padding="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Click="AddGameSource_Click" Content="Add Game Folder" IsEnabled="{Binding IsNotBusy}" />
+            <Button Click="AddDlcSource_Click" Content="Add DLC Folder" IsEnabled="{Binding IsNotBusy}" />
+            <Button Click="AddModsSource_Click" Content="Add Mods Folder" IsEnabled="{Binding IsNotBusy}" />
+            <ComboBox Width="140" Header="Workers" ItemsSource="{Binding AvailableWorkerCounts}" SelectedItem="{Binding SelectedWorkerCount, Mode=TwoWay}" />
+            <Button Click="Index_Click" Content="Index" IsEnabled="{Binding IsNotBusy}" />
+            <Button Click="Refresh_Click" Content="Refresh" IsEnabled="{Binding IsNotBusy}" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,12,0,12" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="420" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Spacing="8">
+                <TextBlock Text="Sources" FontSize="20" FontWeight="SemiBold" />
+                <ListView Height="260" ItemsSource="{Binding DataSources}">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding RootPath}" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <TextBox Header="Search" Text="{Binding SearchText, Mode=TwoWay}" />
+                <CheckBox Content="Build/Buy only" IsChecked="{Binding BuildBuyOnly, Mode=TwoWay}" />
+                <CheckBox Content="CAS only" IsChecked="{Binding CasOnly, Mode=TwoWay}" />
+                <CheckBox Content="Audio only" IsChecked="{Binding AudioOnly, Mode=TwoWay}" />
+                <CheckBox Content="Previewable only" IsChecked="{Binding PreviewableOnly, Mode=TwoWay}" />
+                <CheckBox Content="Export-capable only" IsChecked="{Binding ExportCapableOnly, Mode=TwoWay}" />
+            </StackPanel>
+
+            <TabView x:Name="BrowserTabs" Grid.Column="1" SelectionChanged="BrowserTabs_SelectionChanged">
+                <TabViewItem Header="Raw Resources">
+                    <ListView x:Name="ResourcesListView" ItemsSource="{Binding Resources}" SelectionChanged="ResourcesListView_SelectionChanged">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Width="160" Text="{Binding Key.TypeName}" />
+                                    <TextBlock Width="220" Text="{Binding Key.FullTgi}" FontFamily="Consolas" />
+                                    <TextBlock Width="90" Text="{Binding PreviewKind}" />
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </TabViewItem>
+                <TabViewItem Header="Logical Assets">
+                    <ListView x:Name="AssetsListView" ItemsSource="{Binding Assets}" SelectionChanged="AssetsListView_SelectionChanged">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Width="100" Text="{Binding AssetKind}" />
+                                    <TextBlock Width="120" Text="{Binding Category}" />
+                                    <TextBlock Width="60" Text="{Binding LinkedResourceCount}" />
+                                    <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </TabViewItem>
+            </TabView>
+
+            <Grid Grid.Column="2" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="220" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Image Stretch="Uniform" Source="{Binding PreviewImageSource}" />
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                    <Button Click="ExportRaw_Click" Content="Raw Export" />
+                    <Button Click="PlayAudio_Click" Content="Play" />
+                    <Button Click="StopAudio_Click" Content="Stop" />
+                </StackPanel>
+                <TextBox Grid.Row="2" Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
+                <TextBox Grid.Row="3" Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
+            </Grid>
+        </Grid>
+
+        <Border Grid.Row="2" Padding="10,6,10,0">
+            <TextBlock Text="{Binding StatusMessage}" TextWrapping="WrapWholeWords" />
+        </Border>
+    </Grid>
+</Window>
