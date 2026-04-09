@@ -316,7 +316,9 @@ public sealed record SceneExportRequest(
 
 public sealed record BuildBuyAssetGraph(
     ResourceMetadata ModelResource,
+    IReadOnlyList<ResourceMetadata> IdentityResources,
     IReadOnlyList<ResourceMetadata> ModelLodResources,
+    IReadOnlyList<ResourceMetadata> MaterialResources,
     IReadOnlyList<ResourceMetadata> TextureResources,
     IReadOnlyList<ResourceKeyRecord> MissingTextureKeys,
     IReadOnlyList<MaterialManifestEntry> Materials,

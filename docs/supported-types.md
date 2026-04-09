@@ -15,11 +15,12 @@ The browser always supports metadata inspection and raw export for every discove
 | Images | LRLE Image | Yes | Yes, when decoded | PNG + Raw |
 | Images | RLE 2 Image | Yes | Yes, when decoded | PNG + Raw |
 | Images | RLES Image | Yes | Yes, when decoded | PNG + Raw |
-| 3D | Geometry | Yes | Diagnostics only in current build | Canonical-scene FBX pipeline exists, Sims reconstruction not yet implemented |
-| 3D | Model | Yes | Diagnostics only in current build | Canonical-scene FBX pipeline exists, Sims reconstruction not yet implemented |
-| 3D | Model LOD | Yes | Diagnostics only in current build | Canonical-scene FBX pipeline exists, Sims reconstruction not yet implemented |
+| 3D | Geometry | Yes | Diagnostics only in current build | Raw only for now |
+| 3D | Model | Yes | Yes, for the supported static Build/Buy subset | FBX + textures when selected through a supported Build/Buy logical asset |
+| 3D | Model LOD | Yes | Yes, for the supported static Build/Buy subset | FBX + textures when selected through a supported Build/Buy logical asset |
 | 3D | Rig | Yes | Diagnostics only in current build | Canonical-scene FBX pipeline exists, Sims reconstruction not yet implemented |
-| Build/Buy | Object catalog/object definitions with linked model data | Yes | Heuristic asset summary only | Root/raw export; full asset bundle deferred |
+| Build/Buy | Static furniture/decor objects with model-rooted triangle-list `ModelLOD` geometry, no skinning, and package-local material/texture candidates | Yes | Yes | FBX + textures + manifest bundle |
+| Build/Buy | Other Build/Buy objects | Yes | Diagnostics + metadata only | Raw/root export only |
 | CAS | CAS part with linked geometry/rig/textures | Yes | Heuristic asset summary only | Root/raw export; full asset bundle deferred |
 | Audio | RIFF/WAV payloads | Yes | Yes | WAV + Raw |
 | Audio | Unsupported/unknown audio | Yes | Unsupported reason only | Raw |
@@ -29,8 +30,8 @@ The browser always supports metadata inspection and raw export for every discove
 ## Deferred
 
 - full in-game Sim assembly
-- real Sims 4 scene reconstruction from Geometry/Model/ModelLOD/Rig resources
-- asset-bundle FBX export from actual Sims 4 assets
+- generalized Sims 4 scene reconstruction across Geometry/Model/ModelLOD/Rig resources
+- Build/Buy support beyond the current static model-rooted furniture/decor subset
 - animation export
 - exact material/shader parity
 - guaranteed morph export

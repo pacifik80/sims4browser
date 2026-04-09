@@ -93,7 +93,9 @@ public sealed class ExplorerTests : IDisposable
         Assert.NotNull(graph.BuildBuyGraph);
         Assert.True(graph.BuildBuyGraph!.IsSupported);
         Assert.Equal(model.Key.FullTgi, graph.BuildBuyGraph.ModelResource.Key.FullTgi);
+        Assert.Equal(2, graph.BuildBuyGraph.IdentityResources.Count);
         Assert.Single(graph.BuildBuyGraph.ModelLodResources);
+        Assert.Single(graph.BuildBuyGraph.MaterialResources);
         Assert.Single(graph.BuildBuyGraph.TextureResources);
         Assert.NotEmpty(graph.BuildBuyGraph.Materials);
     }
@@ -243,6 +245,73 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildBuyLogicalAsset_ExportsBundleFromLocalFixture_WhenConfigured()
+    {
+        var fixturePackage = Environment.GetEnvironmentVariable("SIMS4_BUILD_BUY_FIXTURE_PACKAGE");
+        var fixtureTgi = Environment.GetEnvironmentVariable("SIMS4_BUILD_BUY_FIXTURE_TGI");
+        if (string.IsNullOrWhiteSpace(fixturePackage) || string.IsNullOrWhiteSpace(fixtureTgi) || !File.Exists(fixturePackage))
+        {
+            return;
+        }
+
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", Path.GetDirectoryName(fixturePackage)!, SourceKind.Game);
+        var catalog = new LlamaResourceCatalogService();
+        var scan = await catalog.ScanPackageAsync(source, fixturePackage, progress: null, CancellationToken.None);
+        var graphBuilder = new ExplicitBuildBuyAssetGraphBuilder();
+        var assets = graphBuilder.BuildAssetSummaries(scan);
+        await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
+
+        var fixtureResource = scan.Resources.FirstOrDefault(resource => string.Equals(resource.Key.FullTgi, fixtureTgi, StringComparison.OrdinalIgnoreCase));
+        if (fixtureResource is null)
+        {
+            return;
+        }
+
+        var asset = assets.FirstOrDefault(asset => asset.RootKey.FullInstance == fixtureResource.Key.FullInstance);
+        if (asset is null)
+        {
+            return;
+        }
+
+        var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+        var assetGraph = graphBuilder.BuildAssetGraph(asset, packageResources);
+        Assert.NotNull(assetGraph.BuildBuyGraph);
+        Assert.True(assetGraph.BuildBuyGraph!.IsSupported, string.Join(Environment.NewLine, assetGraph.Diagnostics));
+
+        var sceneBuilder = new BuildBuySceneBuildService(catalog, store);
+        var scene = await sceneBuilder.BuildSceneAsync(assetGraph.BuildBuyGraph.ModelResource, CancellationToken.None);
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+
+        var outputRoot = Path.Combine(tempRoot, "fixture-export");
+        var exportService = new AssimpFbxExportService();
+        var assetSlug = "fixture_buildbuy";
+        var export = await exportService.ExportAsync(
+            new SceneExportRequest(
+                assetSlug,
+                scene.Scene!,
+                outputRoot,
+                BuildSourceResources(assetGraph, assetGraph.BuildBuyGraph.ModelResource),
+                scene.Scene!.Materials.SelectMany(static material => material.Textures).ToArray(),
+                scene.Diagnostics,
+                assetGraph.BuildBuyGraph.Materials),
+            CancellationToken.None);
+
+        Assert.True(export.Success);
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, $"{assetSlug}.fbx")));
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, "manifest.json")));
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, "material_manifest.json")));
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, "metadata.json")));
+        var texturesPath = Path.Combine(outputRoot, assetSlug, "Textures");
+        Assert.True(Directory.Exists(texturesPath));
+        Assert.NotEmpty(Directory.EnumerateFiles(texturesPath, "*.png"));
+    }
+
+    [Fact]
     public async Task AudioDecodeService_RecognizesWavePayload()
     {
         var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "AudioConfiguration", 1);
@@ -300,6 +369,23 @@ public sealed class ExplorerTests : IDisposable
             true,
             string.Empty,
             string.Empty);
+    }
+
+    private static IReadOnlyList<ResourceMetadata> BuildSourceResources(AssetGraph graph, ResourceMetadata sceneRoot)
+    {
+        var resources = new List<ResourceMetadata> { sceneRoot };
+        if (graph.BuildBuyGraph is not null)
+        {
+            resources.AddRange(graph.BuildBuyGraph.IdentityResources);
+            resources.AddRange(graph.BuildBuyGraph.ModelLodResources);
+            resources.AddRange(graph.BuildBuyGraph.MaterialResources);
+            resources.AddRange(graph.BuildBuyGraph.TextureResources);
+        }
+
+        return resources
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
     }
 
     private sealed class TestCacheService : ICacheService

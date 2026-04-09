@@ -105,70 +105,83 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
 
         foreach (var mesh in mlod.Meshes)
         {
+            if (mesh.IsSkinned)
+            {
+                diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: skinned/static-blend meshes are outside the supported static Build/Buy subset.");
+                continue;
+            }
+
             if (mesh.PrimitiveType != Ts4PrimitiveType.TriangleList)
             {
                 diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: primitive type {mesh.PrimitiveType} is not supported in this pass.");
                 continue;
             }
 
-            var vertexBufferChunk = rcol.ResolveChunk(mesh.VertexBufferReference);
-            var indexBufferChunk = rcol.ResolveChunk(mesh.IndexBufferReference);
-            if (vertexBufferChunk is null || indexBufferChunk is null)
+            try
             {
-                diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: vertex/index buffers could not be resolved.");
-                continue;
-            }
+                var vertexBufferChunk = rcol.ResolveChunk(mesh.VertexBufferReference);
+                var indexBufferChunk = rcol.ResolveChunk(mesh.IndexBufferReference);
+                if (vertexBufferChunk is null || indexBufferChunk is null)
+                {
+                    diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: vertex/index buffers could not be resolved.");
+                    continue;
+                }
 
-            Ts4VrtfChunk vrtf;
-            var vrtfChunk = rcol.ResolveChunk(mesh.VertexFormatReference);
-            if (vrtfChunk is not null)
+                Ts4VrtfChunk vrtf;
+                var vrtfChunk = rcol.ResolveChunk(mesh.VertexFormatReference);
+                if (vrtfChunk is not null)
+                {
+                    vrtf = Ts4VrtfChunk.Parse(vrtfChunk.Data.Span);
+                }
+                else if (mesh.IsShadowCaster)
+                {
+                    vrtf = Ts4VrtfChunk.CreateShadowDefault();
+                    diagnostics.Add($"Mesh 0x{mesh.Name:X8} uses the default shadow vertex format because no VRTF chunk was linked.");
+                }
+                else
+                {
+                    diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: vertex format could not be resolved.");
+                    continue;
+                }
+
+                var vbuf = Ts4VbufChunk.Parse(vertexBufferChunk.Data.Span);
+                var ibuf = Ts4IbufChunk.Parse(indexBufferChunk.Data.Span);
+                var materialInfo = await ResolveMaterialAsync(rcol.ResolveChunk(mesh.MaterialReference), rcol, modelLodResource, textureCache, cancellationToken);
+                diagnostics.AddRange(materialInfo.Diagnostics);
+
+                var materialKey = mesh.MaterialReference.Raw;
+                if (!materialCache.TryGetValue(materialKey, out var materialIndex))
+                {
+                    materialIndex = materials.Count;
+                    materialCache[materialKey] = materialIndex;
+                    materials.Add(new CanonicalMaterial(
+                        materialInfo.Name,
+                        materialInfo.Textures,
+                        materialInfo.ShaderName,
+                        materialInfo.IsTransparent,
+                        materialInfo.AlphaMode,
+                        materialInfo.Approximation));
+                }
+
+                var vertices = vbuf.ReadVertices(vrtf, mesh.StreamOffset, mesh.VertexCount, materialInfo.UvScales);
+                var indices = ibuf.ReadIndices(mesh.StartIndex, mesh.PrimitiveCount * 3)
+                    .Select(static value => (int)value)
+                    .ToArray();
+
+                meshes.Add(new CanonicalMesh(
+                    $"Mesh_{mesh.Name:X8}",
+                    vertices.SelectMany(static vertex => vertex.Position).ToArray(),
+                    vertices.SelectMany(static vertex => vertex.Normal ?? []).ToArray(),
+                    vertices.SelectMany(static vertex => vertex.Tangent ?? []).ToArray(),
+                    vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray(),
+                    indices,
+                    materialIndex,
+                    []));
+            }
+            catch (Exception ex) when (ex is NotSupportedException or InvalidDataException)
             {
-                vrtf = Ts4VrtfChunk.Parse(vrtfChunk.Data.Span);
+                diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: {ex.Message}");
             }
-            else if (mesh.IsShadowCaster)
-            {
-                vrtf = Ts4VrtfChunk.CreateShadowDefault();
-                diagnostics.Add($"Mesh 0x{mesh.Name:X8} uses the default shadow vertex format because no VRTF chunk was linked.");
-            }
-            else
-            {
-                diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: vertex format could not be resolved.");
-                continue;
-            }
-
-            var vbuf = Ts4VbufChunk.Parse(vertexBufferChunk.Data.Span);
-            var ibuf = Ts4IbufChunk.Parse(indexBufferChunk.Data.Span);
-            var materialInfo = await ResolveMaterialAsync(rcol.ResolveChunk(mesh.MaterialReference), rcol, modelLodResource, textureCache, cancellationToken);
-            diagnostics.AddRange(materialInfo.Diagnostics);
-
-            var materialKey = mesh.MaterialReference.Raw;
-            if (!materialCache.TryGetValue(materialKey, out var materialIndex))
-            {
-                materialIndex = materials.Count;
-                materialCache[materialKey] = materialIndex;
-                materials.Add(new CanonicalMaterial(
-                    materialInfo.Name,
-                    materialInfo.Textures,
-                    materialInfo.ShaderName,
-                    materialInfo.IsTransparent,
-                    materialInfo.AlphaMode,
-                    materialInfo.Approximation));
-            }
-
-            var vertices = vbuf.ReadVertices(vrtf, mesh.StreamOffset, mesh.VertexCount, materialInfo.UvScales);
-            var indices = ibuf.ReadIndices(mesh.StartIndex, mesh.PrimitiveCount * 3)
-                .Select(static value => (int)value)
-                .ToArray();
-
-            meshes.Add(new CanonicalMesh(
-                $"Mesh_{mesh.Name:X8}",
-                vertices.SelectMany(static vertex => vertex.Position).ToArray(),
-                vertices.SelectMany(static vertex => vertex.Normal ?? []).ToArray(),
-                vertices.SelectMany(static vertex => vertex.Tangent ?? []).ToArray(),
-                vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray(),
-                indices,
-                materialIndex,
-                []));
         }
 
         if (meshes.Count == 0)
@@ -334,17 +347,18 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
         return results;
     }
 
-    private async Task<Ts4ModelLodResolution> TryResolveModelLodAsync(
+    private Task<Ts4ModelLodResolution> TryResolveModelLodAsync(
         ResourceMetadata modelResource,
         Ts4RcolResource root,
         Ts4ChunkReference reference,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var diagnostics = new List<string>();
         if (reference.IsNull)
         {
             diagnostics.Add("Encountered a null ModelLOD reference in MODL.");
-            return new Ts4ModelLodResolution(null, diagnostics);
+            return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
         }
 
         if (reference.ReferenceType is Ts4ReferenceType.Public or Ts4ReferenceType.Private)
@@ -353,17 +367,17 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
             if (embeddedChunk is null || embeddedChunk.Tag != "MLOD")
             {
                 diagnostics.Add($"Embedded ModelLOD reference {reference.Raw:X8} could not be resolved to an MLOD chunk.");
-                return new Ts4ModelLodResolution(null, diagnostics);
+                return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
             }
 
-            return new Ts4ModelLodResolution(
+            return Task.FromResult(new Ts4ModelLodResolution(
                 modelResource with
                 {
                     Key = new ResourceKeyRecord(embeddedChunk.Key.Type, embeddedChunk.Key.Group, embeddedChunk.Key.Instance, "ModelLOD"),
                     PreviewKind = PreviewKind.Scene,
                     Name = modelResource.Name
                 },
-                diagnostics);
+                diagnostics));
         }
 
         if (reference.ReferenceType == Ts4ReferenceType.Delayed)
@@ -372,10 +386,10 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
             if (delayedKey is null)
             {
                 diagnostics.Add($"Delayed ModelLOD reference {reference.Raw:X8} could not be mapped to an external resource key.");
-                return new Ts4ModelLodResolution(null, diagnostics);
+                return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
             }
 
-            return new Ts4ModelLodResolution(
+            return Task.FromResult(new Ts4ModelLodResolution(
                 new ResourceMetadata(
                     Guid.NewGuid(),
                     modelResource.DataSourceId,
@@ -391,11 +405,11 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
                     true,
                     "Referenced by Model MODL LOD entry.",
                     string.Empty),
-                diagnostics);
+                diagnostics));
         }
 
         diagnostics.Add($"Unsupported MODL reference type {reference.ReferenceType}.");
-        return new Ts4ModelLodResolution(null, diagnostics);
+        return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
     }
 
     private static string BuildTextureFileName(string slot, Ts4ResourceKey key) =>
@@ -1085,7 +1099,8 @@ internal sealed class Ts4MlodChunk
                 streamOffset,
                 startIndex,
                 vertexCount,
-                primitiveCount));
+                primitiveCount,
+                jointCount));
         }
 
         return new Ts4MlodChunk { Meshes = meshes };
@@ -1104,9 +1119,11 @@ internal readonly record struct Ts4MlodMesh(
     uint StreamOffset,
     int StartIndex,
     int VertexCount,
-    int PrimitiveCount)
+    int PrimitiveCount,
+    int JointCount)
 {
     public bool IsShadowCaster => (Flags & 0x10) != 0;
+    public bool IsSkinned => !SkinReference.IsNull || JointCount > 0;
 }
 
 internal enum Ts4PrimitiveType : uint

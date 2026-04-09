@@ -103,6 +103,12 @@ Unit and integration tests using a small documented fixture corpus.
 2. Asset graph builder resolves linked TGIs lazily for the selected asset.
 3. Preview and export services consume the resolved graph and canonical scene/material models.
 
+Current Build/Buy vertical slice:
+
+- one supported subset is implemented end-to-end: static model-rooted Build/Buy furniture/decor objects
+- the scene path resolves object identity, chosen `ModelLOD`, material candidates, and texture candidates closely enough for viewport preview and FBX+PNG bundle export
+- unsupported Build/Buy assets stay explicit and diagnostic rather than silently degrading to fake scene success
+
 ## Browsing query architecture
 
 - `AssetBrowserQuery` and `RawResourceBrowserQuery` are separate contracts.

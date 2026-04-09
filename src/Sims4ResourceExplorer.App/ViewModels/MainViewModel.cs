@@ -798,11 +798,14 @@ public sealed partial class MainViewModel : ObservableObject
             Category: {asset.Category ?? "(unknown)"}
             Package: {asset.PackagePath}
             Root TGI: {asset.RootKey.FullTgi}
+            Identity Resources: {buildBuyGraph?.IdentityResources.Count ?? 0}
             Linked Resources: {asset.LinkedResourceCount}
             Thumbnail: {asset.ThumbnailTgi ?? "(none)"}
             Supported Subset: {buildBuyGraph?.SupportedSubset ?? "(not supported)"}
             Scene Root: {sceneRoot?.Key.FullTgi ?? "(unresolved)"}
+            Selected LOD: {ExtractDiagnosticValue(scenePreview?.Diagnostics, "Selected LOD root:") ?? "(not resolved)"}
             Model LOD Candidates: {buildBuyGraph?.ModelLodResources.Count ?? 0}
+            Material Candidates: {buildBuyGraph?.MaterialResources.Count ?? 0}
             Texture Candidates: {buildBuyGraph?.TextureResources.Count ?? 0}
             Mesh Count: {scene?.Meshes.Count ?? 0}
             Vertex Count: {(scene?.Meshes.Sum(static mesh => mesh.Positions.Count / 3) ?? 0):N0}
@@ -813,6 +816,24 @@ public sealed partial class MainViewModel : ObservableObject
             Diagnostics:
             {string.Join(Environment.NewLine, graph.Diagnostics.Concat(scenePreview is null ? [] : scenePreview.Diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries)).DefaultIfEmpty(asset.Diagnostics))}
             """;
+    }
+
+    private static string? ExtractDiagnosticValue(string? diagnostics, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(diagnostics))
+        {
+            return null;
+        }
+
+        foreach (var line in diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return line[prefix.Length..].Trim();
+            }
+        }
+
+        return null;
     }
 
     partial void OnSelectedWorkerCountChanged(int value)
@@ -1090,7 +1111,9 @@ public sealed partial class MainViewModel : ObservableObject
         var resources = new List<ResourceMetadata> { sceneRoot };
         if (graph.BuildBuyGraph is not null)
         {
+            resources.AddRange(graph.BuildBuyGraph.IdentityResources);
             resources.AddRange(graph.BuildBuyGraph.ModelLodResources);
+            resources.AddRange(graph.BuildBuyGraph.MaterialResources);
             resources.AddRange(graph.BuildBuyGraph.TextureResources);
         }
 

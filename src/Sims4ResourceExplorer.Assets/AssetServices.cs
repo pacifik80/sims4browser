@@ -86,7 +86,8 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
         }
         else
         {
-            var hasObjectIdentity = linked.Any(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition");
+            var identityResources = linked.Where(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition").ToArray();
+            var hasObjectIdentity = identityResources.Length > 0;
             var modelLods = linked.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
             var textures = linked.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
             var materialResources = linked.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
@@ -128,13 +129,15 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
                 diagnostics,
                 new BuildBuyAssetGraph(
                     root,
+                    identityResources,
                     modelLods,
+                    materialResources,
                     textures,
                     [],
                     materialManifest,
                     diagnostics,
                     true,
-                    "Model-rooted static Build/Buy objects with Model/ModelLOD geometry and decodable same-package texture candidates"));
+                    "Static Build/Buy furniture/decor objects with a model root, triangle-list MLOD geometry, no skinning/animation path, and package-local texture candidates."));
         }
 
         return new AssetGraph(summary, linked, diagnostics);

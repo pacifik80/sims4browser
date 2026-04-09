@@ -52,13 +52,13 @@ This repository is being built in vertical slices. The current implementation in
 - heuristic logical asset summaries for Build/Buy and CAS roots
 - text, hex, and image preview pipelines with graceful fallback
 - raw export for every indexed resource
-- a canonical scene export pipeline plus FBX bundle writer for synthetic/test scenes
+- a first real Build/Buy vertical slice for static model-rooted furniture/decor objects with scene preview and FBX+textures export
 - a first in-app audio path for RIFF/WAV payloads
 
 Current 3D note:
 
-- the UI and export architecture for scene reconstruction are in place
-- actual Sims 4 geometry/model/rig reconstruction is not implemented yet, so 3D preview currently degrades to diagnostics rather than a reconstructed viewport scene
+- the current supported subset is narrow and honest: static Build/Buy objects with a `Model` root, triangle-list `ModelLOD` geometry, no skinning/animation path, and package-local material/texture candidates
+- unsupported Build/Buy objects remain metadata/raw-export-first and report explicit diagnostics instead of faking scene success
 
 ## Browsing model
 
