@@ -127,6 +127,38 @@ public sealed class IndexingPipelineTests
     }
 
     [Fact]
+    public async Task PackageIndexCoordinator_ReportsPreparationStagesBeforeDiscoveryWork()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var scanner = new FakePackageScanner(source, []);
+            var store = new FakeIndexStore();
+            var catalog = new TrackingResourceCatalogService(TimeSpan.Zero, 0);
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new FakeAssetGraphBuilder(),
+                store,
+                new IndexingRunOptions(1, 1, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(60)));
+
+            var progressEvents = new List<IndexingProgress>();
+            await coordinator.RunAsync([source], new Progress<IndexingProgress>(progressEvents.Add), CancellationToken.None);
+
+            Assert.NotEmpty(progressEvents);
+            Assert.Equal("preparing", progressEvents[0].Stage);
+            Assert.Contains(progressEvents, progress => progress.Message.Contains("cached package fingerprints", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => progress.Message.Contains("SQLite write session", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
     public async Task PackageIndexCoordinator_CancelsResponsively()
     {
         var root = CreatePackageRoot();

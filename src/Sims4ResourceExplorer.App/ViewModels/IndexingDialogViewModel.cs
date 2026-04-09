@@ -84,8 +84,6 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         SummaryText = BuildSummary(progress);
 
         ApplyWorkerSlots(progress.WorkerSlots);
-        ApplyRecentEvents(progress.RecentEvents);
-
         if (progress.Summary is not null || string.Equals(progress.Stage, "canceled", StringComparison.OrdinalIgnoreCase))
         {
             CanCancel = false;
@@ -111,15 +109,6 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         }
     }
 
-    private void ApplyRecentEvents(IReadOnlyList<IndexingActivityEvent>? events)
-    {
-        RecentEvents.Clear();
-        foreach (var activityEvent in (events ?? []).Reverse())
-        {
-            RecentEvents.Add(new IndexActivityItemViewModel(activityEvent));
-        }
-    }
-
     private static string BuildSummary(IndexingProgress progress)
     {
         if (progress.Summary is not null)
@@ -137,7 +126,7 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
 
     private static TimeSpan EstimateRemainingEta(IndexingProgress progress)
     {
-        if (progress.Summary is not null || progress.OverallThroughput <= 0)
+        if (progress.Summary is not null)
         {
             return TimeSpan.Zero;
         }
@@ -145,22 +134,37 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         var activeRemainingResources = (progress.WorkerSlots ?? [])
             .Where(static slot => slot.Status == WorkerSlotStatus.Active)
             .Sum(static slot => Math.Max(0, slot.ResourcesDiscovered - slot.ResourcesProcessed));
-        var completedPackages = Math.Max(0, progress.PackagesCompleted);
-        var pendingPackages = Math.Max(0, progress.PendingPackageCount);
-
-        if (completedPackages <= 0)
+        if (progress.OverallThroughput > 0)
         {
-            return activeRemainingResources > 0
-                ? TimeSpan.FromSeconds(activeRemainingResources / progress.OverallThroughput)
-                : TimeSpan.Zero;
+            var completedPackages = Math.Max(0, progress.PackagesCompleted);
+            var pendingPackages = Math.Max(0, progress.PendingPackageCount);
+
+            if (completedPackages <= 0)
+            {
+                return activeRemainingResources > 0
+                    ? TimeSpan.FromSeconds(activeRemainingResources / progress.OverallThroughput)
+                    : TimeSpan.Zero;
+            }
+
+            var avgResourcesPerCompletedPackage = Math.Max(1d, (double)progress.CompletedResourcesProcessed / completedPackages);
+            var estimatedPendingResources = pendingPackages * avgResourcesPerCompletedPackage;
+            var estimatedRemainingResources = activeRemainingResources + estimatedPendingResources;
+            if (estimatedRemainingResources > 0)
+            {
+                return TimeSpan.FromSeconds(estimatedRemainingResources / progress.OverallThroughput);
+            }
         }
 
-        var avgResourcesPerCompletedPackage = Math.Max(1d, (double)progress.CompletedResourcesProcessed / completedPackages);
-        var estimatedPendingResources = pendingPackages * avgResourcesPerCompletedPackage;
-        var estimatedRemainingResources = activeRemainingResources + estimatedPendingResources;
-        return estimatedRemainingResources <= 0
+        var remainingPackages = Math.Max(0, progress.PackagesTotal - progress.PackagesProcessed);
+        if (remainingPackages <= 0 || progress.PackagesProcessed <= 0 || progress.Elapsed.TotalSeconds <= 0)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var packageRate = progress.PackagesProcessed / progress.Elapsed.TotalSeconds;
+        return packageRate <= 0
             ? TimeSpan.Zero
-            : TimeSpan.FromSeconds(estimatedRemainingResources / progress.OverallThroughput);
+            : TimeSpan.FromSeconds(remainingPackages / packageRate);
     }
 }
 
@@ -240,13 +244,21 @@ public sealed partial class WorkerSlotItemViewModel : ObservableObject
 
     private static TimeSpan EstimatePackageRemainingEta(WorkerSlotProgress progress)
     {
-        if (progress.Status != WorkerSlotStatus.Active || progress.Throughput <= 0 || progress.ResourcesDiscovered <= progress.ResourcesProcessed)
+        if (progress.Status != WorkerSlotStatus.Active || progress.ResourcesDiscovered <= progress.ResourcesProcessed)
         {
             return TimeSpan.Zero;
         }
 
         var remaining = progress.ResourcesDiscovered - progress.ResourcesProcessed;
-        return TimeSpan.FromSeconds(remaining / progress.Throughput);
+        var throughput = progress.Throughput;
+        if (throughput <= 0 && progress.Elapsed.TotalSeconds > 0 && progress.ResourcesProcessed > 0)
+        {
+            throughput = progress.ResourcesProcessed / progress.Elapsed.TotalSeconds;
+        }
+
+        return throughput <= 0
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds(remaining / throughput);
     }
 }
 

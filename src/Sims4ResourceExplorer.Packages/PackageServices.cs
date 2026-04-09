@@ -41,7 +41,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         progress?.Report(new PackageScanProgress("opening package", 0, 0, 0, stopwatch.Elapsed, $"Opening {Path.GetFileName(packagePath)}"));
 
-        await using var package = await OpenPackageAsync(packagePath, cancellationToken);
+        await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
         progress?.Report(new PackageScanProgress("reading package index", 0, 0, 0, stopwatch.Elapsed));
         var keys = package.Keys;
         progress?.Report(new PackageScanProgress("enumerating resources", keys.Count, 0, 0, stopwatch.Elapsed));
@@ -101,7 +101,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
     public async Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken)
     {
-        await using var package = await OpenPackageAsync(resource.PackagePath, cancellationToken);
+        await using var package = await OpenPackageAsync(resource.PackagePath, cancellationToken).ConfigureAwait(false);
         var key = ToLlamaKey(resource.Key);
 
         string? name = resource.Name;
@@ -114,7 +114,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         {
             try
             {
-                name = await package.GetNameByKeyAsync(key, cancellationToken);
+                name = await package.GetNameByKeyAsync(key, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -126,7 +126,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         {
             try
             {
-                uncompressedSize = await package.GetSizeAsync(key, cancellationToken);
+                uncompressedSize = await package.GetSizeAsync(key, cancellationToken).ConfigureAwait(false);
                 compressedSize ??= uncompressedSize;
                 isCompressed ??= false;
             }
@@ -148,29 +148,29 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
     public async Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken)
     {
-        await using var package = await OpenPackageAsync(packagePath, cancellationToken);
+        await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
         var llamaKey = ToLlamaKey(key);
 
         return raw
-            ? (await package.GetRawAsync(llamaKey, false, cancellationToken)).ToArray()
-            : (await package.GetAsync(llamaKey, false, cancellationToken)).ToArray();
+            ? (await package.GetRawAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray()
+            : (await package.GetAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
     }
 
     public async Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken)
     {
-        await using var package = await OpenPackageAsync(packagePath, cancellationToken);
+        await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
         var llamaKey = ToLlamaKey(key);
 
         try
         {
-            var xml = await package.GetXmlAsync(llamaKey, false, cancellationToken);
+            var xml = await package.GetXmlAsync(llamaKey, false, cancellationToken).ConfigureAwait(false);
             return xml.ToString();
         }
         catch
         {
             try
             {
-                return await package.GetTextAsync(llamaKey, false, cancellationToken);
+                return await package.GetTextAsync(llamaKey, false, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -181,22 +181,22 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
     public async Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken)
     {
-        await using var package = await OpenPackageAsync(packagePath, cancellationToken);
+        await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
         var llamaKey = ToLlamaKey(key);
 
         if (key.TypeName is nameof(ResourceType.PNGImage) or nameof(ResourceType.PNGImage2))
         {
-            return (await package.GetAsync(llamaKey, false, cancellationToken)).ToArray();
+            return (await package.GetAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
         }
 
         if (key.TypeName is nameof(ResourceType.BuyBuildThumbnail) or nameof(ResourceType.BodyPartThumbnail) or nameof(ResourceType.CASPartThumbnail))
         {
-            return (await package.GetTranslucentJpegAsPngAsync(llamaKey, false, cancellationToken)).ToArray();
+            return (await package.GetTranslucentJpegAsPngAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
         }
 
         if (ResourceTypeHints.IsDdsFamily(key.TypeName))
         {
-            return (await package.GetDdsAsPngAsync(llamaKey, false, cancellationToken)).ToArray();
+            return (await package.GetDdsAsPngAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
         }
 
         return null;
@@ -223,7 +223,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
                 bufferSize: 131072,
                 options: FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-            return await DataBasePackedFile.FromStreamAsync(stream, cancellationToken);
+            return await DataBasePackedFile.FromStreamAsync(stream, cancellationToken).ConfigureAwait(false);
         }
         catch (IOException ex)
         {

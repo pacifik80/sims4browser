@@ -542,6 +542,7 @@ public sealed class SqliteIndexStore : IIndexStore
             upsertPackageCommand = CreateUpsertPackageCommand(connection);
             insertResourceCommand = CreateInsertResourceCommand(connection);
             insertAssetCommand = CreateInsertAssetCommand(connection);
+            PrepareCommands();
         }
 
         public async Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
@@ -581,6 +582,15 @@ public sealed class SqliteIndexStore : IIndexStore
             await deleteAssetsCommand.DisposeAsync();
             await deleteResourcesCommand.DisposeAsync();
             await connection.DisposeAsync();
+        }
+
+        private void PrepareCommands()
+        {
+            deleteResourcesCommand.Prepare();
+            deleteAssetsCommand.Prepare();
+            upsertPackageCommand.Prepare();
+            insertResourceCommand.Prepare();
+            insertAssetCommand.Prepare();
         }
 
         private static SqliteCommand CreateDeleteResourcesCommand(SqliteConnection connection)
@@ -739,8 +749,8 @@ public sealed class ResourceMetadataEnrichmentService : IResourceMetadataEnrichm
             return resource;
         }
 
-        var enriched = await resourceCatalogService.EnrichResourceAsync(resource, cancellationToken);
-        return await indexStore.PersistResourceEnrichmentAsync(enriched, cancellationToken);
+        var enriched = await resourceCatalogService.EnrichResourceAsync(resource, cancellationToken).ConfigureAwait(false);
+        return await indexStore.PersistResourceEnrichmentAsync(enriched, cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -771,20 +781,28 @@ public sealed class PackageIndexCoordinator
         var effectiveOptions = requestedWorkerCount.HasValue
             ? options.WithWorkerCount(requestedWorkerCount.Value)
             : options;
-        var activeSources = sources.Where(static source => source.IsEnabled).ToArray();
-        await indexStore.UpsertDataSourcesAsync(activeSources, cancellationToken);
-        var fingerprintStopwatch = Stopwatch.StartNew();
-        var fingerprints = await indexStore.LoadPackageFingerprintsAsync(activeSources.Select(static source => source.Id), cancellationToken);
-        fingerprintStopwatch.Stop();
-
         var state = new IndexingRunState(effectiveOptions);
-        state.RecordRunPhase("fingerprint preload", fingerprintStopwatch.Elapsed);
+        var activeSources = sources.Where(static source => source.IsEnabled).ToArray();
         using var reporterCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var reportLoop = RunReportingLoopAsync(progress, state, effectiveOptions, reporterCts.Token);
 
+        progress?.Report(state.CreateSnapshot("preparing", $"Preparing indexing run for {activeSources.Length} source(s)."));
+
+        var dataSourceStopwatch = Stopwatch.StartNew();
+        await indexStore.UpsertDataSourcesAsync(activeSources, cancellationToken).ConfigureAwait(false);
+        dataSourceStopwatch.Stop();
+        state.RecordRunPhase("source sync", dataSourceStopwatch.Elapsed);
+        progress?.Report(state.CreateSnapshot("preparing", "Loading cached package fingerprints."));
+
+        var fingerprintStopwatch = Stopwatch.StartNew();
+        var fingerprints = await indexStore.LoadPackageFingerprintsAsync(activeSources.Select(static source => source.Id), cancellationToken).ConfigureAwait(false);
+        fingerprintStopwatch.Stop();
+        state.RecordRunPhase("fingerprint preload", fingerprintStopwatch.Elapsed);
+        progress?.Report(state.CreateSnapshot("preparing", $"Loaded {fingerprints.Count:N0} cached package fingerprint(s)."));
+
         try
         {
-            progress?.Report(state.CreateSnapshot("discovering packages", "Starting package discovery and scan queue."));
+            progress?.Report(state.CreateSnapshot("preparing", "Opening SQLite write session."));
 
             var scanChannel = System.Threading.Channels.Channel.CreateBounded<PackageWorkItem>(new System.Threading.Channels.BoundedChannelOptions(effectiveOptions.PackageQueueCapacity)
             {
@@ -800,17 +818,22 @@ public sealed class PackageIndexCoordinator
                 SingleReader = true
             });
 
-            await using var writeSession = await indexStore.OpenWriteSessionAsync(cancellationToken);
+            var writerSessionStopwatch = Stopwatch.StartNew();
+            await using var writeSession = await indexStore.OpenWriteSessionAsync(cancellationToken).ConfigureAwait(false);
+            writerSessionStopwatch.Stop();
+            state.RecordRunPhase("writer session open", writerSessionStopwatch.Elapsed);
+            progress?.Report(state.CreateSnapshot("discovering packages", "Starting package discovery and scan queue."));
+
             var producer = ProduceWorkAsync(activeSources, fingerprints, scanChannel.Writer, state, progress, cancellationToken);
             var workers = Enumerable.Range(0, effectiveOptions.MaxPackageConcurrency)
                 .Select(workerId => RunWorkerAsync(workerId + 1, scanChannel.Reader, persistChannel.Writer, state, cancellationToken))
                 .ToArray();
             var writer = RunWriterAsync(persistChannel.Reader, writeSession, state, cancellationToken);
 
-            await producer;
-            await Task.WhenAll(workers);
+            await producer.ConfigureAwait(false);
+            await Task.WhenAll(workers).ConfigureAwait(false);
             persistChannel.Writer.TryComplete();
-            await writer;
+            await writer.ConfigureAwait(false);
 
             progress?.Report(state.CreateSnapshot("complete", "Indexing completed.", state.CreateSummary()));
         }
@@ -825,7 +848,7 @@ public sealed class PackageIndexCoordinator
             reporterCts.Cancel();
             try
             {
-                await reportLoop;
+                await reportLoop.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -845,7 +868,7 @@ public sealed class PackageIndexCoordinator
         var queueElapsed = TimeSpan.Zero;
         try
         {
-            await foreach (var discoveredPackage in packageScanner.DiscoverPackagesAsync(activeSources, cancellationToken))
+            await foreach (var discoveredPackage in packageScanner.DiscoverPackagesAsync(activeSources, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 state.MarkDiscovered(discoveredPackage.PackagePath);
@@ -853,13 +876,12 @@ public sealed class PackageIndexCoordinator
                 if (!RequiresRescan(discoveredPackage, fingerprints))
                 {
                     state.MarkSkipped(discoveredPackage.PackagePath);
-                    progress?.Report(state.CreateSnapshot("skip", $"Skipped unchanged package {Path.GetFileName(discoveredPackage.PackagePath)}"));
                     continue;
                 }
 
                 state.MarkQueued(discoveredPackage.PackagePath);
                 var queueStart = Stopwatch.StartNew();
-                await writer.WriteAsync(new PackageWorkItem(discoveredPackage.Source, discoveredPackage.PackagePath, discoveredPackage.FileSize, discoveredPackage.LastWriteTimeUtc), cancellationToken);
+                await writer.WriteAsync(new PackageWorkItem(discoveredPackage.Source, discoveredPackage.PackagePath, discoveredPackage.FileSize, discoveredPackage.LastWriteTimeUtc), cancellationToken).ConfigureAwait(false);
                 queueStart.Stop();
                 queueElapsed += queueStart.Elapsed;
             }
@@ -880,14 +902,14 @@ public sealed class PackageIndexCoordinator
         IndexingRunState state,
         CancellationToken cancellationToken)
     {
-        await foreach (var workItem in reader.ReadAllAsync(cancellationToken))
+        await foreach (var workItem in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
             state.WorkerStarted(workerId, workItem.PackagePath);
             try
             {
                 state.UpdatePackageProgress(workItem.PackagePath, new PackageScanProgress("opening package", 0, 0, 0, TimeSpan.Zero));
                 var progress = new Progress<PackageScanProgress>(value => state.UpdatePackageProgress(workItem.PackagePath, value));
-                var packageScan = await resourceCatalogService.ScanPackageAsync(workItem.Source, workItem.PackagePath, progress, cancellationToken);
+                var packageScan = await resourceCatalogService.ScanPackageAsync(workItem.Source, workItem.PackagePath, progress, cancellationToken).ConfigureAwait(false);
                 IReadOnlyList<AssetSummary> assets = [];
                 if (ShouldBuildAssetSummaries(packageScan))
                 {
@@ -899,7 +921,7 @@ public sealed class PackageIndexCoordinator
                         state.GetElapsed(workItem.PackagePath)));
                     assets = assetGraphBuilder.BuildAssetSummaries(packageScan);
                 }
-                await persistWriter.WriteAsync(new PersistWorkItem(workItem, packageScan, assets), cancellationToken);
+                await persistWriter.WriteAsync(new PersistWorkItem(workItem, packageScan, assets), cancellationToken).ConfigureAwait(false);
 
                 state.UpdatePackageProgress(workItem.PackagePath, new PackageScanProgress(
                     "queued for DB write",
@@ -929,7 +951,7 @@ public sealed class PackageIndexCoordinator
         IndexingRunState state,
         CancellationToken cancellationToken)
     {
-        await foreach (var item in reader.ReadAllAsync(cancellationToken))
+        await foreach (var item in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
             try
             {
@@ -940,7 +962,7 @@ public sealed class PackageIndexCoordinator
                     0,
                     state.GetElapsed(item.WorkItem.PackagePath)));
 
-                await writeSession.ReplacePackageAsync(item.PackageScan, item.Assets, cancellationToken);
+                await writeSession.ReplacePackageAsync(item.PackageScan, item.Assets, cancellationToken).ConfigureAwait(false);
 
                 state.UpdatePackageProgress(item.WorkItem.PackagePath, new PackageScanProgress(
                     "finalizing package",
@@ -970,7 +992,7 @@ public sealed class PackageIndexCoordinator
         }
 
         using var timer = new PeriodicTimer(effectiveOptions.ProgressUpdateInterval);
-        while (await timer.WaitForNextTickAsync(cancellationToken))
+        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
             progress.Report(state.CreateSnapshot("indexing", state.DrainLatestMessage()));
         }

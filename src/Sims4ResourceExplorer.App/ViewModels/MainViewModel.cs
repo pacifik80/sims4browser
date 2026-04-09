@@ -137,13 +137,19 @@ public sealed partial class MainViewModel : ObservableObject
 
         try
         {
+            await Task.Yield();
             await appPreferencesService.SaveAsync(new AppPreferences(SelectedWorkerCount), CancellationToken.None);
             var progress = new Progress<IndexingProgress>(value =>
             {
                 ApplyIndexingProgress(value, indexingDialogViewModel);
             });
 
-            await packageIndexCoordinator.RunAsync(DataSources, progress, indexingCancellationTokenSource.Token, SelectedWorkerCount);
+            var snapshotSources = DataSources.ToArray();
+            var selectedWorkerCount = SelectedWorkerCount;
+            var indexingToken = indexingCancellationTokenSource.Token;
+            await Task.Run(
+                async () => await packageIndexCoordinator.RunAsync(snapshotSources, progress, indexingToken, selectedWorkerCount).ConfigureAwait(false),
+                indexingToken);
             await RefreshResourcesAsync();
             await RefreshAssetsAsync();
             StatusMessage = $"Index complete. {Resources.Count} raw resources visible, {Assets.Count} logical assets visible.";
