@@ -6,7 +6,6 @@ using Sims4ResourceExplorer.Export;
 using Sims4ResourceExplorer.Indexing;
 using Sims4ResourceExplorer.Packages;
 using Sims4ResourceExplorer.Preview;
-
 namespace Sims4ResourceExplorer.Tests;
 
 public sealed class ExplorerTests : IDisposable
@@ -72,6 +71,34 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void AssetGraphBuilder_BuildsExplicitBuildBuyGraphForSupportedSubset()
+    {
+        var builder = new ExplicitBuildBuyAssetGraphBuilder();
+        var packagePath = Path.Combine(tempRoot, "supported.package");
+        var sourceId = Guid.NewGuid();
+        var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "Chair");
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1, "Chair"),
+            model,
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 1)
+        };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
+        var graph = builder.BuildAssetGraph(summary, resources);
+
+        Assert.NotNull(graph.BuildBuyGraph);
+        Assert.True(graph.BuildBuyGraph!.IsSupported);
+        Assert.Equal(model.Key.FullTgi, graph.BuildBuyGraph.ModelResource.Key.FullTgi);
+        Assert.Single(graph.BuildBuyGraph.ModelLodResources);
+        Assert.Single(graph.BuildBuyGraph.TextureResources);
+        Assert.NotEmpty(graph.BuildBuyGraph.Materials);
+    }
+
+    [Fact]
     public async Task TextureDecodeService_DecodesPngPayload()
     {
         var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "PNGImage", 1);
@@ -101,11 +128,39 @@ public sealed class ExplorerTests : IDisposable
         var asset = new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Object", "test.package", resource.Key, null, 1, 1, string.Empty);
         await store.ReplacePackageAsync(new PackageScanResult(source.Id, SourceKind.Game, "test.package", 10, DateTimeOffset.UtcNow, [resource], []), [asset], CancellationToken.None);
 
-        var resources = await store.QueryResourcesAsync(new ResourceQuery("objectcatalog", BrowserMode.RawResources, Limit: 10), CancellationToken.None);
-        var assets = await store.QueryAssetsAsync(new LogicalAssetQuery("chair", Limit: 10), CancellationToken.None);
+        var resources = await store.QueryResourcesAsync(
+            new RawResourceBrowserQuery(
+                new SourceScope(),
+                "objectcatalog",
+                RawResourceDomain.All,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                false,
+                ResourceLinkFilter.Any,
+                RawResourceSort.TypeName,
+                0,
+                10),
+            CancellationToken.None);
+        var assets = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                "chair",
+                AssetBrowserDomain.BuildBuy,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                10),
+            CancellationToken.None);
 
-        Assert.Single(resources);
-        Assert.Single(assets);
+        Assert.Single(resources.Items);
+        Assert.Single(assets.Items);
     }
 
     [Fact]
@@ -131,16 +186,60 @@ public sealed class ExplorerTests : IDisposable
 
         var sourceResource = CreateResource(Guid.NewGuid(), "test.package", SourceKind.Game, "Geometry", 1);
         var service = new AssimpFbxExportService();
+        var materialManifest = new[]
+        {
+            new MaterialManifestEntry(
+                "Default",
+                "PortablePhong",
+                false,
+                "opaque",
+                "Synthetic test material",
+                [new MaterialTextureEntry("Diffuse", "diffuse.png", sourceResource.Key, sourceResource.PackagePath)])
+        };
 
         var result = await service.ExportAsync(
-            new SceneExportRequest("triangle_asset", scene, outputRoot, [sourceResource], scene.Materials.SelectMany(static material => material.Textures).ToArray(), []),
+            new SceneExportRequest("triangle_asset", scene, outputRoot, [sourceResource], scene.Materials.SelectMany(static material => material.Textures).ToArray(), [], materialManifest),
             CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.True(File.Exists(result.OutputPath!));
         Assert.True(File.Exists(Path.Combine(outputRoot, "triangle_asset", "manifest.json")));
+        Assert.True(File.Exists(Path.Combine(outputRoot, "triangle_asset", "material_manifest.json")));
         Assert.True(File.Exists(Path.Combine(outputRoot, "triangle_asset", "metadata.json")));
         Assert.True(File.Exists(Path.Combine(outputRoot, "triangle_asset", "Textures", "diffuse.png")));
+    }
+
+    [Fact]
+    public async Task BuildBuySceneBuildService_BuildsSceneFromLocalFixture_WhenConfigured()
+    {
+        var fixturePackage = Environment.GetEnvironmentVariable("SIMS4_BUILD_BUY_FIXTURE_PACKAGE");
+        var fixtureTgi = Environment.GetEnvironmentVariable("SIMS4_BUILD_BUY_FIXTURE_TGI");
+        if (string.IsNullOrWhiteSpace(fixturePackage) || string.IsNullOrWhiteSpace(fixtureTgi) || !File.Exists(fixturePackage))
+        {
+            return;
+        }
+
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", Path.GetDirectoryName(fixturePackage)!, SourceKind.Game);
+        var catalog = new LlamaResourceCatalogService();
+        var scan = await catalog.ScanPackageAsync(source, fixturePackage, progress: null, CancellationToken.None);
+        await store.ReplacePackageAsync(scan, [], CancellationToken.None);
+
+        var resource = scan.Resources.FirstOrDefault(resource => string.Equals(resource.Key.FullTgi, fixtureTgi, StringComparison.OrdinalIgnoreCase));
+        if (resource is null)
+        {
+            return;
+        }
+
+        var builder = new BuildBuySceneBuildService(catalog, store);
+        var scene = await builder.BuildSceneAsync(resource, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+        Assert.NotEmpty(scene.Scene!.Meshes);
     }
 
     [Fact]

@@ -65,6 +65,12 @@ Audio detection, decode abstractions, playback adapters, and WAV export support.
 
 WinUI 3 shell, MVVM presentation layer, dependency injection composition, background task coordination, and platform-specific services.
 
+The browse shell is mode-first:
+
+- a first-class `BrowserMode` switches between `Asset Browser` and `Raw Resource Browser`
+- each mode owns separate query/view state instead of sharing one generic filter bag
+- the left rail defines source scope and mode-specific facets before large result sets are shown
+
 ### `Sims4ResourceExplorer.Tests`
 
 Unit and integration tests using a small documented fixture corpus.
@@ -84,16 +90,26 @@ Unit and integration tests using a small documented fixture corpus.
 
 ### 2. Browse raw resources
 
-1. Browser queries SQLite for paged/sorted resource rows.
+1. User chooses source scope plus a raw-resource domain such as Images, Audio, Text/XML, 3D-related, or Other/Unknown.
+2. Browser queries SQLite for counted, sorted, windowed resource rows.
 2. Selecting a row loads metadata immediately from the index.
 3. Preview services request the resource payload only when the details pane needs it.
 4. Unsupported previews fall back to metadata + hex/raw export.
 
 ### 3. Browse logical assets
 
-1. Browser queries SQLite for asset summaries.
+1. User chooses source scope plus the asset domain (`Build/Buy` or `CAS`).
+2. Browser queries SQLite for counted, sorted, windowed asset summaries.
 2. Asset graph builder resolves linked TGIs lazily for the selected asset.
 3. Preview and export services consume the resolved graph and canonical scene/material models.
+
+## Browsing query architecture
+
+- `AssetBrowserQuery` and `RawResourceBrowserQuery` are separate contracts.
+- Query results return total match count plus a stable visible window through `WindowedQueryResult<T>`.
+- Hidden browser modes are marked dirty but are not requeried until they become active.
+- Active filter chips and result-summary text are derived from the mode-specific query state.
+- Some facets remain heuristic because Sims 4 semantic categories, linkage, and support status are still incomplete in the current index.
 
 ### 4. Export 3D asset bundles
 

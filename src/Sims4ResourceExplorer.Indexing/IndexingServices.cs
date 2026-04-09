@@ -240,93 +240,51 @@ public sealed class SqliteIndexStore : IIndexStore
         return resource;
     }
 
-    public async Task<IReadOnlyList<ResourceMetadata>> QueryResourcesAsync(ResourceQuery query, CancellationToken cancellationToken)
+    public async Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        var (whereClause, bindParameters) = BuildRawResourceWhereClause(query);
+
+        var totalCount = await CountAsync(connection, $"SELECT COUNT(*) FROM resources{whereClause};", bindParameters, cancellationToken);
         await using var command = connection.CreateCommand();
+        bindParameters(command);
         command.CommandText =
-            """
+            $"""
             SELECT id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
                    compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics
             FROM resources
-            WHERE ($search = '' OR
-                   lower(COALESCE(name, '')) LIKE $like OR
-                   lower(package_path) LIKE $like OR
-                   lower(type_name) LIKE $like OR
-                   lower(full_tgi) LIKE $like OR
-                   lower(group_hex) LIKE $like OR
-                   lower(instance_hex) LIKE $like OR
-                   lower(asset_linkage_summary) LIKE $like)
-              AND ($dataSourceId = '' OR data_source_id = $dataSourceId)
-              AND ($packagePath = '' OR package_path = $packagePath)
-              AND ($previewableOnly = 0 OR is_previewable = 1)
-              AND ($exportCapableOnly = 0 OR is_export_capable = 1)
-              AND ($audioOnly = 0 OR preview_kind = 'Audio')
-              AND ($buildBuyOnly = 0 OR type_name IN ('ObjectCatalog', 'ObjectDefinition', 'BuyBuildThumbnail', 'Model', 'ModelLOD', 'Geometry'))
-              AND ($casOnly = 0 OR type_name IN ('CASPart', 'CASPartThumbnail', 'BodyPartThumbnail', 'RegionMap', 'Rig', 'Geometry'))
-            ORDER BY package_path, type_name, full_tgi
-            LIMIT $limit;
+            {whereClause}
+            ORDER BY {BuildRawResourceSort(query.Sort)}
+            LIMIT $limit OFFSET $offset;
             """;
+        command.Parameters.AddWithValue("$limit", query.WindowSize);
+        command.Parameters.AddWithValue("$offset", query.Offset);
 
-        var search = query.SearchText?.Trim().ToLowerInvariant() ?? string.Empty;
-        command.Parameters.AddWithValue("$search", search);
-        command.Parameters.AddWithValue("$like", $"%{search}%");
-        command.Parameters.AddWithValue("$dataSourceId", query.DataSourceId?.ToString("D") ?? string.Empty);
-        command.Parameters.AddWithValue("$packagePath", query.PackagePath ?? string.Empty);
-        command.Parameters.AddWithValue("$previewableOnly", query.PreviewableOnly ? 1 : 0);
-        command.Parameters.AddWithValue("$exportCapableOnly", query.ExportCapableOnly ? 1 : 0);
-        command.Parameters.AddWithValue("$audioOnly", query.AudioOnly ? 1 : 0);
-        command.Parameters.AddWithValue("$buildBuyOnly", query.BuildBuyOnly ? 1 : 0);
-        command.Parameters.AddWithValue("$casOnly", query.CasOnly ? 1 : 0);
-        command.Parameters.AddWithValue("$limit", query.Limit);
-
-        return await ReadResourcesAsync(command, cancellationToken);
+        var items = await ReadResourcesAsync(command, cancellationToken);
+        return new WindowedQueryResult<ResourceMetadata>(items, totalCount, query.Offset, query.WindowSize);
     }
 
-    public async Task<IReadOnlyList<AssetSummary>> QueryAssetsAsync(LogicalAssetQuery query, CancellationToken cancellationToken)
+    public async Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        var (whereClause, bindParameters) = BuildAssetWhereClause(query);
+
+        var totalCount = await CountAsync(connection, $"SELECT COUNT(*) FROM assets{whereClause};", bindParameters, cancellationToken);
         await using var command = connection.CreateCommand();
+        bindParameters(command);
         command.CommandText =
-            """
+            $"""
             SELECT id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi, thumbnail_tgi, variant_count, linked_resource_count, diagnostics
             FROM assets
-            WHERE ($search = '' OR lower(display_name) LIKE $like OR lower(package_path) LIKE $like OR lower(root_tgi) LIKE $like OR lower(COALESCE(category, '')) LIKE $like)
-              AND ($dataSourceId = '' OR data_source_id = $dataSourceId)
-              AND ($buildBuyOnly = 0 OR asset_kind = 'BuildBuy')
-              AND ($casOnly = 0 OR asset_kind = 'Cas')
-            ORDER BY display_name, package_path
-            LIMIT $limit;
+            {whereClause}
+            ORDER BY {BuildAssetSort(query.Sort)}
+            LIMIT $limit OFFSET $offset;
             """;
+        command.Parameters.AddWithValue("$limit", query.WindowSize);
+        command.Parameters.AddWithValue("$offset", query.Offset);
 
-        var search = query.SearchText?.Trim().ToLowerInvariant() ?? string.Empty;
-        command.Parameters.AddWithValue("$search", search);
-        command.Parameters.AddWithValue("$like", $"%{search}%");
-        command.Parameters.AddWithValue("$dataSourceId", query.DataSourceId?.ToString("D") ?? string.Empty);
-        command.Parameters.AddWithValue("$buildBuyOnly", query.BuildBuyOnly ? 1 : 0);
-        command.Parameters.AddWithValue("$casOnly", query.CasOnly ? 1 : 0);
-        command.Parameters.AddWithValue("$limit", query.Limit);
-
-        var results = new List<AssetSummary>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(new AssetSummary(
-                Guid.Parse(reader.GetString(0)),
-                Guid.Parse(reader.GetString(1)),
-                Enum.Parse<SourceKind>(reader.GetString(2)),
-                Enum.Parse<AssetKind>(reader.GetString(3)),
-                reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
-                ParseTgi(reader.GetString(7), string.Empty),
-                reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.GetInt32(9),
-                reader.GetInt32(10),
-                reader.GetString(11)));
-        }
-
-        return results;
+        var items = await ReadAssetsAsync(command, cancellationToken);
+        return new WindowedQueryResult<AssetSummary>(items, totalCount, query.Offset, query.WindowSize);
     }
 
     public async Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken)
@@ -369,8 +327,24 @@ public sealed class SqliteIndexStore : IIndexStore
 
     public async Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken)
     {
-        var resources = await QueryResourcesAsync(new ResourceQuery(fullTgi, BrowserMode.RawResources, PackagePath: packagePath, Limit: 1), cancellationToken);
-        return resources.FirstOrDefault(resource => resource.Key.FullTgi.Equals(fullTgi, StringComparison.OrdinalIgnoreCase));
+        var results = await QueryResourcesAsync(
+            new RawResourceBrowserQuery(
+                new SourceScope(),
+                fullTgi,
+                RawResourceDomain.All,
+                string.Empty,
+                packagePath,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                false,
+                ResourceLinkFilter.Any,
+                RawResourceSort.Tgi,
+                0,
+                1),
+            cancellationToken);
+        return results.Items.FirstOrDefault(resource => resource.Key.FullTgi.Equals(fullTgi, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
@@ -458,6 +432,242 @@ public sealed class SqliteIndexStore : IIndexStore
 
     private static string BuildFingerprintKey(Guid dataSourceId, string packagePath) =>
         $"{dataSourceId:D}|{packagePath}";
+
+    private static async Task<int> CountAsync(SqliteConnection connection, string sql, Action<SqliteCommand> bindParameters, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        bindParameters(command);
+        command.CommandText = sql;
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string BuildAssetSort(AssetBrowserSort sort) => sort switch
+    {
+        AssetBrowserSort.Category => "COALESCE(category, ''), display_name, package_path, root_tgi",
+        AssetBrowserSort.Package => "package_path, display_name, root_tgi",
+        _ => "display_name, package_path, root_tgi"
+    };
+
+    private static string BuildRawResourceSort(RawResourceSort sort) => sort switch
+    {
+        RawResourceSort.PackagePath => "package_path, type_name, full_tgi",
+        RawResourceSort.Tgi => "full_tgi, package_path, type_name",
+        _ => "type_name, package_path, full_tgi"
+    };
+
+    private static (string WhereClause, Action<SqliteCommand> BindParameters) BuildAssetWhereClause(AssetBrowserQuery query)
+    {
+        var clauses = new List<string>();
+        var binders = new List<Action<SqliteCommand>>();
+
+        ApplySourceScope(query.SourceScope, "source_kind", clauses, binders);
+
+        if (query.Domain == AssetBrowserDomain.BuildBuy)
+        {
+            clauses.Add("asset_kind = 'BuildBuy'");
+        }
+        else
+        {
+            clauses.Add("asset_kind = 'Cas'");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        {
+            AddLikeFilter(
+                query.SearchText,
+                clauses,
+                binders,
+                "lower(display_name) LIKE $search",
+                "lower(package_path) LIKE $search",
+                "lower(root_tgi) LIKE $search",
+                "lower(COALESCE(category, '')) LIKE $search");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.CategoryText))
+        {
+            AddLikeFilter(query.CategoryText, clauses, binders, "lower(COALESCE(category, '')) LIKE $category");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.PackageText))
+        {
+            AddLikeFilter(query.PackageText, clauses, binders, "lower(package_path) LIKE $package");
+        }
+
+        if (query.HasThumbnailOnly)
+        {
+            clauses.Add("thumbnail_tgi IS NOT NULL AND thumbnail_tgi <> ''");
+        }
+
+        if (query.VariantsOnly)
+        {
+            clauses.Add("variant_count > 1");
+        }
+
+        return (BuildWhereClause(clauses), command =>
+        {
+            foreach (var binder in binders)
+            {
+                binder(command);
+            }
+        });
+    }
+
+    private static (string WhereClause, Action<SqliteCommand> BindParameters) BuildRawResourceWhereClause(RawResourceBrowserQuery query)
+    {
+        var clauses = new List<string>();
+        var binders = new List<Action<SqliteCommand>>();
+
+        ApplySourceScope(query.SourceScope, "source_kind", clauses, binders);
+
+        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        {
+            AddLikeFilter(
+                query.SearchText,
+                clauses,
+                binders,
+                "lower(COALESCE(name, '')) LIKE $search",
+                "lower(package_path) LIKE $search",
+                "lower(type_name) LIKE $search",
+                "lower(full_tgi) LIKE $search",
+                "lower(group_hex) LIKE $search",
+                "lower(instance_hex) LIKE $search",
+                "lower(asset_linkage_summary) LIKE $search");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.TypeNameText))
+        {
+            AddLikeFilter(query.TypeNameText, clauses, binders, "lower(type_name) LIKE $type");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.PackageText))
+        {
+            AddLikeFilter(query.PackageText, clauses, binders, "lower(package_path) LIKE $package");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.GroupHexText))
+        {
+            AddLikeFilter(query.GroupHexText, clauses, binders, "lower(group_hex) LIKE $group");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.InstanceHexText))
+        {
+            AddLikeFilter(query.InstanceHexText, clauses, binders, "lower(instance_hex) LIKE $instance");
+        }
+
+        if (query.PreviewableOnly)
+        {
+            clauses.Add("is_previewable = 1");
+        }
+
+        if (query.ExportCapableOnly)
+        {
+            clauses.Add("is_export_capable = 1");
+        }
+
+        if (query.CompressedKnownOnly)
+        {
+            clauses.Add("is_compressed IS NOT NULL");
+        }
+
+        if (query.LinkFilter == ResourceLinkFilter.LinkedOnly)
+        {
+            clauses.Add("asset_linkage_summary <> ''");
+        }
+        else if (query.LinkFilter == ResourceLinkFilter.UnlinkedOnly)
+        {
+            clauses.Add("asset_linkage_summary = ''");
+        }
+
+        var domainClause = query.Domain switch
+        {
+            RawResourceDomain.Images => "(preview_kind = 'Texture' OR type_name IN ('BuyBuildThumbnail', 'BodyPartThumbnail', 'CASPartThumbnail'))",
+            RawResourceDomain.Audio => "(preview_kind = 'Audio' OR lower(type_name) LIKE '%audio%')",
+            RawResourceDomain.TextXml => "(preview_kind = 'Text' OR lower(type_name) LIKE '%xml%' OR lower(type_name) LIKE '%tuning%' OR lower(type_name) LIKE '%manifest%' OR lower(type_name) LIKE '%stringtable%')",
+            RawResourceDomain.ThreeDRelated => "(preview_kind = 'Scene' OR type_name IN ('Geometry', 'Model', 'ModelLOD', 'Rig', 'MaterialDefinition'))",
+            RawResourceDomain.OtherUnknown => "NOT ((preview_kind = 'Texture' OR type_name IN ('BuyBuildThumbnail', 'BodyPartThumbnail', 'CASPartThumbnail')) OR (preview_kind = 'Audio' OR lower(type_name) LIKE '%audio%') OR (preview_kind = 'Text' OR lower(type_name) LIKE '%xml%' OR lower(type_name) LIKE '%tuning%' OR lower(type_name) LIKE '%manifest%' OR lower(type_name) LIKE '%stringtable%') OR (preview_kind = 'Scene' OR type_name IN ('Geometry', 'Model', 'ModelLOD', 'Rig', 'MaterialDefinition')))",
+            _ => null
+        };
+
+        if (!string.IsNullOrWhiteSpace(domainClause))
+        {
+            clauses.Add(domainClause);
+        }
+
+        return (BuildWhereClause(clauses), command =>
+        {
+            foreach (var binder in binders)
+            {
+                binder(command);
+            }
+        });
+    }
+
+    private static void ApplySourceScope(SourceScope sourceScope, string columnName, ICollection<string> clauses, ICollection<Action<SqliteCommand>> binders)
+    {
+        var includedKinds = sourceScope.ToSourceKinds();
+        if (includedKinds.Count == 0)
+        {
+            clauses.Add("1 = 0");
+            return;
+        }
+
+        if (includedKinds.Count == 3)
+        {
+            return;
+        }
+
+        var parameterNames = new List<string>(includedKinds.Count);
+        for (var index = 0; index < includedKinds.Count; index++)
+        {
+            var parameterName = $"$sourceKind{index}";
+            parameterNames.Add(parameterName);
+            var value = includedKinds[index].ToString();
+            binders.Add(command => command.Parameters.AddWithValue(parameterName, value));
+        }
+
+        clauses.Add($"{columnName} IN ({string.Join(", ", parameterNames)})");
+    }
+
+    private static void AddLikeFilter(string value, ICollection<string> clauses, ICollection<Action<SqliteCommand>> binders, params string[] expressions)
+    {
+        var parameterName = expressions[0].Contains("$search", StringComparison.Ordinal) ? "$search" :
+            expressions[0].Contains("$category", StringComparison.Ordinal) ? "$category" :
+            expressions[0].Contains("$package", StringComparison.Ordinal) ? "$package" :
+            expressions[0].Contains("$group", StringComparison.Ordinal) ? "$group" :
+            expressions[0].Contains("$instance", StringComparison.Ordinal) ? "$instance" :
+            "$type";
+        var normalized = $"%{value.Trim().ToLowerInvariant()}%";
+        clauses.Add($"({string.Join(" OR ", expressions)})");
+        binders.Add(command => command.Parameters.AddWithValue(parameterName, normalized));
+    }
+
+    private static string BuildWhereClause(IReadOnlyCollection<string> clauses) =>
+        clauses.Count == 0 ? string.Empty : $"{Environment.NewLine}WHERE {string.Join($"{Environment.NewLine}  AND ", clauses)}";
+
+    private static async Task<IReadOnlyList<AssetSummary>> ReadAssetsAsync(SqliteCommand command, CancellationToken cancellationToken)
+    {
+        var results = new List<AssetSummary>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new AssetSummary(
+                Guid.Parse(reader.GetString(0)),
+                Guid.Parse(reader.GetString(1)),
+                Enum.Parse<SourceKind>(reader.GetString(2)),
+                Enum.Parse<AssetKind>(reader.GetString(3)),
+                reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.GetString(6),
+                ParseTgi(reader.GetString(7), string.Empty),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.GetInt32(9),
+                reader.GetInt32(10),
+                reader.GetString(11)));
+        }
+
+        return results;
+    }
 
     private static async Task EnsureDeferredMetadataSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {

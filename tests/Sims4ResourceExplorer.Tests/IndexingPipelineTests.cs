@@ -243,8 +243,24 @@ public sealed class IndexingPipelineTests
                 [],
                 CancellationToken.None);
 
-            var rows = await store.QueryResourcesAsync(new ResourceQuery(string.Empty, BrowserMode.RawResources, PackagePath: packagePath, Limit: 1000), CancellationToken.None);
-            Assert.Equal(450, rows.Count);
+            var rows = await store.QueryResourcesAsync(
+                new RawResourceBrowserQuery(
+                    new SourceScope(),
+                    string.Empty,
+                    RawResourceDomain.All,
+                    string.Empty,
+                    packagePath,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                    ResourceLinkFilter.Any,
+                    RawResourceSort.PackagePath,
+                    0,
+                    1000),
+                CancellationToken.None);
+            Assert.Equal(450, rows.Items.Count);
         }
         finally
         {
@@ -569,8 +585,10 @@ public sealed class IndexingPipelineTests
         public Task UpsertDataSourcesAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<bool> NeedsRescanAsync(Guid dataSourceId, string packagePath, long fileSize, DateTimeOffset lastWriteTimeUtc, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task<IReadOnlyDictionary<string, PackageFingerprint>> LoadPackageFingerprintsAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyDictionary<string, PackageFingerprint>>(Fingerprints);
-        public Task<IReadOnlyList<ResourceMetadata>> QueryResourcesAsync(ResourceQuery query, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
-        public Task<IReadOnlyList<AssetSummary>> QueryAssetsAsync(LogicalAssetQuery query, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken) =>
+            Task.FromResult(new WindowedQueryResult<ResourceMetadata>([], 0, query.Offset, query.WindowSize));
+        public Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken) =>
+            Task.FromResult(new WindowedQueryResult<AssetSummary>([], 0, query.Offset, query.WindowSize));
         public Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<DataSourceDefinition>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);

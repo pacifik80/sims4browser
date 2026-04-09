@@ -19,8 +19,10 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
 
             var objectDefinition = related.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectDefinition");
             var objectCatalog = related.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectCatalog");
-            var modelLods = related.Count(static resource => resource.Key.TypeName == "ModelLOD");
-            var thumbnail = related.FirstOrDefault(static resource => resource.Key.TypeName is "BuyBuildThumbnail" or "PNGImage" or "PNGImage2");
+            var modelLods = related.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
+            var textures = related.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
+            var thumbnail = related.FirstOrDefault(static resource => resource.Key.TypeName == "BuyBuildThumbnail")
+                ?? textures.FirstOrDefault();
 
             var displayName = objectDefinition?.Name
                 ?? objectCatalog?.Name
@@ -33,9 +35,14 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
                 diagnostics.Add("Catalog metadata could not be matched by exact instance; using a model-rooted Build/Buy asset identity.");
             }
 
-            if (modelLods == 0)
+            if (modelLods.Length == 0)
             {
                 diagnostics.Add("No exact-instance ModelLOD resources were indexed for this model.");
+            }
+
+            if (textures.Length == 0)
+            {
+                diagnostics.Add("No exact-instance texture resources were indexed for this model.");
             }
 
             summaries.Add(new AssetSummary(
@@ -81,6 +88,24 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
         {
             var hasObjectIdentity = linked.Any(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition");
             var modelLods = linked.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
+            var textures = linked.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
+            var materialResources = linked.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
+            var materialManifest = textures.Length == 0
+                ? []
+                : new[]
+                {
+                    new MaterialManifestEntry(
+                        "ApproximateMaterial",
+                        null,
+                        false,
+                        null,
+                        "Material/shader chunks are not fully parsed yet. Diffuse preview/export falls back to exact-instance texture candidates.",
+                        textures.Select(static texture => new MaterialTextureEntry(
+                            texture.Key.TypeName,
+                            $"{texture.Key.TypeName}_{texture.Key.Type:X8}_{texture.Key.Group:X8}_{texture.Key.FullInstance:X16}.png",
+                            texture.Key,
+                            texture.PackagePath)).ToArray())
+                };
 
             if (!hasObjectIdentity)
             {
@@ -92,6 +117,11 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
                 diagnostics.Add("No exact-instance ModelLOD resources were indexed for this model. The scene builder may still succeed if the model contains an embedded MLOD.");
             }
 
+            if (materialResources.Length == 0)
+            {
+                diagnostics.Add("No exact-instance MaterialDefinition resources were indexed for this model. Scene reconstruction will rely on embedded chunks or texture approximation.");
+            }
+
             return new AssetGraph(
                 summary,
                 linked,
@@ -99,12 +129,12 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
                 new BuildBuyAssetGraph(
                     root,
                     modelLods,
+                    textures,
                     [],
-                    [],
-                    [],
+                    materialManifest,
                     diagnostics,
                     true,
-                    "Model-rooted static Build/Buy subset"));
+                    "Model-rooted static Build/Buy objects with Model/ModelLOD geometry and decodable same-package texture candidates"));
         }
 
         return new AssetGraph(summary, linked, diagnostics);
@@ -119,4 +149,13 @@ public sealed class ExplicitBuildBuyAssetGraphBuilder : IAssetGraphBuilder
         "PNGImage" or "PNGImage2" or "DSTImage" or "LRLEImage" or "RLE2Image" or "RLESImage" => 4,
         _ => 10
     };
+
+    private static bool IsTextureType(string typeName) => typeName is
+        "BuyBuildThumbnail" or
+        "PNGImage" or
+        "PNGImage2" or
+        "DSTImage" or
+        "LRLEImage" or
+        "RLE2Image" or
+        "RLESImage";
 }

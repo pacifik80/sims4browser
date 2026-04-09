@@ -60,6 +60,15 @@ Current 3D note:
 - the UI and export architecture for scene reconstruction are in place
 - actual Sims 4 geometry/model/rig reconstruction is not implemented yet, so 3D preview currently degrades to diagnostics rather than a reconstructed viewport scene
 
+## Browsing model
+
+Browsing is now mode-first instead of tab-symmetric:
+
+- `Asset Browser` is the task-oriented path for Build/Buy and CAS asset discovery
+- `Raw Resource Browser` is the diagnostic path for TGI/package/type inspection
+
+Each mode has its own search box, scoped facets, active filter chips, result summary, and incremental result window. The app shows total matches separately from the currently loaded rows so very large libraries stay understandable. Facets are still partly heuristic where Sims 4 categories/linkage are only partially known.
+
 ## Read-only safety
 
 The app never modifies or repacks `.package` files. Cache, logs, and exports are written only under app-controlled directories.

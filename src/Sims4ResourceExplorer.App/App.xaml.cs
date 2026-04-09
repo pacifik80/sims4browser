@@ -34,7 +34,7 @@ public partial class App : Application
                 services.AddSingleton<IResourceMetadataEnrichmentService, ResourceMetadataEnrichmentService>();
                 services.AddSingleton<IAssetGraphBuilder, ExplicitBuildBuyAssetGraphBuilder>();
                 services.AddSingleton<ITextureDecodeService, BasicTextureDecodeService>();
-                services.AddSingleton<ISceneBuildService, PlaceholderSceneBuildService>();
+                services.AddSingleton<ISceneBuildService, BuildBuySceneBuildService>();
                 services.AddSingleton<IAudioDecodeService, BasicAudioDecodeService>();
                 services.AddSingleton<IAudioPlayer, WaveOutAudioPlayer>();
                 services.AddSingleton<IPreviewService, ResourcePreviewService>();

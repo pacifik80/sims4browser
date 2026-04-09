@@ -6,10 +6,12 @@ namespace Sims4ResourceExplorer.Preview;
 public sealed class BuildBuySceneBuildService : ISceneBuildService
 {
     private readonly IResourceCatalogService resourceCatalogService;
+    private readonly IIndexStore indexStore;
 
-    public BuildBuySceneBuildService(IResourceCatalogService resourceCatalogService)
+    public BuildBuySceneBuildService(IResourceCatalogService resourceCatalogService, IIndexStore indexStore)
     {
         this.resourceCatalogService = resourceCatalogService;
+        this.indexStore = indexStore;
     }
 
     public async Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken)
@@ -270,6 +272,16 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
+        if (textures.Count == 0)
+        {
+            var approximatedTextures = await ResolveFallbackTexturesAsync(ownerResource, textureCache, cancellationToken).ConfigureAwait(false);
+            if (approximatedTextures.Count > 0)
+            {
+                textures.AddRange(approximatedTextures);
+                diagnostics.Add("No explicit MATD texture references were resolved; using exact-instance texture candidates as a portable diffuse approximation.");
+            }
+        }
+
         var isTransparent = matd.IsTransparent || matd.TextureReferences.Any(static texture => texture.Slot is "alpha" or "overlay");
         return new Ts4MaterialInfo(
             !string.IsNullOrWhiteSpace(matd.MaterialName) ? matd.MaterialName : $"Material_{matd.MaterialNameHash:X8}",
@@ -280,6 +292,46 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
             isTransparent,
             isTransparent ? "alpha-test-or-blend" : "opaque",
             "Maxis shaders are approximated to a portable texture-set export.");
+    }
+
+    private async Task<IReadOnlyList<CanonicalTexture>> ResolveFallbackTexturesAsync(
+        ResourceMetadata ownerResource,
+        Dictionary<string, CanonicalTexture?> textureCache,
+        CancellationToken cancellationToken)
+    {
+        var packageResources = await indexStore.GetPackageResourcesAsync(ownerResource.PackagePath, cancellationToken).ConfigureAwait(false);
+        var textureCandidates = packageResources
+            .Where(resource => resource.Key.FullInstance == ownerResource.Key.FullInstance && IsTextureType(resource.Key.TypeName))
+            .OrderBy(static resource => resource.Key.TypeName == "BuyBuildThumbnail" ? 1 : 0)
+            .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
+            .ToArray();
+
+        var results = new List<CanonicalTexture>(textureCandidates.Length);
+        foreach (var candidate in textureCandidates)
+        {
+            var cacheKey = candidate.Key.FullTgi;
+            if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
+            {
+                var pngBytes = await resourceCatalogService.GetTexturePngAsync(candidate.PackagePath, candidate.Key, cancellationToken).ConfigureAwait(false);
+                cachedTexture = pngBytes is null
+                    ? null
+                    : new CanonicalTexture(
+                        results.Count == 0 ? "diffuse" : $"extra_{results.Count}",
+                        BuildTextureFileName(results.Count == 0 ? "diffuse" : $"extra_{results.Count}", new Ts4ResourceKey(candidate.Key.Type, candidate.Key.Group, candidate.Key.FullInstance)),
+                        pngBytes,
+                        candidate.Key,
+                        candidate.PackagePath);
+
+                textureCache[cacheKey] = cachedTexture;
+            }
+
+            if (cachedTexture is not null)
+            {
+                results.Add(cachedTexture);
+            }
+        }
+
+        return results;
     }
 
     private async Task<Ts4ModelLodResolution> TryResolveModelLodAsync(
@@ -359,6 +411,15 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
         0x1B4D2A70 => "RLESImage",
         _ => $"0x{type:X8}"
     };
+
+    private static bool IsTextureType(string typeName) => typeName is
+        "BuyBuildThumbnail" or
+        "PNGImage" or
+        "PNGImage2" or
+        "DSTImage" or
+        "LRLEImage" or
+        "RLE2Image" or
+        "RLESImage";
 
     private static Bounds3D ComputeBounds(IEnumerable<CanonicalMesh> meshes)
     {
@@ -456,6 +517,353 @@ internal sealed record Ts4MtstChunk(Ts4ChunkReference? DefaultMaterialReference,
 {
     public static Ts4MtstChunk Parse(ReadOnlySpan<byte> bytes) =>
         new(null, []);
+}
+
+internal ref struct SpanReader
+{
+    private ReadOnlySpan<byte> remaining;
+
+    public SpanReader(ReadOnlySpan<byte> data)
+    {
+        remaining = data;
+        Position = 0;
+    }
+
+    public int Position { get; private set; }
+
+    public void Skip(int count)
+    {
+        Ensure(count);
+        remaining = remaining[count..];
+        Position += count;
+    }
+
+    public void ExpectTag(string tag)
+    {
+        var bytes = ReadBytes(tag.Length);
+        var actual = System.Text.Encoding.ASCII.GetString(bytes);
+        if (!string.Equals(actual, tag, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"Expected tag '{tag}', found '{actual}'.");
+        }
+    }
+
+    public byte ReadByte()
+    {
+        Ensure(1);
+        var value = remaining[0];
+        remaining = remaining[1..];
+        Position += 1;
+        return value;
+    }
+
+    public ushort ReadUInt16()
+    {
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(ReadBytes(2));
+        Position += 2;
+        remaining = remaining[2..];
+        return value;
+    }
+
+    public short ReadInt16()
+    {
+        var value = BinaryPrimitives.ReadInt16LittleEndian(ReadBytes(2));
+        Position += 2;
+        remaining = remaining[2..];
+        return value;
+    }
+
+    public uint ReadUInt32()
+    {
+        var value = BinaryPrimitives.ReadUInt32LittleEndian(ReadBytes(4));
+        Position += 4;
+        remaining = remaining[4..];
+        return value;
+    }
+
+    public int ReadInt32()
+    {
+        var value = BinaryPrimitives.ReadInt32LittleEndian(ReadBytes(4));
+        Position += 4;
+        remaining = remaining[4..];
+        return value;
+    }
+
+    public float ReadSingle()
+    {
+        var value = BinaryPrimitives.ReadSingleLittleEndian(ReadBytes(4));
+        Position += 4;
+        remaining = remaining[4..];
+        return value;
+    }
+
+    public Ts4ResourceKey ReadResourceKey() =>
+        new(ReadUInt32(), ReadUInt32(), ReadUInt64());
+
+    public ulong ReadUInt64()
+    {
+        var value = BinaryPrimitives.ReadUInt64LittleEndian(ReadBytes(8));
+        Position += 8;
+        remaining = remaining[8..];
+        return value;
+    }
+
+    public ReadOnlySpan<byte> ReadBytes(int count)
+    {
+        Ensure(count);
+        return remaining[..count];
+    }
+
+    private void Ensure(int count)
+    {
+        if (count < 0 || remaining.Length < count)
+        {
+            throw new InvalidDataException("Unexpected end of TS4 chunk data.");
+        }
+    }
+}
+
+internal enum Ts4VertexUsage : byte
+{
+    Position = 0,
+    Normal = 1,
+    Uv = 2,
+    BlendIndex = 3,
+    BlendWeight = 4,
+    Color = 5,
+    Tangent = 6
+}
+
+internal sealed record Ts4VertexElement(Ts4VertexUsage Usage, byte UsageIndex, byte Format, ushort Offset);
+
+internal sealed class Ts4VrtfChunk
+{
+    public required int VertexStride { get; init; }
+    public required IReadOnlyList<Ts4VertexElement> Elements { get; init; }
+
+    public static Ts4VrtfChunk Parse(ReadOnlySpan<byte> data)
+    {
+        var reader = new SpanReader(data);
+        reader.ExpectTag("VRTF");
+        _ = reader.ReadUInt32();
+        var stride = reader.ReadUInt16();
+        var elementCount = reader.ReadUInt16();
+        _ = reader.ReadUInt32();
+
+        var elements = new List<Ts4VertexElement>(elementCount);
+        for (var index = 0; index < elementCount; index++)
+        {
+            var usage = (Ts4VertexUsage)reader.ReadByte();
+            var usageIndex = reader.ReadByte();
+            var format = reader.ReadByte();
+            _ = reader.ReadByte();
+            var offset = reader.ReadUInt16();
+            _ = reader.ReadUInt16();
+            elements.Add(new Ts4VertexElement(usage, usageIndex, format, offset));
+        }
+
+        return new Ts4VrtfChunk
+        {
+            VertexStride = stride,
+            Elements = elements
+        };
+    }
+
+    public static Ts4VrtfChunk CreateShadowDefault() =>
+        new()
+        {
+            VertexStride = 16,
+            Elements =
+            [
+                new Ts4VertexElement(Ts4VertexUsage.Position, 0, 0x07, 0)
+            ]
+        };
+}
+
+internal sealed record Ts4DecodedVertex(float[] Position, float[]? Normal, float[]? Tangent, float[]? Uv0);
+
+internal sealed class Ts4VbufChunk
+{
+    private readonly byte[] rawData;
+    private readonly Ts4ChunkReference swizzleInfoReference;
+
+    private Ts4VbufChunk(byte[] rawData, Ts4ChunkReference swizzleInfoReference)
+    {
+        this.rawData = rawData;
+        this.swizzleInfoReference = swizzleInfoReference;
+    }
+
+    public static Ts4VbufChunk Parse(ReadOnlySpan<byte> data)
+    {
+        var reader = new SpanReader(data);
+        reader.ExpectTag("VBUF");
+        _ = reader.ReadUInt32();
+        _ = reader.ReadUInt32();
+        var swizzleInfoReference = new Ts4ChunkReference(reader.ReadUInt32());
+
+        var payload = data[reader.Position..].ToArray();
+        return new Ts4VbufChunk(payload, swizzleInfoReference);
+    }
+
+    public IReadOnlyList<Ts4DecodedVertex> ReadVertices(Ts4VrtfChunk vrtf, uint streamOffset, int vertexCount, float[] uvScales)
+    {
+        if (!swizzleInfoReference.IsNull)
+        {
+            throw new NotSupportedException("Swizzled VBUF layouts are not supported in this pass.");
+        }
+
+        var results = new List<Ts4DecodedVertex>(vertexCount);
+        for (var index = 0; index < vertexCount; index++)
+        {
+            var vertexOffset = checked((int)streamOffset + (index * vrtf.VertexStride));
+            if (vertexOffset < 0 || vertexOffset + vrtf.VertexStride > rawData.Length)
+            {
+                break;
+            }
+
+            float[]? position = null;
+            float[]? normal = null;
+            float[]? tangent = null;
+            float[]? uv0 = null;
+
+            foreach (var element in vrtf.Elements)
+            {
+                var offset = vertexOffset + element.Offset;
+                if (offset < 0 || offset >= rawData.Length)
+                {
+                    continue;
+                }
+
+                switch (element.Usage)
+                {
+                    case Ts4VertexUsage.Position:
+                        position = ReadVector3(rawData, offset, element.Format);
+                        break;
+                    case Ts4VertexUsage.Normal:
+                        normal = ReadNormalLike(rawData, offset, element.Format);
+                        break;
+                    case Ts4VertexUsage.Tangent:
+                        tangent = ReadNormalLike(rawData, offset, element.Format);
+                        break;
+                    case Ts4VertexUsage.Uv when element.UsageIndex == 0:
+                        uv0 = ReadUv(rawData, offset, element.Format, uvScales);
+                        break;
+                }
+            }
+
+            if (position is null)
+            {
+                continue;
+            }
+
+            results.Add(new Ts4DecodedVertex(position, normal, tangent, uv0));
+        }
+
+        return results;
+    }
+
+    private static float[] ReadVector3(byte[] data, int offset, byte format) => format switch
+    {
+        0x02 => [ReadSingle(data, offset), ReadSingle(data, offset + 4), ReadSingle(data, offset + 8)],
+        0x07 => DecodeShort4Normalized(data, offset),
+        _ => throw new NotSupportedException($"Unsupported position vertex format 0x{format:X2}.")
+    };
+
+    private static float[] ReadNormalLike(byte[] data, int offset, byte format) => format switch
+    {
+        0x05 => DecodeColor4Normalized(data, offset),
+        0x07 => DecodeShort4Normalized(data, offset),
+        _ => throw new NotSupportedException($"Unsupported normal/tangent vertex format 0x{format:X2}.")
+    };
+
+    private static float[] ReadUv(byte[] data, int offset, byte format, float[] uvScales)
+    {
+        var scaleU = uvScales.Length > 0 ? uvScales[0] : 1f;
+        var scaleV = uvScales.Length > 1 ? uvScales[1] : scaleU;
+
+        var uv = format switch
+        {
+            0x01 => [ReadSingle(data, offset), ReadSingle(data, offset + 4)],
+            0x06 => DecodeShort2Normalized(data, offset),
+            0x07 => DecodeShort4Normalized(data, offset)[..2],
+            _ => throw new NotSupportedException($"Unsupported UV vertex format 0x{format:X2}.")
+        };
+
+        uv[0] *= scaleU;
+        uv[1] *= scaleV;
+        return uv;
+    }
+
+    private static float[] DecodeColor4Normalized(byte[] data, int offset)
+    {
+        var x = ((data[offset + 2] / 255f) * 2f) - 1f;
+        var y = ((data[offset + 1] / 255f) * 2f) - 1f;
+        var z = ((data[offset] / 255f) * 2f) - 1f;
+        return [x, y, z];
+    }
+
+    private static float[] DecodeShort4Normalized(byte[] data, int offset)
+    {
+        var x = ReadInt16(data, offset);
+        var y = ReadInt16(data, offset + 2);
+        var z = ReadInt16(data, offset + 4);
+        var w = ReadUInt16(data, offset + 6);
+        var scale = w == 0 ? (float)short.MaxValue : w;
+        return [x / (float)scale, y / (float)scale, z / (float)scale];
+    }
+
+    private static float[] DecodeShort2Normalized(byte[] data, int offset)
+    {
+        var u = ReadInt16(data, offset) / (float)short.MaxValue;
+        var v = ReadInt16(data, offset + 2) / (float)short.MaxValue;
+        return [u, v];
+    }
+
+    private static float ReadSingle(byte[] data, int offset) =>
+        BinaryPrimitives.ReadSingleLittleEndian(data.AsSpan(offset, 4));
+
+    private static short ReadInt16(byte[] data, int offset) =>
+        BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset, 2));
+
+    private static ushort ReadUInt16(byte[] data, int offset) =>
+        BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(offset, 2));
+}
+
+internal sealed class Ts4IbufChunk
+{
+    private readonly int indexSize;
+    private readonly byte[] rawData;
+
+    private Ts4IbufChunk(int indexSize, byte[] rawData)
+    {
+        this.indexSize = indexSize;
+        this.rawData = rawData;
+    }
+
+    public static Ts4IbufChunk Parse(ReadOnlySpan<byte> data)
+    {
+        var reader = new SpanReader(data);
+        reader.ExpectTag("IBUF");
+        _ = reader.ReadUInt32();
+        var flags = reader.ReadUInt32();
+        var payload = data[reader.Position..].ToArray();
+        var indexSize = (flags & 0x1) != 0 ? 4 : 2;
+        return new Ts4IbufChunk(indexSize, payload);
+    }
+
+    public IReadOnlyList<uint> ReadIndices(int startIndex, int count)
+    {
+        var results = new List<uint>(count);
+        var startOffset = startIndex * indexSize;
+        for (var offset = startOffset; offset + indexSize <= rawData.Length && results.Count < count; offset += indexSize)
+        {
+            results.Add(indexSize == 4
+                ? BinaryPrimitives.ReadUInt32LittleEndian(rawData.AsSpan(offset, 4))
+                : BinaryPrimitives.ReadUInt16LittleEndian(rawData.AsSpan(offset, 2)));
+        }
+
+        return results;
+    }
 }
 
 internal sealed class Ts4RcolResource

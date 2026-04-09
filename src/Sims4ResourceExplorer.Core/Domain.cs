@@ -9,12 +9,6 @@ public enum SourceKind
     Mods
 }
 
-public enum BrowserMode
-{
-    RawResources,
-    LogicalAssets
-}
-
 public enum AssetKind
 {
     BuildBuy,
@@ -53,7 +47,11 @@ public sealed record ResourceMetadata(
     bool IsPreviewable,
     bool IsExportCapable,
     string AssetLinkageSummary,
-    string Diagnostics);
+    string Diagnostics)
+{
+    public bool HasKnownCompression => IsCompressed.HasValue;
+    public bool IsLinkedToAsset => !string.IsNullOrWhiteSpace(AssetLinkageSummary);
+}
 
 public sealed record DiscoveredPackage(
     DataSourceDefinition Source,
@@ -88,32 +86,17 @@ public sealed record AssetSummary(
     string? ThumbnailTgi,
     int VariantCount,
     int LinkedResourceCount,
-    string Diagnostics);
+    string Diagnostics)
+{
+    public bool HasThumbnail => !string.IsNullOrWhiteSpace(ThumbnailTgi);
+    public bool HasVariants => VariantCount > 1;
+}
 
 public sealed record AssetGraph(
     AssetSummary Summary,
     IReadOnlyList<ResourceMetadata> LinkedResources,
     IReadOnlyList<string> Diagnostics,
     BuildBuyAssetGraph? BuildBuyGraph = null);
-
-public sealed record ResourceQuery(
-    string SearchText,
-    BrowserMode BrowserMode,
-    bool BuildBuyOnly = false,
-    bool CasOnly = false,
-    bool AudioOnly = false,
-    bool PreviewableOnly = false,
-    bool ExportCapableOnly = false,
-    Guid? DataSourceId = null,
-    string? PackagePath = null,
-    int Limit = 500);
-
-public sealed record LogicalAssetQuery(
-    string SearchText,
-    bool BuildBuyOnly = false,
-    bool CasOnly = false,
-    Guid? DataSourceId = null,
-    int Limit = 500);
 
 public sealed record IndexingRunOptions(
     int MaxPackageConcurrency,
@@ -422,8 +405,8 @@ public interface IIndexStore
     Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
     Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken);
     Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken);
-    Task<IReadOnlyList<ResourceMetadata>> QueryResourcesAsync(ResourceQuery query, CancellationToken cancellationToken);
-    Task<IReadOnlyList<AssetSummary>> QueryAssetsAsync(LogicalAssetQuery query, CancellationToken cancellationToken);
+    Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken);
+    Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken);
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);

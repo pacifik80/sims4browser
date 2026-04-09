@@ -99,6 +99,10 @@ public sealed class AssimpFbxExportService : IFbxExportService
         };
 
         await File.WriteAllTextAsync(Path.Combine(assetFolder, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions), cancellationToken);
+        if (request.MaterialManifest is not null)
+        {
+            await File.WriteAllTextAsync(Path.Combine(assetFolder, "material_manifest.json"), JsonSerializer.Serialize(request.MaterialManifest, JsonOptions), cancellationToken);
+        }
         await File.WriteAllTextAsync(Path.Combine(assetFolder, "metadata.json"), JsonSerializer.Serialize(metadata, JsonOptions), cancellationToken);
 
         return new ExportedFileResult(true, fbxPath, "FBX export completed.");
