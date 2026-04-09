@@ -27,9 +27,13 @@ public sealed class ExplorerTests : IDisposable
         File.WriteAllText(Path.Combine(gameRoot, "Nested", "dlc.package"), string.Empty);
 
         var scanner = new FileSystemPackageScanner();
-        var results = await scanner.DiscoverPackagePathsAsync(
+        var results = new List<DiscoveredPackage>();
+        await foreach (var package in scanner.DiscoverPackagesAsync(
             [new DataSourceDefinition(Guid.NewGuid(), "Game", gameRoot, SourceKind.Game)],
-            CancellationToken.None);
+            CancellationToken.None))
+        {
+            results.Add(package);
+        }
 
         Assert.Equal(2, results.Count);
     }
@@ -187,8 +191,8 @@ public sealed class ExplorerTests : IDisposable
             packagePath,
             new ResourceKeyRecord(type, group, 1, typeName),
             name,
-            1,
-            1,
+            1L,
+            1L,
             false,
             typeName.Contains("PNG", StringComparison.OrdinalIgnoreCase) ? PreviewKind.Texture :
             typeName.Contains("Audio", StringComparison.OrdinalIgnoreCase) ? PreviewKind.Audio :
@@ -235,6 +239,9 @@ public sealed class ExplorerTests : IDisposable
 
         public Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken) =>
+            Task.FromResult(resource);
 
         public Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken) =>
             Task.FromResult(bytesByTgi[key.FullTgi]);

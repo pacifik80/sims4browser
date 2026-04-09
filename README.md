@@ -66,4 +66,4 @@ The app never modifies or repacks `.package` files. Cache, logs, and exports are
 
 ## Indexing note
 
-Indexing now runs through a bounded background worker pipeline with a single batched SQLite writer, throttled progress snapshots, per-package phase/counter reporting, heartbeat diagnostics, and an end-of-run summary. The app now opens a dedicated indexing dialog with stable per-worker rows, a bounded recent-activity log, and a user-selectable worker count that is remembered between runs. Package internals remain single-threaded in this pass because parser/thread-safety assumptions for intra-package parallel reads were not expanded here.
+Indexing now uses a fast metadata-first path: package discovery streams into the worker queue, unchanged packages are skipped from one bulk fingerprint preload, and the hot scan loop records TGI/type/preview metadata without per-resource name or size lookups. Resource names and precise sizes are enriched lazily when a specific resource is opened or exported, then persisted back into SQLite so they do not need to be recomputed repeatedly.

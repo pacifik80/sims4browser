@@ -46,14 +46,26 @@ public sealed record ResourceMetadata(
     string PackagePath,
     ResourceKeyRecord Key,
     string? Name,
-    long CompressedSize,
-    long UncompressedSize,
-    bool IsCompressed,
+    long? CompressedSize,
+    long? UncompressedSize,
+    bool? IsCompressed,
     PreviewKind PreviewKind,
     bool IsPreviewable,
     bool IsExportCapable,
     string AssetLinkageSummary,
     string Diagnostics);
+
+public sealed record DiscoveredPackage(
+    DataSourceDefinition Source,
+    string PackagePath,
+    long FileSize,
+    DateTimeOffset LastWriteTimeUtc);
+
+public sealed record PackageFingerprint(
+    Guid DataSourceId,
+    string PackagePath,
+    long FileSize,
+    DateTimeOffset LastWriteTimeUtc);
 
 public sealed record PackageScanResult(
     Guid DataSourceId,
@@ -200,6 +212,8 @@ public sealed record PackageRunSummary(
 
 public sealed record IndexingRunSummary(
     TimeSpan TotalElapsed,
+    int PackagesDiscovered,
+    int PackagesQueued,
     int PackagesProcessed,
     int PackagesSkipped,
     int PackagesFailed,
@@ -345,12 +359,13 @@ public sealed record ExportedFileResult(bool Success, string? OutputPath, string
 
 public interface IPackageScanner
 {
-    Task<IReadOnlyList<string>> DiscoverPackagePathsAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken);
+    IAsyncEnumerable<DiscoveredPackage> DiscoverPackagesAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken);
 }
 
 public interface IResourceCatalogService
 {
     Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken);
+    Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken);
     Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken);
     Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken);
     Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken);
@@ -402,13 +417,26 @@ public interface IIndexStore
 {
     Task InitializeAsync(CancellationToken cancellationToken);
     Task UpsertDataSourcesAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken);
+    Task<IReadOnlyDictionary<string, PackageFingerprint>> LoadPackageFingerprintsAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken);
     Task<bool> NeedsRescanAsync(Guid dataSourceId, string packagePath, long fileSize, DateTimeOffset lastWriteTimeUtc, CancellationToken cancellationToken);
     Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
+    Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken);
+    Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> QueryResourcesAsync(ResourceQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<AssetSummary>> QueryAssetsAsync(LogicalAssetQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken);
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);
+}
+
+public interface IIndexWriteSession : IAsyncDisposable
+{
+    Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
+}
+
+public interface IResourceMetadataEnrichmentService
+{
+    Task<ResourceMetadata> EnrichAsync(ResourceMetadata resource, CancellationToken cancellationToken);
 }
 
 public interface ICacheService

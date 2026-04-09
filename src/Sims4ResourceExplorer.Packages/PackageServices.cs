@@ -5,29 +5,31 @@ namespace Sims4ResourceExplorer.Packages;
 
 public sealed class FileSystemPackageScanner : IPackageScanner
 {
-    public Task<IReadOnlyList<string>> DiscoverPackagePathsAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken) =>
-        Task.Run<IReadOnlyList<string>>(() =>
+    public async IAsyncEnumerable<DiscoveredPackage> DiscoverPackagesAsync(IEnumerable<DataSourceDefinition> sources, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        foreach (var source in sources.Where(static source => source.IsEnabled))
         {
-            var results = new List<string>();
+            cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (var source in sources.Where(static source => source.IsEnabled))
+            if (!Directory.Exists(source.RootPath))
+            {
+                continue;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(source.RootPath, "*.package", SearchOption.AllDirectories))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-
-                if (!Directory.Exists(source.RootPath))
+                var info = new FileInfo(file);
+                if (!info.Exists)
                 {
                     continue;
                 }
 
-                foreach (var file in Directory.EnumerateFiles(source.RootPath, "*.package", SearchOption.AllDirectories))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    results.Add(file);
-                }
+                yield return new DiscoveredPackage(source, file, info.Length, info.LastWriteTimeUtc);
+                await Task.Yield();
             }
-
-            return results;
-        }, cancellationToken);
+        }
+    }
 }
 
 public sealed class LlamaResourceCatalogService : IResourceCatalogService
@@ -35,18 +37,18 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
     public async Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken)
     {
         var diagnostics = new List<string>();
-        var resources = new List<ResourceMetadata>();
         var info = new FileInfo(packagePath);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         progress?.Report(new PackageScanProgress("opening package", 0, 0, 0, stopwatch.Elapsed, $"Opening {Path.GetFileName(packagePath)}"));
 
         await using var package = await OpenPackageAsync(packagePath, cancellationToken);
         progress?.Report(new PackageScanProgress("reading package index", 0, 0, 0, stopwatch.Elapsed));
-        var keys = await package.GetKeysAsync(ResourceKeyOrder.Preserve, cancellationToken);
+        var keys = package.Keys;
         progress?.Report(new PackageScanProgress("enumerating resources", keys.Count, 0, 0, stopwatch.Elapsed));
 
         const int reportEveryResources = 250;
         var lastReportAt = TimeSpan.Zero;
+        var resources = new List<ResourceMetadata>(keys.Count);
 
         for (var index = 0; index < keys.Count; index++)
         {
@@ -54,33 +56,6 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
             var key = keys[index];
 
             var resourceKey = ToCoreKey(key);
-            string? name = null;
-            long uncompressedSize = 0;
-            long compressedSize = 0;
-            var isCompressed = false;
-            var itemDiagnostics = string.Empty;
-
-            try
-            {
-                name = await package.GetNameByKeyAsync(key, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                itemDiagnostics = $"Name lookup failed: {ex.Message}";
-            }
-
-            try
-            {
-                uncompressedSize = await package.GetSizeAsync(key, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                itemDiagnostics = AppendDiagnostic(itemDiagnostics, $"Size lookup failed: {ex.Message}");
-            }
-
-            compressedSize = uncompressedSize;
-            isCompressed = false;
-
             var previewKind = ResourceTypeHints.GetPreviewKind(resourceKey.TypeName);
             resources.Add(new ResourceMetadata(
                 Guid.NewGuid(),
@@ -88,15 +63,15 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
                 source.Kind,
                 packagePath,
                 resourceKey,
-                name,
-                compressedSize,
-                uncompressedSize,
-                isCompressed,
+                null,
+                null,
+                null,
+                null,
                 previewKind,
                 previewKind is not PreviewKind.Unsupported,
                 true,
                 ResourceTypeHints.GetAssetLinkageSummary(resourceKey.TypeName),
-                itemDiagnostics));
+                string.Empty));
 
             var processed = index + 1;
             var elapsed = stopwatch.Elapsed;
@@ -112,7 +87,6 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
                     $"{Path.GetFileName(packagePath)}: extracting metadata {processed:N0} / {keys.Count:N0} resources"));
             }
         }
-
         progress?.Report(new PackageScanProgress("finalizing package", keys.Count, keys.Count, 0, stopwatch.Elapsed));
 
         return new PackageScanResult(
@@ -123,6 +97,53 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
             info.Exists ? info.LastWriteTimeUtc : DateTime.UtcNow,
             resources,
             diagnostics);
+    }
+
+    public async Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    {
+        await using var package = await OpenPackageAsync(resource.PackagePath, cancellationToken);
+        var key = ToLlamaKey(resource.Key);
+
+        string? name = resource.Name;
+        long? uncompressedSize = resource.UncompressedSize;
+        long? compressedSize = resource.CompressedSize;
+        bool? isCompressed = resource.IsCompressed;
+        var diagnostics = resource.Diagnostics;
+
+        if (name is null)
+        {
+            try
+            {
+                name = await package.GetNameByKeyAsync(key, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                diagnostics = AppendDiagnostic(diagnostics, $"Name lookup failed: {ex.Message}");
+            }
+        }
+
+        if (uncompressedSize is null)
+        {
+            try
+            {
+                uncompressedSize = await package.GetSizeAsync(key, cancellationToken);
+                compressedSize ??= uncompressedSize;
+                isCompressed ??= false;
+            }
+            catch (Exception ex)
+            {
+                diagnostics = AppendDiagnostic(diagnostics, $"Size lookup failed: {ex.Message}");
+            }
+        }
+
+        return resource with
+        {
+            Name = name,
+            CompressedSize = compressedSize,
+            UncompressedSize = uncompressedSize,
+            IsCompressed = isCompressed,
+            Diagnostics = diagnostics
+        };
     }
 
     public async Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken)
@@ -199,7 +220,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete,
-                bufferSize: 4096,
+                bufferSize: 131072,
                 options: FileOptions.Asynchronous | FileOptions.SequentialScan);
 
             return await DataBasePackedFile.FromStreamAsync(stream, cancellationToken);

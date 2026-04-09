@@ -74,12 +74,13 @@ Unit and integration tests using a small documented fixture corpus.
 ### 1. Index packages
 
 1. User selects one or more root folders for Game, DLC, and optional Mods.
-2. `IPackageScanner` enumerates candidate `.package` files.
-3. `IIndexStore` compares file path, file size, and last write time against stored fingerprints.
-4. Changed packages are queued into a bounded package-worker pipeline.
+2. `IPackageScanner` streams candidate `.package` files as they are discovered instead of materializing the full list first.
+3. `IIndexStore` bulk-loads stored package fingerprints once, and discovery compares file path, file size, and last write time in memory to skip unchanged packages without one-query-per-package overhead.
+4. Changed packages are queued immediately into a bounded package-worker pipeline, so scanning can start before discovery completes.
 5. Package scans stay single-threaded within each package in the current build, but multiple packages can scan concurrently.
-6. A single SQLite writer persists package results with batched inserts inside transactions to avoid single-row write bottlenecks.
-7. UI consumes throttled progress snapshots with stable worker-slot detail, worker/backlog counts, bounded recent activity, heartbeat diagnostics, and an end-of-run summary while remaining responsive.
+6. The hot scan path records cheap browse metadata only: TGI/type, preview/export flags, and linkage hints. Resource names and precise sizes are deferred until a specific resource is opened or exported.
+7. A single SQLite writer session keeps one connection open for the whole indexing run and persists package results inside per-package transactions.
+8. UI consumes throttled progress snapshots with stable worker-slot detail, worker/backlog counts, heartbeat diagnostics, and an end-of-run summary while remaining responsive.
 
 ### 2. Browse raw resources
 
@@ -125,6 +126,7 @@ Payload blobs are not persisted in SQLite in v1 except for optional small thumbn
 - Long-running export/index tasks report structured progress and warnings.
 - Indexing progress is intentionally throttled before it reaches the UI so status visibility does not become the next bottleneck.
 - The browser surface is decoupled from live indexing progress updates; indexing uses a dedicated modal dialog and the main browse lists refresh only after the run completes or when the user explicitly refreshes.
+- Deferred metadata means browse rows may initially show blank/deferred names and sizes until a resource is explicitly inspected.
 
 ## Biggest technical risks
 

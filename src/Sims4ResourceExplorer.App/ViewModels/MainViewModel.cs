@@ -16,6 +16,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IPreviewService previewService;
     private readonly IRawExportService rawExportService;
     private readonly IAssetGraphBuilder assetGraphBuilder;
+    private readonly IResourceMetadataEnrichmentService resourceMetadataEnrichmentService;
     private readonly IAudioPlayer audioPlayer;
     private readonly IndexingRunOptions defaultIndexingOptions;
     private readonly IAppPreferencesService appPreferencesService;
@@ -30,6 +31,7 @@ public sealed partial class MainViewModel : ObservableObject
         IPreviewService previewService,
         IRawExportService rawExportService,
         IAssetGraphBuilder assetGraphBuilder,
+        IResourceMetadataEnrichmentService resourceMetadataEnrichmentService,
         IAudioPlayer audioPlayer,
         IndexingRunOptions defaultIndexingOptions,
         IAppPreferencesService appPreferencesService)
@@ -39,6 +41,7 @@ public sealed partial class MainViewModel : ObservableObject
         this.previewService = previewService;
         this.rawExportService = rawExportService;
         this.assetGraphBuilder = assetGraphBuilder;
+        this.resourceMetadataEnrichmentService = resourceMetadataEnrichmentService;
         this.audioPlayer = audioPlayer;
         this.defaultIndexingOptions = defaultIndexingOptions;
         this.appPreferencesService = appPreferencesService;
@@ -207,6 +210,8 @@ public sealed partial class MainViewModel : ObservableObject
 
         try
         {
+            resource = await resourceMetadataEnrichmentService.EnrichAsync(resource, CancellationToken.None);
+            selectedResource = resource;
             var preview = await previewService.CreatePreviewAsync(resource, CancellationToken.None);
             await ApplyPreviewAsync(resource, preview, null);
         }
@@ -243,6 +248,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         selectedResource = root;
+        root = await resourceMetadataEnrichmentService.EnrichAsync(root, CancellationToken.None);
+        selectedResource = root;
         var preview = await previewService.CreatePreviewAsync(root, CancellationToken.None);
         await ApplyPreviewAsync(root, preview, assetDetails);
     }
@@ -255,6 +262,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        selectedResource = await resourceMetadataEnrichmentService.EnrichAsync(selectedResource, CancellationToken.None);
         var result = await rawExportService.ExportAsync(new RawExportRequest(selectedResource, outputDirectory), CancellationToken.None);
         StatusMessage = result.Message;
         AppendLog(result.OutputPath is null ? result.Message : $"{result.Message} {result.OutputPath}");
@@ -344,14 +352,18 @@ public sealed partial class MainViewModel : ObservableObject
         Group: {resource.Key.Group:X8}
         Instance: {resource.Key.FullInstance:X16}
         TGI: {resource.Key.FullTgi}
-        Name: {resource.Name ?? "(none)"}
-        Compressed Size: {resource.CompressedSize}
-        Uncompressed Size: {resource.UncompressedSize}
-        Compressed: {resource.IsCompressed}
+        Name: {resource.Name ?? "(deferred)"}
+        Compressed Size: {FormatSize(resource.CompressedSize)}
+        Uncompressed Size: {FormatSize(resource.UncompressedSize)}
+        Compressed: {FormatCompressed(resource.IsCompressed)}
         Preview Kind: {resource.PreviewKind}
         Linkage: {resource.AssetLinkageSummary}
         Diagnostics: {resource.Diagnostics}
         """;
+
+    private static string FormatSize(long? value) => value?.ToString() ?? "(deferred)";
+
+    private static string FormatCompressed(bool? value) => value?.ToString() ?? "(deferred)";
 
     private static string BuildAssetDetails(AssetSummary asset, AssetGraph graph) =>
         $"""
@@ -390,9 +402,11 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void AppendRunSummary(IndexingRunSummary summary)
     {
+        var indexedPackages = Math.Max(0, summary.PackagesProcessed - summary.PackagesSkipped - summary.PackagesFailed);
         Log.AppendRange(
         [
-            $"Index summary: elapsed {summary.TotalElapsed:hh\\:mm\\:ss}, packages {summary.PackagesProcessed}, skipped {summary.PackagesSkipped}, failed {summary.PackagesFailed}, resources {summary.ResourcesProcessed:N0}, average {summary.AverageThroughput:N0} res/sec.",
+            $"Index summary: elapsed {summary.TotalElapsed:hh\\:mm\\:ss}, discovered {summary.PackagesDiscovered}, queued {summary.PackagesQueued}, indexed {indexedPackages}, skipped {summary.PackagesSkipped}, failed {summary.PackagesFailed}, resources {summary.ResourcesProcessed:N0}, average {summary.AverageThroughput:N0} res/sec.",
+            $"Hot phases: {string.Join("; ", summary.PhaseBreakdown.Take(5))}",
             $"Slowest packages: {string.Join("; ", summary.SlowestPackages.Select(static package => $"{Path.GetFileName(package.PackagePath)} {package.Elapsed:hh\\:mm\\:ss}"))}",
             summary.Failures.Count == 0
                 ? "Failures: none."

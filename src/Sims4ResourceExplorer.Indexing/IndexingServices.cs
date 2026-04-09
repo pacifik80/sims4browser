@@ -30,7 +30,6 @@ public sealed class FileSystemCacheService : ICacheService
 
 public sealed class SqliteIndexStore : IIndexStore
 {
-    private const int InsertBatchSize = 200;
     private readonly ICacheService cacheService;
 
     public SqliteIndexStore(ICacheService cacheService)
@@ -74,9 +73,9 @@ public sealed class SqliteIndexStore : IIndexStore
                 instance_hex TEXT NOT NULL,
                 full_tgi TEXT NOT NULL,
                 name TEXT NULL,
-                compressed_size INTEGER NOT NULL,
-                uncompressed_size INTEGER NOT NULL,
-                is_compressed INTEGER NOT NULL,
+                compressed_size INTEGER NULL,
+                uncompressed_size INTEGER NULL,
+                is_compressed INTEGER NULL,
                 preview_kind TEXT NOT NULL,
                 is_previewable INTEGER NOT NULL,
                 is_export_capable INTEGER NOT NULL,
@@ -106,6 +105,7 @@ public sealed class SqliteIndexStore : IIndexStore
             """;
 
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureDeferredMetadataSchemaAsync(connection, cancellationToken);
     }
 
     public async Task UpsertDataSourcesAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken)
@@ -138,6 +138,47 @@ public sealed class SqliteIndexStore : IIndexStore
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyDictionary<string, PackageFingerprint>> LoadPackageFingerprintsAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken)
+    {
+        var sourceIds = dataSourceIds.Select(id => id.ToString("D")).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (sourceIds.Length == 0)
+        {
+            return new Dictionary<string, PackageFingerprint>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        var parameterNames = new List<string>(sourceIds.Length);
+        for (var index = 0; index < sourceIds.Length; index++)
+        {
+            var parameterName = $"$sourceId{index}";
+            parameterNames.Add(parameterName);
+            command.Parameters.AddWithValue(parameterName, sourceIds[index]);
+        }
+
+        command.CommandText =
+            $"""
+            SELECT data_source_id, package_path, file_size, last_write_utc
+            FROM packages
+            WHERE data_source_id IN ({string.Join(", ", parameterNames)});
+            """;
+
+        var fingerprints = new Dictionary<string, PackageFingerprint>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var dataSourceId = Guid.Parse(reader.GetString(0));
+            var packagePath = reader.GetString(1);
+            fingerprints[BuildFingerprintKey(dataSourceId, packagePath)] = new PackageFingerprint(
+                dataSourceId,
+                packagePath,
+                reader.GetInt64(2),
+                DateTimeOffset.Parse(reader.GetString(3), null, System.Globalization.DateTimeStyles.RoundtripKind));
+        }
+
+        return fingerprints;
+    }
+
     public async Task<bool> NeedsRescanAsync(Guid dataSourceId, string packagePath, long fileSize, DateTimeOffset lastWriteTimeUtc, CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
@@ -165,41 +206,38 @@ public sealed class SqliteIndexStore : IIndexStore
 
     public async Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
     {
+        await using var session = await OpenWriteSessionAsync(cancellationToken);
+        await session.ReplacePackageAsync(packageScan, assets, cancellationToken);
+    }
+
+    public async Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken)
+    {
+        var connection = await OpenConnectionAsync(cancellationToken);
+        return new SqliteIndexWriteSession(connection);
+    }
+
+    public async Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    {
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-
-        await ExecuteNonQueryAsync(connection, transaction,
-            "DELETE FROM resources WHERE data_source_id = $dataSourceId AND package_path = $packagePath;",
-            cancellationToken,
-            ("$dataSourceId", packageScan.DataSourceId.ToString("D")),
-            ("$packagePath", packageScan.PackagePath));
-
-        await ExecuteNonQueryAsync(connection, transaction,
-            "DELETE FROM assets WHERE data_source_id = $dataSourceId AND package_path = $packagePath;",
-            cancellationToken,
-            ("$dataSourceId", packageScan.DataSourceId.ToString("D")),
-            ("$packagePath", packageScan.PackagePath));
-
-        await ExecuteNonQueryAsync(connection, transaction,
+        await using var command = connection.CreateCommand();
+        command.CommandText =
             """
-            INSERT INTO packages(data_source_id, package_path, file_size, last_write_utc, indexed_utc)
-            VALUES ($dataSourceId, $packagePath, $fileSize, $lastWriteUtc, $indexedUtc)
-            ON CONFLICT(data_source_id, package_path) DO UPDATE SET
-                file_size = excluded.file_size,
-                last_write_utc = excluded.last_write_utc,
-                indexed_utc = excluded.indexed_utc;
-            """,
-            cancellationToken,
-            ("$dataSourceId", packageScan.DataSourceId.ToString("D")),
-            ("$packagePath", packageScan.PackagePath),
-            ("$fileSize", packageScan.FileSize),
-            ("$lastWriteUtc", packageScan.LastWriteTimeUtc.ToString("O")),
-            ("$indexedUtc", DateTimeOffset.UtcNow.ToString("O")));
-
-        await InsertResourceBatchAsync(connection, transaction, packageScan.Resources, cancellationToken);
-        await InsertAssetBatchAsync(connection, transaction, assets, cancellationToken);
-
-        await transaction.CommitAsync(cancellationToken);
+            UPDATE resources
+            SET name = $name,
+                compressed_size = $compressedSize,
+                uncompressed_size = $uncompressedSize,
+                is_compressed = $isCompressed,
+                diagnostics = $diagnostics
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", resource.Id.ToString("D"));
+        command.Parameters.AddWithValue("$name", (object?)resource.Name ?? DBNull.Value);
+        command.Parameters.AddWithValue("$compressedSize", (object?)resource.CompressedSize ?? DBNull.Value);
+        command.Parameters.AddWithValue("$uncompressedSize", (object?)resource.UncompressedSize ?? DBNull.Value);
+        command.Parameters.AddWithValue("$isCompressed", resource.IsCompressed.HasValue ? (resource.IsCompressed.Value ? 1 : 0) : DBNull.Value);
+        command.Parameters.AddWithValue("$diagnostics", resource.Diagnostics);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return resource;
     }
 
     public async Task<IReadOnlyList<ResourceMetadata>> QueryResourcesAsync(ResourceQuery query, CancellationToken cancellationToken)
@@ -355,114 +393,6 @@ public sealed class SqliteIndexStore : IIndexStore
         return connection;
     }
 
-    private static async Task InsertResourceBatchAsync(SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<ResourceMetadata> resources, CancellationToken cancellationToken)
-    {
-        foreach (var batch in Batch(resources, InsertBatchSize))
-        {
-            await using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            var sql = new StringBuilder(
-                """
-                INSERT INTO resources(
-                    id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
-                    compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics)
-                VALUES
-                """);
-
-            for (var index = 0; index < batch.Count; index++)
-            {
-                if (index > 0)
-                {
-                    sql.AppendLine(",");
-                }
-
-                sql.Append($"($id{index}, $dataSourceId{index}, $sourceKind{index}, $packagePath{index}, $typeHex{index}, $typeName{index}, $groupHex{index}, $instanceHex{index}, $fullTgi{index}, $name{index}, ");
-                sql.Append($"$compressedSize{index}, $uncompressedSize{index}, $isCompressed{index}, $previewKind{index}, $isPreviewable{index}, $isExportCapable{index}, $assetLinkageSummary{index}, $diagnostics{index})");
-
-                var resource = batch[index];
-                command.Parameters.AddWithValue($"$id{index}", resource.Id.ToString("D"));
-                command.Parameters.AddWithValue($"$dataSourceId{index}", resource.DataSourceId.ToString("D"));
-                command.Parameters.AddWithValue($"$sourceKind{index}", resource.SourceKind.ToString());
-                command.Parameters.AddWithValue($"$packagePath{index}", resource.PackagePath);
-                command.Parameters.AddWithValue($"$typeHex{index}", $"{resource.Key.Type:X8}");
-                command.Parameters.AddWithValue($"$typeName{index}", resource.Key.TypeName);
-                command.Parameters.AddWithValue($"$groupHex{index}", $"{resource.Key.Group:X8}");
-                command.Parameters.AddWithValue($"$instanceHex{index}", $"{resource.Key.FullInstance:X16}");
-                command.Parameters.AddWithValue($"$fullTgi{index}", resource.Key.FullTgi);
-                command.Parameters.AddWithValue($"$name{index}", (object?)resource.Name ?? DBNull.Value);
-                command.Parameters.AddWithValue($"$compressedSize{index}", resource.CompressedSize);
-                command.Parameters.AddWithValue($"$uncompressedSize{index}", resource.UncompressedSize);
-                command.Parameters.AddWithValue($"$isCompressed{index}", resource.IsCompressed ? 1 : 0);
-                command.Parameters.AddWithValue($"$previewKind{index}", resource.PreviewKind.ToString());
-                command.Parameters.AddWithValue($"$isPreviewable{index}", resource.IsPreviewable ? 1 : 0);
-                command.Parameters.AddWithValue($"$isExportCapable{index}", resource.IsExportCapable ? 1 : 0);
-                command.Parameters.AddWithValue($"$assetLinkageSummary{index}", resource.AssetLinkageSummary);
-                command.Parameters.AddWithValue($"$diagnostics{index}", resource.Diagnostics);
-            }
-
-            command.CommandText = sql.ToString();
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-    }
-
-    private static async Task InsertAssetBatchAsync(SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
-    {
-        foreach (var batch in Batch(assets, InsertBatchSize))
-        {
-            await using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            var sql = new StringBuilder(
-                """
-                INSERT INTO assets(
-                    id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi, thumbnail_tgi,
-                    variant_count, linked_resource_count, diagnostics)
-                VALUES
-                """);
-
-            for (var index = 0; index < batch.Count; index++)
-            {
-                if (index > 0)
-                {
-                    sql.AppendLine(",");
-                }
-
-                sql.Append($"($id{index}, $dataSourceId{index}, $sourceKind{index}, $assetKind{index}, $displayName{index}, $category{index}, $packagePath{index}, $rootTgi{index}, $thumbnailTgi{index}, ");
-                sql.Append($"$variantCount{index}, $linkedResourceCount{index}, $diagnostics{index})");
-
-                var asset = batch[index];
-                command.Parameters.AddWithValue($"$id{index}", asset.Id.ToString("D"));
-                command.Parameters.AddWithValue($"$dataSourceId{index}", asset.DataSourceId.ToString("D"));
-                command.Parameters.AddWithValue($"$sourceKind{index}", asset.SourceKind.ToString());
-                command.Parameters.AddWithValue($"$assetKind{index}", asset.AssetKind.ToString());
-                command.Parameters.AddWithValue($"$displayName{index}", asset.DisplayName);
-                command.Parameters.AddWithValue($"$category{index}", (object?)asset.Category ?? DBNull.Value);
-                command.Parameters.AddWithValue($"$packagePath{index}", asset.PackagePath);
-                command.Parameters.AddWithValue($"$rootTgi{index}", asset.RootKey.FullTgi);
-                command.Parameters.AddWithValue($"$thumbnailTgi{index}", (object?)asset.ThumbnailTgi ?? DBNull.Value);
-                command.Parameters.AddWithValue($"$variantCount{index}", asset.VariantCount);
-                command.Parameters.AddWithValue($"$linkedResourceCount{index}", asset.LinkedResourceCount);
-                command.Parameters.AddWithValue($"$diagnostics{index}", asset.Diagnostics);
-            }
-
-            command.CommandText = sql.ToString();
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-    }
-
-    private static async Task ExecuteNonQueryAsync(SqliteConnection connection, SqliteTransaction transaction, string sql, CancellationToken cancellationToken, params (string Name, object Value)[] parameters)
-    {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = sql;
-
-        foreach (var (name, value) in parameters)
-        {
-            command.Parameters.AddWithValue(name, value);
-        }
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
     private static async Task<IReadOnlyList<ResourceMetadata>> ReadResourcesAsync(SqliteCommand command, CancellationToken cancellationToken)
     {
         var results = new List<ResourceMetadata>();
@@ -485,9 +415,9 @@ public sealed class SqliteIndexStore : IIndexStore
                     Convert.ToUInt64(instanceHex, 16),
                     typeName),
                 reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.GetInt64(10),
-                reader.GetInt64(11),
-                reader.GetInt32(12) == 1,
+                reader.IsDBNull(10) ? null : reader.GetInt64(10),
+                reader.IsDBNull(11) ? null : reader.GetInt64(11),
+                reader.IsDBNull(12) ? null : reader.GetInt32(12) == 1,
                 Enum.Parse<PreviewKind>(reader.GetString(13)),
                 reader.GetInt32(14) == 1,
                 reader.GetInt32(15) == 1,
@@ -525,6 +455,293 @@ public sealed class SqliteIndexStore : IIndexStore
 
         return results;
     }
+
+    private static string BuildFingerprintKey(Guid dataSourceId, string packagePath) =>
+        $"{dataSourceId:D}|{packagePath}";
+
+    private static async Task EnsureDeferredMetadataSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = "PRAGMA table_info(resources);";
+        var requiresMigration = false;
+        await using (var reader = await pragma.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var columnName = reader.GetString(1);
+                var isNotNull = reader.GetInt32(3) == 1;
+                if (isNotNull && columnName is "compressed_size" or "uncompressed_size" or "is_compressed")
+                {
+                    requiresMigration = true;
+                    break;
+                }
+            }
+        }
+
+        if (!requiresMigration)
+        {
+            return;
+        }
+
+        await using var migration = connection.CreateCommand();
+        migration.CommandText =
+            """
+            ALTER TABLE resources RENAME TO resources_legacy;
+
+            CREATE TABLE resources (
+                id TEXT PRIMARY KEY,
+                data_source_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                package_path TEXT NOT NULL,
+                type_hex TEXT NOT NULL,
+                type_name TEXT NOT NULL,
+                group_hex TEXT NOT NULL,
+                instance_hex TEXT NOT NULL,
+                full_tgi TEXT NOT NULL,
+                name TEXT NULL,
+                compressed_size INTEGER NULL,
+                uncompressed_size INTEGER NULL,
+                is_compressed INTEGER NULL,
+                preview_kind TEXT NOT NULL,
+                is_previewable INTEGER NOT NULL,
+                is_export_capable INTEGER NOT NULL,
+                asset_linkage_summary TEXT NOT NULL,
+                diagnostics TEXT NOT NULL
+            );
+
+            INSERT INTO resources(
+                id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
+                compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics)
+            SELECT
+                id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
+                compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics
+            FROM resources_legacy;
+
+            DROP TABLE resources_legacy;
+
+            CREATE INDEX IF NOT EXISTS ix_resources_search ON resources(type_name, full_tgi, package_path, name);
+            CREATE INDEX IF NOT EXISTS ix_resources_source ON resources(data_source_id, package_path);
+            """;
+        await migration.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private sealed class SqliteIndexWriteSession : IIndexWriteSession
+    {
+        private readonly SqliteConnection connection;
+        private readonly SqliteCommand deleteResourcesCommand;
+        private readonly SqliteCommand deleteAssetsCommand;
+        private readonly SqliteCommand upsertPackageCommand;
+        private readonly SqliteCommand insertResourceCommand;
+        private readonly SqliteCommand insertAssetCommand;
+
+        public SqliteIndexWriteSession(SqliteConnection connection)
+        {
+            this.connection = connection;
+            deleteResourcesCommand = CreateDeleteResourcesCommand(connection);
+            deleteAssetsCommand = CreateDeleteAssetsCommand(connection);
+            upsertPackageCommand = CreateUpsertPackageCommand(connection);
+            insertResourceCommand = CreateInsertResourceCommand(connection);
+            insertAssetCommand = CreateInsertAssetCommand(connection);
+        }
+
+        public async Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
+        {
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            Bind(deleteResourcesCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
+            await deleteResourcesCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            Bind(deleteAssetsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
+            await deleteAssetsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            Bind(upsertPackageCommand, transaction, packageScan);
+            await upsertPackageCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            insertResourceCommand.Transaction = transaction;
+            foreach (var resource in packageScan.Resources)
+            {
+                Bind(insertResourceCommand, resource);
+                await insertResourceCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            insertAssetCommand.Transaction = transaction;
+            foreach (var asset in assets)
+            {
+                Bind(insertAssetCommand, asset);
+                await insertAssetCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await insertAssetCommand.DisposeAsync();
+            await insertResourceCommand.DisposeAsync();
+            await upsertPackageCommand.DisposeAsync();
+            await deleteAssetsCommand.DisposeAsync();
+            await deleteResourcesCommand.DisposeAsync();
+            await connection.DisposeAsync();
+        }
+
+        private static SqliteCommand CreateDeleteResourcesCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM resources WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            return command;
+        }
+
+        private static SqliteCommand CreateDeleteAssetsCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM assets WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            return command;
+        }
+
+        private static SqliteCommand CreateUpsertPackageCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO packages(data_source_id, package_path, file_size, last_write_utc, indexed_utc)
+                VALUES ($dataSourceId, $packagePath, $fileSize, $lastWriteUtc, $indexedUtc)
+                ON CONFLICT(data_source_id, package_path) DO UPDATE SET
+                    file_size = excluded.file_size,
+                    last_write_utc = excluded.last_write_utc,
+                    indexed_utc = excluded.indexed_utc;
+                """;
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            command.Parameters.Add("$fileSize", SqliteType.Integer);
+            command.Parameters.Add("$lastWriteUtc", SqliteType.Text);
+            command.Parameters.Add("$indexedUtc", SqliteType.Text);
+            return command;
+        }
+
+        private static SqliteCommand CreateInsertResourceCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO resources(
+                    id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
+                    compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics)
+                VALUES(
+                    $id, $dataSourceId, $sourceKind, $packagePath, $typeHex, $typeName, $groupHex, $instanceHex, $fullTgi, $name,
+                    $compressedSize, $uncompressedSize, $isCompressed, $previewKind, $isPreviewable, $isExportCapable, $assetLinkageSummary, $diagnostics);
+                """;
+            foreach (var parameterName in new[] { "$id", "$dataSourceId", "$sourceKind", "$packagePath", "$typeHex", "$typeName", "$groupHex", "$instanceHex", "$fullTgi", "$name", "$compressedSize", "$uncompressedSize", "$isCompressed", "$previewKind", "$isPreviewable", "$isExportCapable", "$assetLinkageSummary", "$diagnostics" })
+            {
+                command.Parameters.Add(new SqliteParameter(parameterName, DBNull.Value));
+            }
+
+            return command;
+        }
+
+        private static SqliteCommand CreateInsertAssetCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO assets(
+                    id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi, thumbnail_tgi,
+                    variant_count, linked_resource_count, diagnostics)
+                VALUES(
+                    $id, $dataSourceId, $sourceKind, $assetKind, $displayName, $category, $packagePath, $rootTgi, $thumbnailTgi,
+                    $variantCount, $linkedResourceCount, $diagnostics);
+                """;
+            foreach (var parameterName in new[] { "$id", "$dataSourceId", "$sourceKind", "$assetKind", "$displayName", "$category", "$packagePath", "$rootTgi", "$thumbnailTgi", "$variantCount", "$linkedResourceCount", "$diagnostics" })
+            {
+                command.Parameters.Add(new SqliteParameter(parameterName, DBNull.Value));
+            }
+
+            return command;
+        }
+
+        private static void Bind(SqliteCommand command, SqliteTransaction transaction, Guid dataSourceId, string packagePath)
+        {
+            command.Transaction = transaction;
+            command.Parameters["$dataSourceId"].Value = dataSourceId.ToString("D");
+            command.Parameters["$packagePath"].Value = packagePath;
+        }
+
+        private static void Bind(SqliteCommand command, SqliteTransaction transaction, PackageScanResult packageScan)
+        {
+            command.Transaction = transaction;
+            command.Parameters["$dataSourceId"].Value = packageScan.DataSourceId.ToString("D");
+            command.Parameters["$packagePath"].Value = packageScan.PackagePath;
+            command.Parameters["$fileSize"].Value = packageScan.FileSize;
+            command.Parameters["$lastWriteUtc"].Value = packageScan.LastWriteTimeUtc.ToString("O");
+            command.Parameters["$indexedUtc"].Value = DateTimeOffset.UtcNow.ToString("O");
+        }
+
+        private static void Bind(SqliteCommand command, ResourceMetadata resource)
+        {
+            command.Parameters["$id"].Value = resource.Id.ToString("D");
+            command.Parameters["$dataSourceId"].Value = resource.DataSourceId.ToString("D");
+            command.Parameters["$sourceKind"].Value = resource.SourceKind.ToString();
+            command.Parameters["$packagePath"].Value = resource.PackagePath;
+            command.Parameters["$typeHex"].Value = $"{resource.Key.Type:X8}";
+            command.Parameters["$typeName"].Value = resource.Key.TypeName;
+            command.Parameters["$groupHex"].Value = $"{resource.Key.Group:X8}";
+            command.Parameters["$instanceHex"].Value = $"{resource.Key.FullInstance:X16}";
+            command.Parameters["$fullTgi"].Value = resource.Key.FullTgi;
+            command.Parameters["$name"].Value = (object?)resource.Name ?? DBNull.Value;
+            command.Parameters["$compressedSize"].Value = (object?)resource.CompressedSize ?? DBNull.Value;
+            command.Parameters["$uncompressedSize"].Value = (object?)resource.UncompressedSize ?? DBNull.Value;
+            command.Parameters["$isCompressed"].Value = resource.IsCompressed.HasValue ? (resource.IsCompressed.Value ? 1 : 0) : DBNull.Value;
+            command.Parameters["$previewKind"].Value = resource.PreviewKind.ToString();
+            command.Parameters["$isPreviewable"].Value = resource.IsPreviewable ? 1 : 0;
+            command.Parameters["$isExportCapable"].Value = resource.IsExportCapable ? 1 : 0;
+            command.Parameters["$assetLinkageSummary"].Value = resource.AssetLinkageSummary;
+            command.Parameters["$diagnostics"].Value = resource.Diagnostics;
+        }
+
+        private static void Bind(SqliteCommand command, AssetSummary asset)
+        {
+            command.Parameters["$id"].Value = asset.Id.ToString("D");
+            command.Parameters["$dataSourceId"].Value = asset.DataSourceId.ToString("D");
+            command.Parameters["$sourceKind"].Value = asset.SourceKind.ToString();
+            command.Parameters["$assetKind"].Value = asset.AssetKind.ToString();
+            command.Parameters["$displayName"].Value = asset.DisplayName;
+            command.Parameters["$category"].Value = (object?)asset.Category ?? DBNull.Value;
+            command.Parameters["$packagePath"].Value = asset.PackagePath;
+            command.Parameters["$rootTgi"].Value = asset.RootKey.FullTgi;
+            command.Parameters["$thumbnailTgi"].Value = (object?)asset.ThumbnailTgi ?? DBNull.Value;
+            command.Parameters["$variantCount"].Value = asset.VariantCount;
+            command.Parameters["$linkedResourceCount"].Value = asset.LinkedResourceCount;
+            command.Parameters["$diagnostics"].Value = asset.Diagnostics;
+        }
+    }
+}
+
+public sealed class ResourceMetadataEnrichmentService : IResourceMetadataEnrichmentService
+{
+    private readonly IResourceCatalogService resourceCatalogService;
+    private readonly IIndexStore indexStore;
+
+    public ResourceMetadataEnrichmentService(IResourceCatalogService resourceCatalogService, IIndexStore indexStore)
+    {
+        this.resourceCatalogService = resourceCatalogService;
+        this.indexStore = indexStore;
+    }
+
+    public async Task<ResourceMetadata> EnrichAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    {
+        if (resource.Name is not null &&
+            resource.CompressedSize is not null &&
+            resource.UncompressedSize is not null &&
+            resource.IsCompressed is not null)
+        {
+            return resource;
+        }
+
+        var enriched = await resourceCatalogService.EnrichResourceAsync(resource, cancellationToken);
+        return await indexStore.PersistResourceEnrichmentAsync(enriched, cancellationToken);
+    }
 }
 
 public sealed class PackageIndexCoordinator
@@ -556,21 +773,18 @@ public sealed class PackageIndexCoordinator
             : options;
         var activeSources = sources.Where(static source => source.IsEnabled).ToArray();
         await indexStore.UpsertDataSourcesAsync(activeSources, cancellationToken);
+        var fingerprintStopwatch = Stopwatch.StartNew();
+        var fingerprints = await indexStore.LoadPackageFingerprintsAsync(activeSources.Select(static source => source.Id), cancellationToken);
+        fingerprintStopwatch.Stop();
 
-        var packagePaths = await packageScanner.DiscoverPackagePathsAsync(activeSources, cancellationToken);
-        var workItems = packagePaths
-            .Select(path => CreateWorkItem(path, activeSources))
-            .Where(static item => item is not null)
-            .Select(static item => item!)
-            .ToArray();
-
-        var state = new IndexingRunState(workItems.Length, effectiveOptions);
+        var state = new IndexingRunState(effectiveOptions);
+        state.RecordRunPhase("fingerprint preload", fingerprintStopwatch.Elapsed);
         using var reporterCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var reportLoop = RunReportingLoopAsync(progress, state, effectiveOptions, reporterCts.Token);
 
         try
         {
-            progress?.Report(state.CreateSnapshot("discovering packages", "Preparing package scan queue."));
+            progress?.Report(state.CreateSnapshot("discovering packages", "Starting package discovery and scan queue."));
 
             var scanChannel = System.Threading.Channels.Channel.CreateBounded<PackageWorkItem>(new System.Threading.Channels.BoundedChannelOptions(effectiveOptions.PackageQueueCapacity)
             {
@@ -586,11 +800,12 @@ public sealed class PackageIndexCoordinator
                 SingleReader = true
             });
 
-            var producer = ProduceWorkAsync(workItems, scanChannel.Writer, state, progress, cancellationToken);
+            await using var writeSession = await indexStore.OpenWriteSessionAsync(cancellationToken);
+            var producer = ProduceWorkAsync(activeSources, fingerprints, scanChannel.Writer, state, progress, cancellationToken);
             var workers = Enumerable.Range(0, effectiveOptions.MaxPackageConcurrency)
                 .Select(workerId => RunWorkerAsync(workerId + 1, scanChannel.Reader, persistChannel.Writer, state, cancellationToken))
                 .ToArray();
-            var writer = RunWriterAsync(persistChannel.Reader, state, cancellationToken);
+            var writer = RunWriterAsync(persistChannel.Reader, writeSession, state, cancellationToken);
 
             await producer;
             await Task.WhenAll(workers);
@@ -619,38 +834,41 @@ public sealed class PackageIndexCoordinator
     }
 
     private async Task ProduceWorkAsync(
-        IReadOnlyList<PackageWorkItem> workItems,
+        IReadOnlyList<DataSourceDefinition> activeSources,
+        IReadOnlyDictionary<string, PackageFingerprint> fingerprints,
         System.Threading.Channels.ChannelWriter<PackageWorkItem> writer,
         IndexingRunState state,
         IProgress<IndexingProgress>? progress,
         CancellationToken cancellationToken)
     {
+        var discoveryStopwatch = Stopwatch.StartNew();
+        var queueElapsed = TimeSpan.Zero;
         try
         {
-            foreach (var workItem in workItems)
+            await foreach (var discoveredPackage in packageScanner.DiscoverPackagesAsync(activeSources, cancellationToken))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var fileInfo = new FileInfo(workItem.PackagePath);
+                state.MarkDiscovered(discoveredPackage.PackagePath);
 
-                if (!fileInfo.Exists)
+                if (!RequiresRescan(discoveredPackage, fingerprints))
                 {
-                    state.MarkFailure(workItem.PackagePath, "Package file no longer exists.");
+                    state.MarkSkipped(discoveredPackage.PackagePath);
+                    progress?.Report(state.CreateSnapshot("skip", $"Skipped unchanged package {Path.GetFileName(discoveredPackage.PackagePath)}"));
                     continue;
                 }
 
-                if (!await indexStore.NeedsRescanAsync(workItem.Source.Id, workItem.PackagePath, fileInfo.Length, fileInfo.LastWriteTimeUtc, cancellationToken))
-                {
-                    state.MarkSkipped(workItem.PackagePath);
-                    progress?.Report(state.CreateSnapshot("skip", $"Skipped unchanged package {Path.GetFileName(workItem.PackagePath)}"));
-                    continue;
-                }
-
-                state.MarkQueued(workItem.PackagePath);
-                await writer.WriteAsync(workItem with { FileSize = fileInfo.Length, LastWriteUtc = fileInfo.LastWriteTimeUtc }, cancellationToken);
+                state.MarkQueued(discoveredPackage.PackagePath);
+                var queueStart = Stopwatch.StartNew();
+                await writer.WriteAsync(new PackageWorkItem(discoveredPackage.Source, discoveredPackage.PackagePath, discoveredPackage.FileSize, discoveredPackage.LastWriteTimeUtc), cancellationToken);
+                queueStart.Stop();
+                queueElapsed += queueStart.Elapsed;
             }
         }
         finally
         {
+            discoveryStopwatch.Stop();
+            state.RecordRunPhase("discovery", discoveryStopwatch.Elapsed);
+            state.RecordRunPhase("queueing", queueElapsed);
             writer.TryComplete();
         }
     }
@@ -670,15 +888,17 @@ public sealed class PackageIndexCoordinator
                 state.UpdatePackageProgress(workItem.PackagePath, new PackageScanProgress("opening package", 0, 0, 0, TimeSpan.Zero));
                 var progress = new Progress<PackageScanProgress>(value => state.UpdatePackageProgress(workItem.PackagePath, value));
                 var packageScan = await resourceCatalogService.ScanPackageAsync(workItem.Source, workItem.PackagePath, progress, cancellationToken);
-
-                state.UpdatePackageProgress(workItem.PackagePath, new PackageScanProgress(
-                    "building asset summaries",
-                    packageScan.Resources.Count,
-                    packageScan.Resources.Count,
-                    0,
-                    state.GetElapsed(workItem.PackagePath)));
-
-                var assets = assetGraphBuilder.BuildAssetSummaries(packageScan);
+                IReadOnlyList<AssetSummary> assets = [];
+                if (ShouldBuildAssetSummaries(packageScan))
+                {
+                    state.UpdatePackageProgress(workItem.PackagePath, new PackageScanProgress(
+                        "building asset summaries",
+                        packageScan.Resources.Count,
+                        packageScan.Resources.Count,
+                        0,
+                        state.GetElapsed(workItem.PackagePath)));
+                    assets = assetGraphBuilder.BuildAssetSummaries(packageScan);
+                }
                 await persistWriter.WriteAsync(new PersistWorkItem(workItem, packageScan, assets), cancellationToken);
 
                 state.UpdatePackageProgress(workItem.PackagePath, new PackageScanProgress(
@@ -705,6 +925,7 @@ public sealed class PackageIndexCoordinator
 
     private async Task RunWriterAsync(
         System.Threading.Channels.ChannelReader<PersistWorkItem> reader,
+        IIndexWriteSession writeSession,
         IndexingRunState state,
         CancellationToken cancellationToken)
     {
@@ -719,7 +940,7 @@ public sealed class PackageIndexCoordinator
                     0,
                     state.GetElapsed(item.WorkItem.PackagePath)));
 
-                await indexStore.ReplacePackageAsync(item.PackageScan, item.Assets, cancellationToken);
+                await writeSession.ReplacePackageAsync(item.PackageScan, item.Assets, cancellationToken);
 
                 state.UpdatePackageProgress(item.WorkItem.PackagePath, new PackageScanProgress(
                     "finalizing package",
@@ -755,16 +976,14 @@ public sealed class PackageIndexCoordinator
         }
     }
 
-    private static PackageWorkItem? CreateWorkItem(string packagePath, IReadOnlyList<DataSourceDefinition> sources)
+    private static bool RequiresRescan(DiscoveredPackage package, IReadOnlyDictionary<string, PackageFingerprint> fingerprints)
     {
-        var source = sources
-            .Where(source => packagePath.StartsWith(source.RootPath, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(static source => source.RootPath.Length)
-            .FirstOrDefault();
+        if (!fingerprints.TryGetValue(BuildFingerprintKey(package.Source.Id, package.PackagePath), out var fingerprint))
+        {
+            return true;
+        }
 
-        return source is null
-            ? null
-            : new PackageWorkItem(source, packagePath, 0, DateTimeOffset.MinValue);
+        return fingerprint.FileSize != package.FileSize || fingerprint.LastWriteTimeUtc != package.LastWriteTimeUtc;
     }
 
     private sealed record PackageWorkItem(DataSourceDefinition Source, string PackagePath, long FileSize, DateTimeOffset LastWriteUtc);
@@ -779,19 +998,29 @@ public sealed class PackageIndexCoordinator
         private readonly List<IndexingActivityEvent> recentEvents = [];
         private readonly Stopwatch stopwatch = Stopwatch.StartNew();
         private readonly IndexingRunOptions options;
-        private readonly int totalPackages;
+        private readonly Dictionary<string, TimeSpan> runPhases = new(StringComparer.OrdinalIgnoreCase);
         private string latestMessage = string.Empty;
+        private int packagesDiscovered;
+        private int packagesQueued;
         private int packagesProcessed;
         private int packagesSkipped;
         private int packagesFailed;
         private int resourcesCompleted;
 
-        public IndexingRunState(int totalPackages, IndexingRunOptions options)
+        public IndexingRunState(IndexingRunOptions options)
         {
-            this.totalPackages = totalPackages;
             this.options = options;
             workerSlots = Enumerable.Range(1, options.MaxPackageConcurrency)
                 .ToDictionary(static workerId => workerId, static workerId => new WorkerSlotState(workerId));
+        }
+
+        public void MarkDiscovered(string packagePath)
+        {
+            lock (gate)
+            {
+                packagesDiscovered++;
+                packages.TryAdd(packagePath, new PackageState(packagePath));
+            }
         }
 
         public void MarkQueued(string packagePath)
@@ -799,7 +1028,23 @@ public sealed class PackageIndexCoordinator
             lock (gate)
             {
                 packages[packagePath] = new PackageState(packagePath);
+                packagesQueued++;
                 RecordActivityUnsafe("queue", $"Queued {Path.GetFileName(packagePath)}");
+            }
+        }
+
+        public void RecordRunPhase(string phase, TimeSpan elapsed)
+        {
+            if (elapsed <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            lock (gate)
+            {
+                runPhases[phase] = runPhases.TryGetValue(phase, out var current)
+                    ? current + elapsed
+                    : elapsed;
             }
         }
 
@@ -942,7 +1187,7 @@ public sealed class PackageIndexCoordinator
                     .ToArray();
 
                 var resourcesProcessed = resourcesCompleted + activePackages.Sum(static package => package.ResourcesProcessed);
-                var pendingPackageCount = Math.Max(0, totalPackages - packagesProcessed - packages.Values.Count(static package => package.HasStarted && !package.IsTerminal));
+                var pendingPackageCount = Math.Max(0, packagesQueued - packagesProcessed - packages.Values.Count(static package => package.HasStarted && !package.IsTerminal));
                 var elapsed = stopwatch.Elapsed;
                 var overallThroughput = elapsed.TotalSeconds <= 0 ? 0 : resourcesProcessed / elapsed.TotalSeconds;
                 var effectiveMessage = string.IsNullOrWhiteSpace(message) ? latestMessage : message;
@@ -950,7 +1195,7 @@ public sealed class PackageIndexCoordinator
                 return new IndexingProgress(
                     stage,
                     packagesProcessed,
-                    totalPackages,
+                    packagesDiscovered,
                     packagesProcessed - packagesSkipped - packagesFailed,
                     packagesSkipped,
                     packagesFailed,
@@ -995,11 +1240,16 @@ public sealed class PackageIndexCoordinator
                     .Where(static package => package.IsFailed)
                     .Select(static package => new PackageFailureInfo(package.PackagePath, package.FailureReason ?? "Unknown failure"))
                     .ToArray();
-                var phaseBreakdown = completedPackages
+                var packagePhaseTotals = completedPackages
                     .SelectMany(static package => package.PhaseTimings)
                     .GroupBy(static phase => phase.Stage, StringComparer.OrdinalIgnoreCase)
-                    .Select(group => $"{group.Key}: {TimeSpan.FromMilliseconds(group.Sum(static phase => phase.Elapsed.TotalMilliseconds)):hh\\:mm\\:ss}")
-                    .OrderByDescending(static line => line)
+                    .Select(group => new KeyValuePair<string, TimeSpan>(group.Key, TimeSpan.FromMilliseconds(group.Sum(static phase => phase.Elapsed.TotalMilliseconds))));
+                var phaseBreakdown = packagePhaseTotals
+                    .Concat(runPhases)
+                    .GroupBy(static phase => phase.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => new KeyValuePair<string, TimeSpan>(group.Key, TimeSpan.FromMilliseconds(group.Sum(static phase => phase.Value.TotalMilliseconds))))
+                    .OrderByDescending(static phase => phase.Value)
+                    .Select(static phase => $"{phase.Key}: {phase.Value:hh\\:mm\\:ss}")
                     .ToArray();
                 var averagePackageSeconds = completedPackages.Where(static package => package.IsCompleted).Select(static package => package.Elapsed.TotalSeconds).DefaultIfEmpty(0d).Average();
                 var slowOutliers = completedPackages
@@ -1010,6 +1260,8 @@ public sealed class PackageIndexCoordinator
 
                 return new IndexingRunSummary(
                     totalElapsed,
+                    packagesDiscovered,
+                    packagesQueued,
                     packagesProcessed,
                     packagesSkipped,
                     packagesFailed,
@@ -1037,6 +1289,12 @@ public sealed class PackageIndexCoordinator
             }
         }
     }
+
+    private static string BuildFingerprintKey(Guid dataSourceId, string packagePath) =>
+        $"{dataSourceId:D}|{packagePath}";
+
+    private static bool ShouldBuildAssetSummaries(PackageScanResult packageScan) =>
+        packageScan.Resources.Any(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition" or "CASPart");
 
     private sealed class PackageState
     {

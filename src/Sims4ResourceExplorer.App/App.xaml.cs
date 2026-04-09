@@ -31,6 +31,7 @@ public partial class App : Application
                 services.AddSingleton<IIndexStore, SqliteIndexStore>();
                 services.AddSingleton<IPackageScanner, FileSystemPackageScanner>();
                 services.AddSingleton<IResourceCatalogService, LlamaResourceCatalogService>();
+                services.AddSingleton<IResourceMetadataEnrichmentService, ResourceMetadataEnrichmentService>();
                 services.AddSingleton<IAssetGraphBuilder, ExplicitBuildBuyAssetGraphBuilder>();
                 services.AddSingleton<ITextureDecodeService, BasicTextureDecodeService>();
                 services.AddSingleton<ISceneBuildService, PlaceholderSceneBuildService>();
