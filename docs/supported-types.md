@@ -15,13 +15,14 @@ The browser always supports metadata inspection and raw export for every discove
 | Images | LRLE Image | Yes | Yes, when decoded | PNG + Raw |
 | Images | RLE 2 Image | Yes | Yes, when decoded | PNG + Raw |
 | Images | RLES Image | Yes | Yes, when decoded | PNG + Raw |
-| 3D | Geometry | Yes | Diagnostics only in current build | Raw only for now |
+| 3D | Geometry | Yes | Yes, for the supported CAS skinned-part subset | FBX + textures when selected through a supported CAS logical asset |
 | 3D | Model | Yes | Yes, for the supported static Build/Buy subset | FBX + textures when selected through a supported Build/Buy logical asset |
 | 3D | Model LOD | Yes | Yes, for the supported static Build/Buy subset | FBX + textures when selected through a supported Build/Buy logical asset |
-| 3D | Rig | Yes | Diagnostics only in current build | Canonical-scene FBX pipeline exists, Sims reconstruction not yet implemented |
+| 3D | Rig | Yes | Used as supporting skeleton data for the supported CAS subset | Supporting data only; exported through the selected logical asset bundle |
 | Build/Buy | Static furniture/decor objects with model-rooted triangle-list `ModelLOD` geometry, no skinning, and package-local material/texture candidates | Yes | Yes | FBX + textures + manifest bundle |
 | Build/Buy | Other Build/Buy objects | Yes | Diagnostics + metadata only | Raw/root export only |
-| CAS | CAS part with linked geometry/rig/textures | Yes | Heuristic asset summary only | Root/raw export; full asset bundle deferred |
+| CAS | Adult/young-adult human hair, full body, top, bottom, and shoes parts with a direct skinned `Geometry` LOD in the same package | Yes | Yes | FBX + textures + manifest bundle |
+| CAS | Other CAS assets | Yes | Diagnostics + metadata only | Raw/root export only |
 | Audio | RIFF/WAV payloads | Yes | Yes | WAV + Raw |
 | Audio | Unsupported/unknown audio | Yes | Unsupported reason only | Raw |
 | Animation | CLIP / animation | Yes | No | Raw only in v1 |
@@ -30,8 +31,9 @@ The browser always supports metadata inspection and raw export for every discove
 ## Deferred
 
 - full in-game Sim assembly
-- generalized Sims 4 scene reconstruction across Geometry/Model/ModelLOD/Rig resources
+- generalized Sims 4 scene reconstruction beyond the current Build/Buy and narrow CAS vertical slices
 - Build/Buy support beyond the current static model-rooted furniture/decor subset
+- CAS support beyond the current adult/young-adult human hair/full body/top/bottom/shoes subset with direct package-local `Geometry` roots
 - animation export
 - exact material/shader parity
 - guaranteed morph export

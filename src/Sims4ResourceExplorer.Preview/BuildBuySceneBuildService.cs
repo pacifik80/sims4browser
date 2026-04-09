@@ -3,7 +3,7 @@ using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.Preview;
 
-public sealed class BuildBuySceneBuildService : ISceneBuildService
+public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 {
     private readonly IResourceCatalogService resourceCatalogService;
     private readonly IIndexStore indexStore;
@@ -18,19 +18,23 @@ public sealed class BuildBuySceneBuildService : ISceneBuildService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (resource.Key.TypeName is not ("Model" or "ModelLOD"))
+        if (resource.Key.TypeName is not ("Model" or "ModelLOD" or "Geometry"))
         {
             return new SceneBuildResult(
                 false,
                 null,
-                [$"Scene reconstruction is currently supported for Build/Buy Model and ModelLOD roots only. Selected type: {resource.Key.TypeName}."]);
+                [$"Scene reconstruction is currently supported for Model, ModelLOD, and skinned Geometry roots only. Selected type: {resource.Key.TypeName}."]);
         }
 
         try
         {
-            return resource.Key.TypeName == "Model"
-                ? await BuildModelSceneAsync(resource, cancellationToken)
-                : await BuildModelLodSceneAsync(resource, resource, cancellationToken);
+            return resource.Key.TypeName switch
+            {
+                "Model" => await BuildModelSceneAsync(resource, cancellationToken),
+                "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken),
+                "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken),
+                _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."])
+            };
         }
         catch (Exception ex)
         {

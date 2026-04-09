@@ -96,7 +96,8 @@ public sealed record AssetGraph(
     AssetSummary Summary,
     IReadOnlyList<ResourceMetadata> LinkedResources,
     IReadOnlyList<string> Diagnostics,
-    BuildBuyAssetGraph? BuildBuyGraph = null);
+    BuildBuyAssetGraph? BuildBuyGraph = null,
+    CasAssetGraph? CasGraph = null);
 
 public sealed record IndexingRunOptions(
     int MaxPackageConcurrency,
@@ -293,7 +294,12 @@ public sealed record CanonicalTexture(
     ResourceKeyRecord? SourceKey = null,
     string? SourcePackagePath = null);
 
-public sealed record CanonicalBone(string Name, string? ParentName);
+public sealed record CanonicalBone(
+    string Name,
+    string? ParentName,
+    float[]? BindPoseMatrix = null,
+    float[]? InverseBindPoseMatrix = null,
+    uint? NameHash = null);
 
 public sealed record VertexWeight(int VertexIndex, int BoneIndex, float Weight);
 
@@ -323,6 +329,22 @@ public sealed record BuildBuyAssetGraph(
     IReadOnlyList<ResourceKeyRecord> MissingTextureKeys,
     IReadOnlyList<MaterialManifestEntry> Materials,
     IReadOnlyList<string> Diagnostics,
+    bool IsSupported,
+    string SupportedSubset);
+
+public sealed record CasAssetGraph(
+    ResourceMetadata CasPartResource,
+    ResourceMetadata? GeometryResource,
+    ResourceMetadata? RigResource,
+    IReadOnlyList<ResourceMetadata> IdentityResources,
+    IReadOnlyList<ResourceMetadata> GeometryResources,
+    IReadOnlyList<ResourceMetadata> RigResources,
+    IReadOnlyList<ResourceMetadata> MaterialResources,
+    IReadOnlyList<ResourceMetadata> TextureResources,
+    IReadOnlyList<MaterialManifestEntry> Materials,
+    string? Category,
+    string? SwatchSummary,
+    string? SelectedLodLabel,
     bool IsSupported,
     string SupportedSubset);
 
@@ -359,7 +381,7 @@ public interface IResourceCatalogService
 public interface IAssetGraphBuilder
 {
     IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan);
-    AssetGraph BuildAssetGraph(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources);
+    Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken);
 }
 
 public interface IPreviewService

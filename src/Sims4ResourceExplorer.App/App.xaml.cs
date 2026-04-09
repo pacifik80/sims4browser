@@ -32,7 +32,7 @@ public partial class App : Application
                 services.AddSingleton<IPackageScanner, FileSystemPackageScanner>();
                 services.AddSingleton<IResourceCatalogService, LlamaResourceCatalogService>();
                 services.AddSingleton<IResourceMetadataEnrichmentService, ResourceMetadataEnrichmentService>();
-                services.AddSingleton<IAssetGraphBuilder, ExplicitBuildBuyAssetGraphBuilder>();
+                services.AddSingleton<IAssetGraphBuilder, ExplicitAssetGraphBuilder>();
                 services.AddSingleton<ITextureDecodeService, BasicTextureDecodeService>();
                 services.AddSingleton<ISceneBuildService, BuildBuySceneBuildService>();
                 services.AddSingleton<IAudioDecodeService, BasicAudioDecodeService>();

@@ -1,4 +1,5 @@
 using LlamaLogic.Packages;
+using System.Text;
 using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Audio;
 using Sims4ResourceExplorer.Core;
@@ -54,7 +55,7 @@ public sealed class ExplorerTests : IDisposable
     [Fact]
     public void AssetGraphBuilder_CreatesBuildBuySummaries()
     {
-        var builder = new ExplicitBuildBuyAssetGraphBuilder();
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
         var packagePath = Path.Combine(tempRoot, "synthetic.package");
         var sourceId = Guid.NewGuid();
         var resources = new[]
@@ -71,9 +72,9 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
-    public void AssetGraphBuilder_BuildsExplicitBuildBuyGraphForSupportedSubset()
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraphForSupportedSubset()
     {
-        var builder = new ExplicitBuildBuyAssetGraphBuilder();
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
         var packagePath = Path.Combine(tempRoot, "supported.package");
         var sourceId = Guid.NewGuid();
         var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "Chair");
@@ -88,7 +89,7 @@ public sealed class ExplorerTests : IDisposable
         };
 
         var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
-        var graph = builder.BuildAssetGraph(summary, resources);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
 
         Assert.NotNull(graph.BuildBuyGraph);
         Assert.True(graph.BuildBuyGraph!.IsSupported);
@@ -98,6 +99,143 @@ public sealed class ExplorerTests : IDisposable
         Assert.Single(graph.BuildBuyGraph.MaterialResources);
         Assert.Single(graph.BuildBuyGraph.TextureResources);
         Assert.NotEmpty(graph.BuildBuyGraph.Materials);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitCasGraphForSupportedSubset()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-supported.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "Short Hair");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 1, "HairGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 1, "HumanRig");
+        var texture = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, texture.Key),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+        var resources = new[] { casPart, geometry, rig, texture, thumbnail };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.Cas);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.True(graph.CasGraph is not null, string.Join(Environment.NewLine, graph.Diagnostics));
+        Assert.True(graph.CasGraph!.IsSupported, string.Join(Environment.NewLine, graph.Diagnostics));
+        Assert.Equal("Hair", graph.CasGraph.Category);
+        Assert.Equal(geometry.Key.FullTgi, graph.CasGraph.GeometryResource?.Key.FullTgi);
+        Assert.Single(graph.CasGraph.GeometryResources);
+        Assert.Single(graph.CasGraph.RigResources);
+        Assert.NotEmpty(graph.CasGraph.TextureResources);
+    }
+
+    [Fact]
+    public async Task GeometrySceneBuildService_BuildsSkinnedSceneFromSyntheticGeometry()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-scene.package");
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", tempRoot, SourceKind.Game);
+        var geometry = CreateResource(source.Id, packagePath, SourceKind.Game, "Geometry", 1, "HairGeom");
+        var rig = CreateResource(source.Id, packagePath, SourceKind.Game, "Rig", 1, "HumanRig");
+        var texture = CreateResource(source.Id, packagePath, SourceKind.Game, "PNGImage", 1);
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [geometry, rig, texture], []),
+            [],
+            CancellationToken.None);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+
+        var builder = new BuildBuySceneBuildService(catalog, store);
+        var scene = await builder.BuildSceneAsync(geometry, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+        Assert.Single(scene.Scene!.Meshes);
+        Assert.Equal(2, scene.Scene.Bones.Count);
+        Assert.NotEmpty(scene.Scene.Meshes[0].SkinWeights);
+    }
+
+    [Fact]
+    public async Task CasLogicalAsset_ExportsBundleFromSyntheticFixture()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-export.package");
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", tempRoot, SourceKind.Game);
+        var casPart = CreateResource(source.Id, packagePath, SourceKind.Game, "CASPart", 1, "Short Hair");
+        var geometry = CreateResource(source.Id, packagePath, SourceKind.Game, "Geometry", 1, "HairGeom");
+        var rig = CreateResource(source.Id, packagePath, SourceKind.Game, "Rig", 1, "HumanRig");
+        var texture = CreateResource(source.Id, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(source.Id, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var scan = new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [casPart, geometry, rig, texture, thumbnail], []);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, texture.Key),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+        var assets = graphBuilder.BuildAssetSummaries(scan);
+        await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
+
+        var asset = assets.Single(result => result.AssetKind == AssetKind.Cas);
+        var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+        var assetGraph = await graphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
+        Assert.True(assetGraph.CasGraph is not null, string.Join(Environment.NewLine, assetGraph.Diagnostics));
+        Assert.True(assetGraph.CasGraph!.IsSupported, string.Join(Environment.NewLine, assetGraph.Diagnostics));
+        Assert.NotNull(assetGraph.CasGraph.GeometryResource);
+
+        var sceneBuilder = new BuildBuySceneBuildService(catalog, store);
+        var scene = await sceneBuilder.BuildSceneAsync(assetGraph.CasGraph.GeometryResource!, CancellationToken.None);
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+
+        var outputRoot = Path.Combine(tempRoot, "cas-export-out");
+        var exportService = new AssimpFbxExportService();
+        var assetSlug = "fixture_cas";
+        var export = await exportService.ExportAsync(
+            new SceneExportRequest(
+                assetSlug,
+                scene.Scene!,
+                outputRoot,
+                BuildSourceResources(assetGraph, assetGraph.CasGraph.GeometryResource!),
+                scene.Scene!.Materials.SelectMany(static material => material.Textures).ToArray(),
+                scene.Diagnostics,
+                assetGraph.CasGraph.Materials),
+            CancellationToken.None);
+
+        Assert.True(export.Success);
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, $"{assetSlug}.fbx")));
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, "manifest.json")));
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, "material_manifest.json")));
+        Assert.True(File.Exists(Path.Combine(outputRoot, assetSlug, "metadata.json")));
+        Assert.NotEmpty(Directory.EnumerateFiles(Path.Combine(outputRoot, assetSlug, "Textures"), "*.png"));
     }
 
     [Fact]
@@ -261,7 +399,7 @@ public sealed class ExplorerTests : IDisposable
         var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", Path.GetDirectoryName(fixturePackage)!, SourceKind.Game);
         var catalog = new LlamaResourceCatalogService();
         var scan = await catalog.ScanPackageAsync(source, fixturePackage, progress: null, CancellationToken.None);
-        var graphBuilder = new ExplicitBuildBuyAssetGraphBuilder();
+        var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
         var assets = graphBuilder.BuildAssetSummaries(scan);
         await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
 
@@ -278,7 +416,7 @@ public sealed class ExplorerTests : IDisposable
         }
 
         var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
-        var assetGraph = graphBuilder.BuildAssetGraph(asset, packageResources);
+        var assetGraph = await graphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         Assert.NotNull(assetGraph.BuildBuyGraph);
         Assert.True(assetGraph.BuildBuyGraph!.IsSupported, string.Join(Environment.NewLine, assetGraph.Diagnostics));
 
@@ -363,6 +501,7 @@ public sealed class ExplorerTests : IDisposable
             1L,
             false,
             typeName.Contains("PNG", StringComparison.OrdinalIgnoreCase) ? PreviewKind.Texture :
+            typeName is "Geometry" or "Rig" ? PreviewKind.Scene :
             typeName.Contains("Audio", StringComparison.OrdinalIgnoreCase) ? PreviewKind.Audio :
             PreviewKind.Hex,
             true,
@@ -381,11 +520,206 @@ public sealed class ExplorerTests : IDisposable
             resources.AddRange(graph.BuildBuyGraph.MaterialResources);
             resources.AddRange(graph.BuildBuyGraph.TextureResources);
         }
+        else if (graph.CasGraph is not null)
+        {
+            resources.AddRange(graph.CasGraph.IdentityResources);
+            resources.AddRange(graph.CasGraph.GeometryResources);
+            resources.AddRange(graph.CasGraph.RigResources);
+            resources.AddRange(graph.CasGraph.MaterialResources);
+            resources.AddRange(graph.CasGraph.TextureResources);
+        }
 
         return resources
             .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
             .Select(static group => group.First())
             .ToArray();
+    }
+
+    private static byte[] CreateSyntheticCasPartBytes(ResourceKeyRecord geometryKey, ResourceKeyRecord thumbnailKey, ResourceKeyRecord textureKey)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.BigEndianUnicode, leaveOpen: true);
+
+        writer.Write(0x0000001Cu);
+        var tgiOffsetPosition = stream.Position;
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write("Short Hair");
+        writer.Write(0f);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write((byte)0);
+        writer.Write(0ul);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write((byte)0);
+        writer.Write(2);
+        writer.Write(0);
+        writer.Write(0x00003010u);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)1);
+        writer.Write(unchecked((int)0xFFFFCCAA));
+        writer.Write((byte)0);
+        writer.Write((byte)2);
+        writer.Write(0ul);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write(0);
+
+        var lodListPosition = stream.Position;
+        writer.Write((byte)1);
+        writer.Write((byte)0);
+        writer.Write(0u);
+        writer.Write((byte)1);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write((byte)1);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)1);
+        writer.Write((byte)2);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)2);
+        writer.Write((byte)1);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        var tgiOffset = (uint)(stream.Position - 8);
+        var current = stream.Position;
+        stream.Position = tgiOffsetPosition;
+        writer.Write(tgiOffset);
+        stream.Position = current;
+
+        writer.Write((byte)3);
+        WriteResourceKey(writer, geometryKey);
+        WriteResourceKey(writer, thumbnailKey);
+        WriteResourceKey(writer, textureKey);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticSkinnedGeometryBytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+
+        writer.Write("GEOM"u8.ToArray());
+        writer.Write(0x0000000Cu);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(3);
+        writer.Write(5);
+        WriteGeomFormat(writer, 0x01);
+        WriteGeomFormat(writer, 0x02);
+        WriteGeomFormat(writer, 0x03);
+        WriteGeomFormat(writer, 0x04);
+        WriteGeomFormat(writer, 0x05);
+
+        WriteGeomVertex(writer, [0f, 0f, 0f], [0f, 0f, 1f], [0f, 0f], [0, 1, 0, 0], [255, 0, 0, 0]);
+        WriteGeomVertex(writer, [0f, 1f, 0f], [0f, 0f, 1f], [0f, 1f], [0, 1, 0, 0], [128, 127, 0, 0]);
+        WriteGeomVertex(writer, [1f, 0f, 0f], [0f, 0f, 1f], [1f, 0f], [1, 0, 0, 0], [255, 0, 0, 0]);
+
+        writer.Write(1);
+        writer.Write((byte)2);
+        writer.Write(3);
+        writer.Write((ushort)0);
+        writer.Write((ushort)1);
+        writer.Write((ushort)2);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(2);
+        writer.Write(0x11111111u);
+        writer.Write(0x22222222u);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticRigBytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(4u);
+        writer.Write(2u);
+        writer.Write(2);
+
+        WriteRigBone(writer, "root", -1, 0x11111111u, new float[] { 0f, 0f, 0f });
+        WriteRigBone(writer, "tip", 0, 0x22222222u, new float[] { 0f, 1f, 0f });
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static void WriteGeomFormat(BinaryWriter writer, uint usage)
+    {
+        writer.Write(usage);
+        writer.Write(usage == 0x04 ? 2u : 1u);
+        writer.Write((byte)(usage switch
+        {
+            0x01 or 0x02 => 12,
+            0x03 => 8,
+            0x04 or 0x05 => 4,
+            _ => 0
+        }));
+    }
+
+    private static void WriteGeomVertex(BinaryWriter writer, float[] position, float[] normal, float[] uv, byte[] blendIndices, byte[] blendWeights)
+    {
+        foreach (var value in position)
+        {
+            writer.Write(value);
+        }
+
+        foreach (var value in normal)
+        {
+            writer.Write(value);
+        }
+
+        foreach (var value in uv)
+        {
+            writer.Write(value);
+        }
+
+        writer.Write(blendIndices);
+        writer.Write(blendWeights);
+    }
+
+    private static void WriteRigBone(BinaryWriter writer, string name, int parentIndex, uint hash, float[] position)
+    {
+        foreach (var value in position)
+        {
+            writer.Write(value);
+        }
+
+        writer.Write(0f);
+        writer.Write(0f);
+        writer.Write(0f);
+        writer.Write(1f);
+        writer.Write(1f);
+        writer.Write(1f);
+        writer.Write(1f);
+        writer.Write(name.Length);
+        writer.Write(name.ToCharArray());
+        writer.Write(-1);
+        writer.Write(parentIndex);
+        writer.Write(hash);
+        writer.Write(0u);
+    }
+
+    private static void WriteResourceKey(BinaryWriter writer, ResourceKeyRecord key)
+    {
+        writer.Write(key.Type);
+        writer.Write(key.Group);
+        writer.Write(key.FullInstance);
     }
 
     private sealed class TestCacheService : ICacheService

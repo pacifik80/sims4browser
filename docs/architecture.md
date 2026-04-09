@@ -109,6 +109,12 @@ Current Build/Buy vertical slice:
 - the scene path resolves object identity, chosen `ModelLOD`, material candidates, and texture candidates closely enough for viewport preview and FBX+PNG bundle export
 - unsupported Build/Buy assets stay explicit and diagnostic rather than silently degrading to fake scene success
 
+Current CAS vertical slice:
+
+- one supported subset is implemented end-to-end: adult/young-adult human hair, full body, top, bottom, and shoes parts when the `CASPart` exposes a direct package-local skinned `Geometry` LOD
+- the asset graph resolves the `CASPart` root, chosen LOD, package-local `Geometry`, optional exact-instance `Rig`, and package-local texture candidates closely enough for viewport preview and FBX+PNG bundle export
+- unsupported CAS assets stay explicit and diagnostic rather than silently degrading to fake scene success
+
 ## Browsing query architecture
 
 - `AssetBrowserQuery` and `RawResourceBrowserQuery` are separate contracts.

@@ -392,26 +392,47 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentScene = null;
 
         var packageResources = await indexStore.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
-        var graph = assetGraphBuilder.BuildAssetGraph(asset, packageResources);
+        var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         selectedAssetGraph = graph;
         var assetDetails = BuildAssetDetails(asset, graph, null, null);
 
-        if (asset.AssetKind != AssetKind.BuildBuy)
+        ResourceMetadata? sceneRoot = null;
+        string unsupportedMessage;
+        if (asset.AssetKind == AssetKind.BuildBuy)
         {
-            PreviewText = string.Join(Environment.NewLine, graph.Diagnostics.DefaultIfEmpty("Logical asset preview is only implemented for the Build/Buy static-object subset in the current build."));
+            var buildBuyGraph = graph.BuildBuyGraph;
+            if (buildBuyGraph is null || !buildBuyGraph.IsSupported)
+            {
+                unsupportedMessage = "This Build/Buy asset is outside the currently supported static-object subset.";
+            }
+            else
+            {
+                sceneRoot = buildBuyGraph.ModelResource;
+                unsupportedMessage = string.Empty;
+            }
+        }
+        else
+        {
+            var casGraph = graph.CasGraph;
+            if (casGraph is null || !casGraph.IsSupported || casGraph.GeometryResource is null)
+            {
+                unsupportedMessage = "This CAS asset is outside the currently supported adult/young-adult human skinned subset.";
+            }
+            else
+            {
+                sceneRoot = casGraph.GeometryResource;
+                unsupportedMessage = string.Empty;
+            }
+        }
+
+        if (sceneRoot is null)
+        {
+            PreviewText = string.Join(Environment.NewLine, graph.Diagnostics.DefaultIfEmpty(unsupportedMessage));
             DetailsText = assetDetails;
             return;
         }
 
-        var buildBuyGraph = graph.BuildBuyGraph;
-        if (buildBuyGraph is null || !buildBuyGraph.IsSupported)
-        {
-            PreviewText = string.Join(Environment.NewLine, graph.Diagnostics.DefaultIfEmpty("This Build/Buy asset is outside the currently supported static-object subset."));
-            DetailsText = assetDetails;
-            return;
-        }
-
-        var sceneRoot = await resourceMetadataEnrichmentService.EnrichAsync(buildBuyGraph.ModelResource, CancellationToken.None);
+        sceneRoot = await resourceMetadataEnrichmentService.EnrichAsync(sceneRoot, CancellationToken.None);
         selectedResource = sceneRoot;
         selectedAssetSceneRoot = sceneRoot;
 
@@ -435,22 +456,22 @@ public sealed partial class MainViewModel : ObservableObject
 
     public async Task ExportSelectedAssetAsync(string outputDirectory)
     {
-        if (selectedAsset is null || selectedAssetGraph?.BuildBuyGraph is null)
+        if (selectedAsset is null || selectedAssetGraph is null)
         {
-            StatusMessage = "Select a supported Build/Buy asset first.";
+            StatusMessage = "Select a supported logical asset first.";
             return;
         }
 
         if (selectedAssetSceneRoot is null)
         {
-            StatusMessage = "The selected Build/Buy asset does not have a resolved scene root.";
+            StatusMessage = "The selected logical asset does not have a resolved scene root.";
             return;
         }
 
         var preview = await previewService.CreatePreviewAsync(selectedAssetSceneRoot, CancellationToken.None);
         if (preview.Content is not ScenePreviewContent scenePreview || scenePreview.Scene is null)
         {
-            StatusMessage = "The selected Build/Buy asset could not be reconstructed into an exportable scene.";
+            StatusMessage = "The selected logical asset could not be reconstructed into an exportable scene.";
             PreviewText = preview.Content is ScenePreviewContent failedScene ? failedScene.Diagnostics : PreviewText;
             return;
         }
@@ -789,32 +810,66 @@ public sealed partial class MainViewModel : ObservableObject
     private static string BuildAssetDetails(AssetSummary asset, AssetGraph graph, ResourceMetadata? sceneRoot, ScenePreviewContent? scenePreview)
     {
         var buildBuyGraph = graph.BuildBuyGraph;
+        var casGraph = graph.CasGraph;
         var scene = scenePreview?.Scene;
+        var diagnostics = graph.Diagnostics
+            .Concat(scenePreview is null ? [] : scenePreview.Diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries))
+            .DefaultIfEmpty(asset.Diagnostics);
+
+        if (buildBuyGraph is not null)
+        {
+            return
+                $"""
+                Asset: {asset.DisplayName}
+                Kind: {asset.AssetKind}
+                Category: {asset.Category ?? "(unknown)"}
+                Package: {asset.PackagePath}
+                Root TGI: {asset.RootKey.FullTgi}
+                Identity Resources: {buildBuyGraph.IdentityResources.Count}
+                Linked Resources: {asset.LinkedResourceCount}
+                Thumbnail: {asset.ThumbnailTgi ?? "(none)"}
+                Supported Subset: {buildBuyGraph.SupportedSubset}
+                Scene Root: {sceneRoot?.Key.FullTgi ?? "(unresolved)"}
+                Selected LOD: {ExtractDiagnosticValue(scenePreview?.Diagnostics, "Selected LOD root:") ?? "(not resolved)"}
+                Model LOD Candidates: {buildBuyGraph.ModelLodResources.Count}
+                Material Candidates: {buildBuyGraph.MaterialResources.Count}
+                Texture Candidates: {buildBuyGraph.TextureResources.Count}
+                Mesh Count: {scene?.Meshes.Count ?? 0}
+                Vertex Count: {(scene?.Meshes.Sum(static mesh => mesh.Positions.Count / 3) ?? 0):N0}
+                Index Count: {(scene?.Meshes.Sum(static mesh => mesh.Indices.Count) ?? 0):N0}
+                Material Slots: {scene?.Materials.Count ?? 0}
+                Texture References: {scene?.Materials.Sum(static material => material.Textures.Count) ?? 0}
+                Bone Count: {scene?.Bones.Count ?? 0}
+                Bounds: {FormatBounds(scene?.Bounds)}
+                Diagnostics:
+                {string.Join(Environment.NewLine, diagnostics)}
+                """;
+        }
 
         return
             $"""
             Asset: {asset.DisplayName}
             Kind: {asset.AssetKind}
-            Category: {asset.Category ?? "(unknown)"}
+            Category: {casGraph?.Category ?? asset.Category ?? "(unknown)"}
             Package: {asset.PackagePath}
             Root TGI: {asset.RootKey.FullTgi}
-            Identity Resources: {buildBuyGraph?.IdentityResources.Count ?? 0}
-            Linked Resources: {asset.LinkedResourceCount}
-            Thumbnail: {asset.ThumbnailTgi ?? "(none)"}
-            Supported Subset: {buildBuyGraph?.SupportedSubset ?? "(not supported)"}
+            Swatch/Variant: {casGraph?.SwatchSummary ?? "(unknown)"}
+            Identity Resources: {casGraph?.IdentityResources.Count ?? 0}
+            Geometry Candidates: {casGraph?.GeometryResources.Count ?? 0}
+            Rig Candidates: {casGraph?.RigResources.Count ?? 0}
+            Texture Candidates: {casGraph?.TextureResources.Count ?? 0}
+            Supported Subset: {casGraph?.SupportedSubset ?? "(not supported)"}
             Scene Root: {sceneRoot?.Key.FullTgi ?? "(unresolved)"}
-            Selected LOD: {ExtractDiagnosticValue(scenePreview?.Diagnostics, "Selected LOD root:") ?? "(not resolved)"}
-            Model LOD Candidates: {buildBuyGraph?.ModelLodResources.Count ?? 0}
-            Material Candidates: {buildBuyGraph?.MaterialResources.Count ?? 0}
-            Texture Candidates: {buildBuyGraph?.TextureResources.Count ?? 0}
+            Selected LOD: {casGraph?.SelectedLodLabel ?? "(not resolved)"}
             Mesh Count: {scene?.Meshes.Count ?? 0}
             Vertex Count: {(scene?.Meshes.Sum(static mesh => mesh.Positions.Count / 3) ?? 0):N0}
             Index Count: {(scene?.Meshes.Sum(static mesh => mesh.Indices.Count) ?? 0):N0}
             Material Slots: {scene?.Materials.Count ?? 0}
             Texture References: {scene?.Materials.Sum(static material => material.Textures.Count) ?? 0}
+            Bone Count: {scene?.Bones.Count ?? 0}
             Bounds: {FormatBounds(scene?.Bounds)}
             Diagnostics:
-            {string.Join(Environment.NewLine, graph.Diagnostics.Concat(scenePreview is null ? [] : scenePreview.Diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries)).DefaultIfEmpty(asset.Diagnostics))}
+            {string.Join(Environment.NewLine, diagnostics)}
             """;
     }
 
@@ -1116,6 +1171,14 @@ public sealed partial class MainViewModel : ObservableObject
             resources.AddRange(graph.BuildBuyGraph.MaterialResources);
             resources.AddRange(graph.BuildBuyGraph.TextureResources);
         }
+        else if (graph.CasGraph is not null)
+        {
+            resources.AddRange(graph.CasGraph.IdentityResources);
+            resources.AddRange(graph.CasGraph.GeometryResources);
+            resources.AddRange(graph.CasGraph.RigResources);
+            resources.AddRange(graph.CasGraph.MaterialResources);
+            resources.AddRange(graph.CasGraph.TextureResources);
+        }
 
         return resources
             .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
@@ -1143,7 +1206,7 @@ public sealed partial class MainViewModel : ObservableObject
         var invalid = Path.GetInvalidFileNameChars();
         var normalized = new string(value.Select(ch => invalid.Contains(ch) ? '_' : char.ToLowerInvariant(ch)).ToArray());
         var collapsed = string.Join("_", normalized.Split([' ', '\t', '\r', '\n', '-', '/'], StringSplitOptions.RemoveEmptyEntries));
-        return string.IsNullOrWhiteSpace(collapsed) ? "buildbuy_asset" : collapsed;
+        return string.IsNullOrWhiteSpace(collapsed) ? "logical_asset" : collapsed;
     }
 
     private static void ReplaceCollection<T>(ObservableCollection<T> collection, IEnumerable<T> values)

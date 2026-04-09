@@ -566,8 +566,8 @@ public sealed class IndexingPipelineTests
 
     private sealed class FakeAssetGraphBuilder : IAssetGraphBuilder
     {
-        public AssetGraph BuildAssetGraph(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources) =>
-            new(summary, packageResources, []);
+        public Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
+            Task.FromResult(new AssetGraph(summary, packageResources, []));
 
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) =>
             [];

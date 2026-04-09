@@ -49,16 +49,19 @@ This repository is being built in vertical slices. The current implementation in
 - package scanning and persistent indexing
 - a WinUI 3 desktop shell for adding Game/DLC/Mods folders manually
 - raw resource browsing backed by SQLite
-- heuristic logical asset summaries for Build/Buy and CAS roots
+- logical asset summaries for Build/Buy and CAS roots
 - text, hex, and image preview pipelines with graceful fallback
 - raw export for every indexed resource
 - a first real Build/Buy vertical slice for static model-rooted furniture/decor objects with scene preview and FBX+textures export
+- a first real CAS vertical slice for adult/young-adult human hair, full body, top, bottom, and shoes parts when the CAS part exposes a direct skinned `Geometry` LOD in the same package
 - a first in-app audio path for RIFF/WAV payloads
 
 Current 3D note:
 
 - the current supported subset is narrow and honest: static Build/Buy objects with a `Model` root, triangle-list `ModelLOD` geometry, no skinning/animation path, and package-local material/texture candidates
+- CAS support is also narrow and honest: adult/young-adult human hair, full body, top, bottom, and shoes parts with a direct package-local skinned `Geometry` scene root plus package-local texture candidates
 - unsupported Build/Buy objects remain metadata/raw-export-first and report explicit diagnostics instead of faking scene success
+- unsupported CAS assets remain metadata/raw-export-first and report explicit diagnostics instead of faking scene success
 
 ## Browsing model
 
