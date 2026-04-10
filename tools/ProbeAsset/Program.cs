@@ -101,6 +101,9 @@ Console.WriteLine();
 Console.WriteLine("== Scene From Model Root ==");
 Console.WriteLine("Root RCOL summary:");
 await DumpRcolChunkSummary(catalog, graph.BuildBuyGraph.ModelResource);
+Console.WriteLine("Root material summary:");
+var rootRawBytes = await catalog.GetResourceBytesAsync(graph.BuildBuyGraph.ModelResource.PackagePath, graph.BuildBuyGraph.ModelResource.Key, raw: false, CancellationToken.None);
+Console.WriteLine(PreviewDebugProbe.InspectMaterialChunks(rootRawBytes));
 var modelResult = await sceneBuilder.BuildSceneAsync(graph.BuildBuyGraph.ModelResource, CancellationToken.None);
 WriteSceneResult(modelResult);
 
@@ -113,6 +116,8 @@ foreach (var lod in graph.BuildBuyGraph.ModelLodResources)
     Console.WriteLine("  Preview assembly parse:");
     var rawBytes = await catalog.GetResourceBytesAsync(lod.PackagePath, lod.Key, raw: false, CancellationToken.None);
     Console.WriteLine(PreviewDebugProbe.InspectModelLod(rawBytes));
+    Console.WriteLine("  Material summary:");
+    Console.WriteLine(PreviewDebugProbe.InspectMaterialChunks(rawBytes));
     var lodResult = await sceneBuilder.BuildSceneAsync(lod, CancellationToken.None);
     WriteSceneResult(lodResult);
     Console.WriteLine();
@@ -401,6 +406,34 @@ static void DumpMeshStats(CanonicalMesh mesh)
             Console.WriteLine($"    uv[{i}] = ({mesh.Uvs[baseIndex]}, {mesh.Uvs[baseIndex + 1]})");
         }
     }
+
+    DumpNamedUvRange("uv0", mesh.Uv0s);
+    DumpNamedUvRange("uv1", mesh.Uv1s);
+}
+
+static void DumpNamedUvRange(string label, IReadOnlyList<float>? uvs)
+{
+    if (uvs is null || uvs.Count < 2)
+    {
+        Console.WriteLine($"    {label}Range=(none)");
+        return;
+    }
+
+    var uvMinU = float.PositiveInfinity;
+    var uvMinV = float.PositiveInfinity;
+    var uvMaxU = float.NegativeInfinity;
+    var uvMaxV = float.NegativeInfinity;
+    for (var i = 0; i + 1 < uvs.Count; i += 2)
+    {
+        var u = uvs[i];
+        var v = uvs[i + 1];
+        uvMinU = Math.Min(uvMinU, u);
+        uvMinV = Math.Min(uvMinV, v);
+        uvMaxU = Math.Max(uvMaxU, u);
+        uvMaxV = Math.Max(uvMaxV, v);
+    }
+
+    Console.WriteLine($"    {label}Range=({uvMinU}, {uvMinV})..({uvMaxU}, {uvMaxV})");
 }
 
 static void DumpTriangleQuality(CanonicalMesh mesh)

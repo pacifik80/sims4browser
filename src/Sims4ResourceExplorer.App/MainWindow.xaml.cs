@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Numerics;
+using System.Reflection;
 using HelixToolkit;
 using HelixToolkit.Maths;
 using HelixToolkit.SharpDX;
@@ -16,6 +17,7 @@ namespace Sims4ResourceExplorer.App;
 
 public sealed partial class MainWindow : Window
 {
+    private const string AppTitleBase = "Sims4 Resource Explorer";
     private readonly Viewport3DX sceneViewport;
     private readonly PerspectiveCamera sceneCamera;
     private readonly DefaultEffectsManager effectsManager = new();
@@ -24,6 +26,7 @@ public sealed partial class MainWindow : Window
     {
         ViewModel = viewModel;
         InitializeComponent();
+        Title = BuildWindowTitle();
         if (Content is FrameworkElement root)
         {
             root.DataContext = viewModel;
@@ -195,6 +198,21 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private static string BuildWindowTitle()
+    {
+        var assembly = typeof(MainWindow).Assembly;
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        if (string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            return AppTitleBase;
+        }
+
+        return $"{AppTitleBase} ({informationalVersion})";
+    }
+
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.CurrentScene) ||
@@ -257,7 +275,7 @@ public sealed partial class MainWindow : Window
         {
             var mesh = scene.Meshes[meshIndex];
             var material = CreateMaterial(scene, mesh.MaterialIndex, renderMode);
-            var geometry = CreateGeometry(mesh);
+            var geometry = CreateGeometry(mesh, scene, mesh.MaterialIndex);
             if (geometry.Positions is null || geometry.Positions.Count == 0 || geometry.TriangleIndices is null || geometry.TriangleIndices.Count == 0)
             {
                 continue;
@@ -301,7 +319,7 @@ public sealed partial class MainWindow : Window
         sceneCamera.UpDirection = Vector3.UnitY;
     }
 
-    private static MeshGeometry3D CreateGeometry(CanonicalMesh mesh)
+    private static MeshGeometry3D CreateGeometry(CanonicalMesh mesh, CanonicalScene scene, int materialIndex)
     {
         var geometry = new MeshGeometry3D
         {
@@ -329,12 +347,13 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        if (mesh.Uvs.Count == vertexCount * 2)
+        var textureCoordinates = SelectTextureCoordinates(mesh, scene, materialIndex);
+        if (textureCoordinates.Count == vertexCount * 2)
         {
             geometry.TextureCoordinates = new Vector2Collection();
-            for (var index = 0; index + 1 < mesh.Uvs.Count; index += 2)
+            for (var index = 0; index + 1 < textureCoordinates.Count; index += 2)
             {
-                geometry.TextureCoordinates.Add(new Vector2(mesh.Uvs[index], 1f - mesh.Uvs[index + 1]));
+                geometry.TextureCoordinates.Add(new Vector2(textureCoordinates[index], 1f - textureCoordinates[index + 1]));
             }
         }
 
@@ -359,6 +378,104 @@ public sealed partial class MainWindow : Window
         }
 
         return geometry;
+    }
+
+    private static IReadOnlyList<float> SelectTextureCoordinates(CanonicalMesh mesh, CanonicalScene scene, int materialIndex)
+    {
+        var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
+            ? scene.Materials[materialIndex]
+            : null;
+        var diffuseTexture = SelectBaseColorTexture(material);
+        var requestedChannel = diffuseTexture?.UvChannel ?? mesh.PreferredUvChannel;
+        IReadOnlyList<float> coordinates;
+
+        if (requestedChannel == 1 && mesh.Uv1s is { Count: > 0 })
+        {
+            coordinates = mesh.Uv1s;
+        }
+        else if (mesh.Uv0s is { Count: > 0 })
+        {
+            coordinates = mesh.Uv0s;
+        }
+        else
+        {
+            coordinates = mesh.Uvs;
+        }
+
+        if (diffuseTexture is null ||
+            (Math.Abs(diffuseTexture.UvScaleU - 1f) < 0.0001f &&
+             Math.Abs(diffuseTexture.UvScaleV - 1f) < 0.0001f &&
+             Math.Abs(diffuseTexture.UvOffsetU) < 0.0001f &&
+             Math.Abs(diffuseTexture.UvOffsetV) < 0.0001f))
+        {
+            return coordinates;
+        }
+
+        if (requestedChannel == 1)
+        {
+            coordinates = NormalizeUvCoordinatesIfLocalSubspace(coordinates);
+        }
+
+        var transformed = new float[coordinates.Count];
+        var minU = Math.Min(diffuseTexture.UvOffsetU, diffuseTexture.UvOffsetU + diffuseTexture.UvScaleU);
+        var maxU = Math.Max(diffuseTexture.UvOffsetU, diffuseTexture.UvOffsetU + diffuseTexture.UvScaleU);
+        var minV = Math.Min(diffuseTexture.UvOffsetV, diffuseTexture.UvOffsetV + diffuseTexture.UvScaleV);
+        var maxV = Math.Max(diffuseTexture.UvOffsetV, diffuseTexture.UvOffsetV + diffuseTexture.UvScaleV);
+        for (var index = 0; index + 1 < coordinates.Count; index += 2)
+        {
+            var transformedU = (coordinates[index] * diffuseTexture.UvScaleU) + diffuseTexture.UvOffsetU;
+            var transformedV = (coordinates[index + 1] * diffuseTexture.UvScaleV) + diffuseTexture.UvOffsetV;
+
+            // Atlas-cropped TS4 materials can leave UVs slightly outside the selected sub-rect.
+            // Clamp them so preview sampling does not bleed into neighboring atlas islands.
+            transformed[index] = Math.Clamp(transformedU, minU, maxU);
+            transformed[index + 1] = Math.Clamp(transformedV, minV, maxV);
+        }
+
+        return transformed;
+    }
+
+    private static IReadOnlyList<float> NormalizeUvCoordinatesIfLocalSubspace(IReadOnlyList<float> coordinates)
+    {
+        if (coordinates.Count < 4)
+        {
+            return coordinates;
+        }
+
+        var minU = float.PositiveInfinity;
+        var maxU = float.NegativeInfinity;
+        var minV = float.PositiveInfinity;
+        var maxV = float.NegativeInfinity;
+        for (var index = 0; index + 1 < coordinates.Count; index += 2)
+        {
+            minU = Math.Min(minU, coordinates[index]);
+            maxU = Math.Max(maxU, coordinates[index]);
+            minV = Math.Min(minV, coordinates[index + 1]);
+            maxV = Math.Max(maxV, coordinates[index + 1]);
+        }
+
+        if (!float.IsFinite(minU) || !float.IsFinite(maxU) || !float.IsFinite(minV) || !float.IsFinite(maxV))
+        {
+            return coordinates;
+        }
+
+        var rangeU = maxU - minU;
+        var rangeV = maxV - minV;
+        if (rangeU <= 0.0001f || rangeV <= 0.0001f)
+        {
+            return coordinates;
+        }
+
+        // Some TS4 UV1 atlas layouts are stored in a local subspace rather than spanning the
+        // full 0..1 range. Normalize them before applying a material-driven atlas transform.
+        var normalized = new float[coordinates.Count];
+        for (var index = 0; index + 1 < coordinates.Count; index += 2)
+        {
+            normalized[index] = (coordinates[index] - minU) / rangeU;
+            normalized[index + 1] = (coordinates[index + 1] - minV) / rangeV;
+        }
+
+        return normalized;
     }
 
     private static Vector3Collection BuildPreviewNormals(IList<Vector3> positions, IList<int> triangleIndices)

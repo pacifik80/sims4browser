@@ -281,16 +281,23 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 }
 
                 var vertices = vbuf.ReadVertices(vrtf, mesh.StreamOffset, mesh.VertexCount, materialInfo.UvScales);
-                var indices = ibuf.ReadIndices(mesh.StartIndex, mesh.PrimitiveCount * 3)
+                var indices = ibuf.ReadIndices(mesh.StartIndex, mesh.PrimitiveCount * 3, mesh.VertexCount)
                     .Select(static value => (int)value)
                     .ToArray();
+
+                var uvSelection = SelectPreferredUvCoordinates(vertices, mesh.Name, diagnostics);
+                var uv0 = vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray();
+                var uv1 = vertices.SelectMany(static vertex => vertex.Uv1 ?? []).ToArray();
 
                 meshes.Add(new CanonicalMesh(
                     $"Mesh_{mesh.Name:X8}",
                     vertices.SelectMany(static vertex => vertex.Position).ToArray(),
                     vertices.SelectMany(static vertex => vertex.Normal ?? []).ToArray(),
                     vertices.SelectMany(static vertex => vertex.Tangent ?? []).ToArray(),
-                    vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray(),
+                    uvSelection.Uvs,
+                    uv0,
+                    uv1,
+                    uvSelection.Channel,
                     indices,
                     materialIndex,
                     []));
@@ -339,40 +346,33 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         if (materialChunk.Tag == "MTST")
         {
             var mtst = Ts4MtstChunk.Parse(materialChunk.Data.Span);
-            Ts4MaterialInfo? bestCandidate = null;
-            foreach (var reference in mtst.MaterialReferences)
+            var selectedEntry = mtst.Entries.FirstOrDefault(static entry => !entry.Reference.IsNull && entry.StateNameHash == 0);
+            if (selectedEntry.Reference.IsNull)
             {
-                if (reference.IsNull)
-                {
-                    continue;
-                }
-
-                var matdChunk = rcol.ResolveChunk(reference);
-                if (matdChunk is null || matdChunk.Tag != "MATD")
-                {
-                    continue;
-                }
-
-                var matd = Ts4MatdChunk.Parse(matdChunk.Data.Span);
-                var candidate = await BuildMaterialInfoAsync(matd, ownerResource, textureCache, CanonicalMaterialSourceKind.MaterialSet, cancellationToken);
-                if (bestCandidate is null || IsPreferredMaterialCandidate(candidate, bestCandidate))
-                {
-                    bestCandidate = candidate;
-                }
+                selectedEntry = mtst.Entries.FirstOrDefault(static entry => !entry.Reference.IsNull);
             }
 
-            if (bestCandidate is not null)
+            if (!selectedEntry.Reference.IsNull)
             {
-                return bestCandidate;
-            }
-
-            if (mtst.DefaultMaterialReference is { IsNull: false } selectedReference)
-            {
-                var matdChunk = rcol.ResolveChunk(selectedReference);
+                var matdChunk = rcol.ResolveChunk(selectedEntry.Reference);
                 if (matdChunk is not null && matdChunk.Tag == "MATD")
                 {
                     var matd = Ts4MatdChunk.Parse(matdChunk.Data.Span);
-                    return await BuildMaterialInfoAsync(matd, ownerResource, textureCache, CanonicalMaterialSourceKind.MaterialSet, cancellationToken);
+                    var materialInfo = await BuildMaterialInfoAsync(matd, ownerResource, textureCache, CanonicalMaterialSourceKind.MaterialSet, cancellationToken);
+                    if (mtst.Entries.Count(static entry => !entry.Reference.IsNull) > 1)
+                    {
+                        var stateNote = selectedEntry.StateNameHash == 0
+                            ? "MTST exposes multiple material states; preview is using the inferred default state entry."
+                            : $"MTST exposes multiple material states; preview is using state hash 0x{selectedEntry.StateNameHash:X8} as the best available default.";
+                        return materialInfo with
+                        {
+                            Approximation = string.IsNullOrWhiteSpace(materialInfo.Approximation)
+                                ? stateNote
+                                : $"{materialInfo.Approximation} {stateNote}"
+                        };
+                    }
+
+                    return materialInfo;
                 }
             }
 
@@ -424,7 +424,22 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 textures.Add(cachedTexture with
                 {
                     Slot = reference.Slot,
-                    Semantic = ClassifyTextureSemantic(reference.Slot)
+                    Semantic = ClassifyTextureSemantic(reference.Slot),
+                    UvChannel = reference.Slot is "diffuse" or "basecolor" or "albedo"
+                        ? matd.DiffuseUvMapping.UvChannel
+                        : cachedTexture.UvChannel,
+                    UvScaleU = reference.Slot is "diffuse" or "basecolor" or "albedo"
+                        ? matd.DiffuseUvMapping.UvScaleU
+                        : cachedTexture.UvScaleU,
+                    UvScaleV = reference.Slot is "diffuse" or "basecolor" or "albedo"
+                        ? matd.DiffuseUvMapping.UvScaleV
+                        : cachedTexture.UvScaleV,
+                    UvOffsetU = reference.Slot is "diffuse" or "basecolor" or "albedo"
+                        ? matd.DiffuseUvMapping.UvOffsetU
+                        : cachedTexture.UvOffsetU,
+                    UvOffsetV = reference.Slot is "diffuse" or "basecolor" or "albedo"
+                        ? matd.DiffuseUvMapping.UvOffsetV
+                        : cachedTexture.UvOffsetV
                 });
             }
         }
@@ -444,6 +459,17 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             diagnostics.Add(
                 $"Texture {DescribeTextureSemantic(texture.Semantic)} ({texture.Slot}) resolved via {DescribeTextureSourceKind(texture.SourceKind)}" +
                 $"{FormatTextureSourceLocation(texture.SourcePackagePath)}.");
+            if (texture.Semantic == CanonicalTextureSemantic.BaseColor &&
+                (texture.UvChannel != 0 ||
+                 Math.Abs(texture.UvScaleU - 1f) > 0.0001f ||
+                 Math.Abs(texture.UvScaleV - 1f) > 0.0001f ||
+                 Math.Abs(texture.UvOffsetU) > 0.0001f ||
+                 Math.Abs(texture.UvOffsetV) > 0.0001f))
+            {
+                diagnostics.Add(
+                    FormattableString.Invariant(
+                        $"Texture {DescribeTextureSemantic(texture.Semantic)} uses UV{texture.UvChannel} with transform scale=({texture.UvScaleU:0.###}, {texture.UvScaleV:0.###}) offset=({texture.UvOffsetU:0.###}, {texture.UvOffsetV:0.###})."));
+            }
         }
 
         var isTransparent = matd.IsTransparent || matd.TextureReferences.Any(static texture => texture.Slot is "alpha" or "overlay");
@@ -458,30 +484,6 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             isTransparent ? "alpha-test-or-blend" : "opaque",
             usedFallbackTextureApproximation ? "Maxis shaders are approximated to a portable texture-set export." : null,
             usedFallbackTextureApproximation ? CanonicalMaterialSourceKind.FallbackCandidate : sourceKind);
-    }
-
-    private static bool IsPreferredMaterialCandidate(Ts4MaterialInfo candidate, Ts4MaterialInfo current)
-    {
-        if (candidate.Textures.Count != current.Textures.Count)
-        {
-            return candidate.Textures.Count > current.Textures.Count;
-        }
-
-        var candidateSupported = !string.Equals(candidate.ShaderName, "Unsupported", StringComparison.OrdinalIgnoreCase);
-        var currentSupported = !string.Equals(current.ShaderName, "Unsupported", StringComparison.OrdinalIgnoreCase);
-        if (candidateSupported != currentSupported)
-        {
-            return candidateSupported;
-        }
-
-        var candidateHasApproximation = !string.IsNullOrWhiteSpace(candidate.Approximation);
-        var currentHasApproximation = !string.IsNullOrWhiteSpace(current.Approximation);
-        if (candidateHasApproximation != currentHasApproximation)
-        {
-            return !candidateHasApproximation;
-        }
-
-        return false;
     }
 
     private async Task<IReadOnlyList<CanonicalTexture>> ResolveFallbackTexturesAsync(
@@ -972,6 +974,68 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             ? SceneBuildStatus.Partial
             : SceneBuildStatus.SceneReady;
     }
+
+    private static (float[] Uvs, int Channel) SelectPreferredUvCoordinates(
+        IReadOnlyList<Ts4DecodedVertex> vertices,
+        uint meshName,
+        ICollection<string> diagnostics)
+    {
+        var uv0 = vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray();
+        var uv1 = vertices.SelectMany(static vertex => vertex.Uv1 ?? []).ToArray();
+
+        if (uv0.Length == 0)
+        {
+            return (uv1, uv1.Length > 0 ? 1 : 0);
+        }
+
+        if (uv1.Length == 0 || uv1.Length != uv0.Length)
+        {
+            return (uv0, 0);
+        }
+
+        var uv0Area = EstimateUvCoverageArea(uv0);
+        var uv1Area = EstimateUvCoverageArea(uv1);
+        // Some Maxis materials intentionally pack a small but valid atlas island into UV0.
+        // Be conservative about switching to UV1, or banner/decal meshes can drift badly.
+        if (uv0Area > 0f && uv0Area < 0.002f && uv1Area > uv0Area * 8f)
+        {
+            diagnostics.Add($"Mesh 0x{meshName:X8} uses UV1 for preview because UV0 covers only a tiny atlas region ({uv0Area:0.####}) while UV1 covers {uv1Area:0.####}.");
+            return (uv1, 1);
+        }
+
+        return (uv0, 0);
+    }
+
+    private static float EstimateUvCoverageArea(float[] uvs)
+    {
+        if (uvs.Length < 2)
+        {
+            return 0f;
+        }
+
+        var minU = float.PositiveInfinity;
+        var maxU = float.NegativeInfinity;
+        var minV = float.PositiveInfinity;
+        var maxV = float.NegativeInfinity;
+
+        for (var index = 0; index + 1 < uvs.Length; index += 2)
+        {
+            var u = uvs[index];
+            var v = uvs[index + 1];
+            minU = Math.Min(minU, u);
+            maxU = Math.Max(maxU, u);
+            minV = Math.Min(minV, v);
+            maxV = Math.Max(maxV, v);
+        }
+
+        if (!float.IsFinite(minU) || !float.IsFinite(maxU) || !float.IsFinite(minV) || !float.IsFinite(maxV))
+        {
+            return 0f;
+        }
+
+        return Math.Max(0f, maxU - minU) * Math.Max(0f, maxV - minV);
+    }
+
 }
 
 public static class PreviewDebugProbe
@@ -1002,6 +1066,41 @@ public static class PreviewDebugProbe
             {
                 lines.Add(
                     $"Mesh name=0x{mesh.Name:X8} primitive={mesh.PrimitiveType} flags=0x{mesh.Flags:X} vbuf={mesh.VertexBufferReference.Raw:X8} ibuf={mesh.IndexBufferReference.Raw:X8} vrtf={mesh.VertexFormatReference.Raw:X8} verts={mesh.VertexCount} prims={mesh.PrimitiveCount}");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
+            lines.Add(ex.StackTrace ?? "(no stack)");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    public static string InspectMaterialChunks(byte[] bytes)
+    {
+        var lines = new List<string>();
+        try
+        {
+            var rcol = Ts4RcolResource.Parse(bytes);
+            lines.Add($"RCOL parsed: public={rcol.PublicChunkCount} chunks={rcol.Chunks.Count} external={rcol.ExternalResources.Count}");
+            foreach (var chunk in rcol.Chunks.Where(static chunk => chunk.Tag is "MATD" or "MTST"))
+            {
+                lines.Add($"Chunk {chunk.Tag} {chunk.Key.Type:X8}:{chunk.Key.Group:X8}:{chunk.Key.Instance:X16} len={chunk.Length}");
+                if (chunk.Tag == "MATD")
+                {
+                    foreach (var line in Ts4MatdChunk.InspectProperties(chunk.Data.Span))
+                    {
+                        lines.Add($"  {line}");
+                    }
+                }
+                else if (chunk.Tag == "MTST")
+                {
+                    foreach (var line in Ts4MtstChunk.InspectReferences(chunk.Data.Span))
+                    {
+                        lines.Add($"  {line}");
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -1061,13 +1160,29 @@ internal sealed record Ts4MaterialInfo(
 
 internal readonly record struct Ts4TextureReference(string Slot, Ts4ResourceKey Key);
 
+internal readonly record struct Ts4TextureUvMapping(
+    int UvChannel = 0,
+    float UvScaleU = 1f,
+    float UvScaleV = 1f,
+    float UvOffsetU = 0f,
+    float UvOffsetV = 0f)
+{
+    public bool IsIdentity =>
+        UvChannel == 0 &&
+        Math.Abs(UvScaleU - 1f) < 0.0001f &&
+        Math.Abs(UvScaleV - 1f) < 0.0001f &&
+        Math.Abs(UvOffsetU) < 0.0001f &&
+        Math.Abs(UvOffsetV) < 0.0001f;
+}
+
 internal sealed record Ts4MatdChunk(
     string MaterialName,
     uint MaterialNameHash,
     string ShaderName,
     float[] UvScales,
     IReadOnlyList<Ts4TextureReference> TextureReferences,
-    bool IsTransparent)
+    bool IsTransparent,
+    Ts4TextureUvMapping DiffuseUvMapping)
 {
     public static Ts4MatdChunk Parse(ReadOnlySpan<byte> bytes)
     {
@@ -1080,6 +1195,7 @@ internal sealed record Ts4MatdChunk(
         var shaderNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4));
         var textureReferences = new List<Ts4TextureReference>();
         var uvScales = new[] { 1f, 1f, 1f };
+        var diffuseUvMapping = new Ts4TextureUvMapping(0, 1f, 1f, 0f, 0f);
 
         var mtrlOffset = bytes.IndexOf("MTRL"u8);
         if (mtrlOffset < 0 || mtrlOffset + 16 > bytes.Length)
@@ -1090,7 +1206,8 @@ internal sealed record Ts4MatdChunk(
                 $"Shader_{shaderNameHash:X8}",
                 uvScales,
                 textureReferences,
-                false);
+                false,
+                diffuseUvMapping);
         }
 
         var propertyCount = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(mtrlOffset + 12, 4)));
@@ -1114,13 +1231,32 @@ internal sealed record Ts4MatdChunk(
 
             if (normalizedPropertyType == 1)
             {
-                TryApplyScalarProperty(propertyHash, propertyOffset, bytes, uvScales);
+                TryApplyScalarProperty(shaderNameHash, propertyHash, propertyOffset, bytes, uvScales, ref diffuseUvMapping);
                 continue;
             }
 
             if (normalizedPropertyType == 4)
             {
-                TryApplyVectorProperty(propertyHash, propertyOffset, propertyArity, bytes, uvScales);
+                TryApplyVectorProperty(shaderNameHash, propertyHash, propertyOffset, propertyArity, bytes, uvScales, ref diffuseUvMapping);
+            }
+        }
+
+        if (textureReferences.Count == 0)
+        {
+            tableOffset = mtrlOffset + 16;
+            for (var i = 0; i < propertyCount && tableOffset + 16 <= bytes.Length; i++, tableOffset += 16)
+            {
+                var propertyHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset, 4));
+                var propertyType = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 4, 4));
+                var normalizedPropertyType = propertyType & 0xFFFF;
+                var propertyArity = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 8, 4));
+                var propertyOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 12, 4)));
+                if (propertyOffset < 0 || propertyOffset >= bytes.Length)
+                {
+                    continue;
+                }
+
+                TryReadHeuristicTextureReference(propertyHash, normalizedPropertyType, propertyArity, propertyOffset, bytes, textureReferences);
             }
         }
 
@@ -1133,7 +1269,8 @@ internal sealed record Ts4MatdChunk(
                 .GroupBy(static reference => $"{reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}", StringComparer.OrdinalIgnoreCase)
                 .Select(static group => group.First())
                 .ToArray(),
-            false);
+            false,
+            diffuseUvMapping);
     }
 
     private static Ts4MatdChunk CreateFallback(uint materialNameHash) =>
@@ -1143,7 +1280,102 @@ internal sealed record Ts4MatdChunk(
             "Unsupported",
             [1f, 1f, 1f],
             [],
-            false);
+            false,
+            new Ts4TextureUvMapping(0, 1f, 1f, 0f, 0f));
+
+    public static IReadOnlyList<string> InspectProperties(ReadOnlySpan<byte> bytes)
+    {
+        var lines = new List<string>();
+        if (bytes.Length < 16 || !bytes[..4].SequenceEqual("MATD"u8))
+        {
+            lines.Add("Not a MATD chunk.");
+            return lines;
+        }
+
+        var materialNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(8, 4));
+        var shaderNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4));
+        lines.Add($"material=Material_{materialNameHash:X8} shader=Shader_{shaderNameHash:X8}");
+
+        var mtrlOffset = bytes.IndexOf("MTRL"u8);
+        if (mtrlOffset < 0 || mtrlOffset + 16 > bytes.Length)
+        {
+            lines.Add("No MTRL property table found.");
+            return lines;
+        }
+
+        var propertyCount = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(mtrlOffset + 12, 4)));
+        lines.Add($"propertyCount={propertyCount}");
+        var tableOffset = mtrlOffset + 16;
+        for (var i = 0; i < propertyCount && tableOffset + 16 <= bytes.Length; i++, tableOffset += 16)
+        {
+            var propertyHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset, 4));
+            var propertyType = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 4, 4));
+            var normalizedPropertyType = propertyType & 0xFFFF;
+            var propertyArity = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 8, 4));
+            var propertyOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 12, 4)));
+            var summary = $"[{i}] hash=0x{propertyHash:X8} type=0x{normalizedPropertyType:X4} arity={propertyArity} offset=0x{propertyOffset:X}";
+            if (propertyOffset < 0 || propertyOffset >= bytes.Length)
+            {
+                lines.Add(summary + " invalid-offset");
+                continue;
+            }
+
+            lines.Add(summary + DescribePropertyValue(normalizedPropertyType, propertyArity, propertyOffset, bytes));
+        }
+
+        return lines;
+    }
+
+    private static string DescribePropertyValue(uint normalizedPropertyType, uint propertyArity, int propertyOffset, ReadOnlySpan<byte> bytes)
+    {
+        try
+        {
+            if (normalizedPropertyType == 1 && propertyOffset + 4 <= bytes.Length)
+            {
+                return $" scalar={BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4)).ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}";
+            }
+
+            if (normalizedPropertyType == 4)
+            {
+                var count = checked((int)Math.Max(1u, propertyArity));
+                if (propertyOffset + (count * 4) <= bytes.Length)
+                {
+                    var values = new string[count];
+                    for (var index = 0; index < count; index++)
+                    {
+                        values[index] = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + (index * 4), 4))
+                            .ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+                    }
+
+                    return $" vector=[{string.Join(", ", values)}]";
+                }
+            }
+
+            if (normalizedPropertyType == 2 && propertyOffset + 16 <= bytes.Length)
+            {
+                return DescribePossibleKey(bytes.Slice(propertyOffset, 16));
+            }
+
+            return string.Empty;
+        }
+        catch
+        {
+            return " value=(decode-failed)";
+        }
+    }
+
+    private static string DescribePossibleKey(ReadOnlySpan<byte> keyBytes)
+    {
+        var keyA = new Ts4ResourceKey(
+            BinaryPrimitives.ReadUInt32LittleEndian(keyBytes.Slice(0, 4)),
+            BinaryPrimitives.ReadUInt32LittleEndian(keyBytes.Slice(4, 4)),
+            BinaryPrimitives.ReadUInt64LittleEndian(keyBytes.Slice(8, 8)));
+        var keyB = new Ts4ResourceKey(
+            BinaryPrimitives.ReadUInt32LittleEndian(keyBytes.Slice(8, 4)),
+            BinaryPrimitives.ReadUInt32LittleEndian(keyBytes.Slice(12, 4)),
+            BinaryPrimitives.ReadUInt64LittleEndian(keyBytes.Slice(0, 8)));
+        return $" keyA={keyA.Type:X8}:{keyA.Group:X8}:{keyA.Instance:X16} keyB={keyB.Type:X8}:{keyB.Group:X8}:{keyB.Instance:X16}";
+    }
 
     private static Ts4ResourceKey ReadMatdEmbeddedResourceKey(ReadOnlySpan<byte> bytes)
     {
@@ -1161,6 +1393,11 @@ internal sealed record Ts4MatdChunk(
         ReadOnlySpan<byte> bytes,
         List<Ts4TextureReference> textureReferences)
     {
+        if (!IsRecognizedTexturePropertyHash(propertyHash))
+        {
+            return false;
+        }
+
         if (propertyOffset + 16 > bytes.Length)
         {
             return false;
@@ -1184,7 +1421,7 @@ internal sealed record Ts4MatdChunk(
         var keyBytes = bytes.Slice(propertyOffset, 16);
         foreach (var key in ReadPotentialEmbeddedResourceKeys(keyBytes))
         {
-            if (!IsImageType(key.Type))
+            if (!IsImageType(key.Type) || key.Instance == 0)
             {
                 continue;
             }
@@ -1195,6 +1432,53 @@ internal sealed record Ts4MatdChunk(
 
         return false;
     }
+
+    private static bool TryReadHeuristicTextureReference(
+        uint propertyHash,
+        uint normalizedPropertyType,
+        uint propertyArity,
+        int propertyOffset,
+        ReadOnlySpan<byte> bytes,
+        List<Ts4TextureReference> textureReferences)
+    {
+        if (propertyOffset + 16 > bytes.Length)
+        {
+            return false;
+        }
+
+        if (normalizedPropertyType != 2 || propertyArity != 1)
+        {
+            return false;
+        }
+
+        var keyBytes = bytes.Slice(propertyOffset, 16);
+        foreach (var key in ReadPotentialEmbeddedResourceKeys(keyBytes))
+        {
+            if (!IsImageType(key.Type) || key.Instance == 0)
+            {
+                continue;
+            }
+
+            if (textureReferences.Any(existing => existing.Key.Equals(key)))
+            {
+                continue;
+            }
+
+            textureReferences.Add(new Ts4TextureReference(GetHeuristicTextureSlotName(propertyHash, textureReferences.Count), key));
+        }
+
+        return textureReferences.Count > 0;
+    }
+
+    private static bool IsRecognizedTexturePropertyHash(uint propertyHash) => propertyHash switch
+    {
+        0x1B9D3AC5 => true, // diffuse/base color
+        0xC53A9D1B => true, // diffuse/base color
+        0x773BA60F => true, // specular
+        0x9F5D1C9B => true, // normal
+        0x3A9F5D1C => true, // alpha / opacity
+        _ => false
+    };
 
     private static Ts4ResourceKey[] ReadPotentialEmbeddedResourceKeys(ReadOnlySpan<byte> bytes)
     {
@@ -1208,6 +1492,7 @@ internal sealed record Ts4MatdChunk(
 
     private static string GetTextureSlotName(uint propertyHash, int existingTextureCount) => propertyHash switch
     {
+        0x1B9D3AC5 => "diffuse",
         0xC53A9D1B => "diffuse",
         0x773BA60F => "specular",
         0x9F5D1C9B => "normal",
@@ -1215,46 +1500,88 @@ internal sealed record Ts4MatdChunk(
         _ => existingTextureCount == 0 ? "diffuse" : $"texture_{existingTextureCount}"
     };
 
-    private static void TryApplyScalarProperty(uint propertyHash, int propertyOffset, ReadOnlySpan<byte> bytes, float[] uvScales)
+    private static string GetHeuristicTextureSlotName(uint propertyHash, int existingTextureCount) => propertyHash switch
     {
+        0x1B9D3AC5 => "diffuse",
+        0xC53A9D1B => "diffuse",
+        0x3A9F5D1C => "alpha",
+        0x9F5D1C9B => "normal",
+        0x773BA60F => "specular",
+        _ => existingTextureCount == 0 ? "diffuse" : $"texture_{existingTextureCount}"
+    };
+
+    private static void TryApplyScalarProperty(
+        uint shaderNameHash,
+        uint propertyHash,
+        int propertyOffset,
+        ReadOnlySpan<byte> bytes,
+        float[] uvScales,
+        ref Ts4TextureUvMapping diffuseUvMapping)
+    {
+        _ = uvScales;
         if (propertyOffset + 4 > bytes.Length)
         {
             return;
         }
 
-        var value = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
-        if (!IsPlausibleUvScale(value))
+        // Narrow, evidence-backed handling:
+        // On EP14 windmill materials (Shader_B9105A6D), B95C43EB behaves like a diffuse
+        // UV-channel selector. Keeping this selector while *not* applying guessed CEBA7E8A
+        // transforms produces a banner that is materially closer to the atlas target than
+        // raw UV0 alone.
+        if (shaderNameHash == 0xB9105A6D && propertyHash == 0xB95C43EB)
         {
-            return;
-        }
-
-        switch (propertyHash)
-        {
-            case 0x57002869:
-                uvScales[0] = value;
-                break;
-            case 0x795EAC31:
-                uvScales[1] = value;
-                break;
+            var value = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
+            var rounded = (int)MathF.Round(value);
+            if (rounded is 0 or 1)
+            {
+                diffuseUvMapping = diffuseUvMapping with { UvChannel = rounded };
+            }
         }
     }
 
-    private static void TryApplyVectorProperty(uint propertyHash, int propertyOffset, uint propertyArity, ReadOnlySpan<byte> bytes, float[] uvScales)
+    private static void TryApplyVectorProperty(
+        uint shaderNameHash,
+        uint propertyHash,
+        int propertyOffset,
+        uint propertyArity,
+        ReadOnlySpan<byte> bytes,
+        float[] uvScales,
+        ref Ts4TextureUvMapping diffuseUvMapping)
     {
-        var floatCount = checked((int)Math.Clamp(propertyArity, 2, 4));
-        if (propertyOffset + (floatCount * 4) > bytes.Length)
+        _ = propertyArity;
+        _ = uvScales;
+        if (propertyOffset + 16 > bytes.Length)
         {
             return;
         }
 
-        if (propertyHash is 0xC3FAAC4F or 0x04A5DAA3)
+        // Narrow, asset-backed handling:
+        // On Shader_B9105A6D, once diffuse sampling is explicitly switched to UV1, CEBA7E8A
+        // behaves like a compact atlas crop for the banner material:
+        //   x = horizontal crop width and horizontal origin
+        //   y = vertical crop height
+        //   w = vertical origin
+        // This matches the observed EP14 windmill banner substantially better than treating
+        // the vector as a generic full origin/scale rectangle.
+        if (shaderNameHash == 0xB9105A6D &&
+            propertyHash == 0xCEBA7E8A &&
+            diffuseUvMapping.UvChannel == 1)
         {
-            var u = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
-            var v = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + 4, 4));
-            if (IsPlausibleUvScale(u) && IsPlausibleUvScale(v))
+            var scaleU = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
+            var scaleV = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + 4, 4));
+            var offsetV = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + 12, 4));
+            if (IsPlausibleUvScale(scaleU) && scaleU > 0f &&
+                IsPlausibleUvScale(scaleV) && scaleV > 0f &&
+                float.IsFinite(offsetV))
             {
-                uvScales[0] = u;
-                uvScales[1] = v;
+                diffuseUvMapping = diffuseUvMapping with
+                {
+                    UvScaleU = Math.Clamp(scaleU, 0.001f, 1f),
+                    UvOffsetU = scaleU,
+                    UvScaleV = Math.Clamp(scaleV, 0.001f, 1f),
+                    UvOffsetV = Math.Clamp(offsetV, 0f, 1f)
+                };
             }
         }
     }
@@ -1273,7 +1600,12 @@ internal sealed record Ts4MatdChunk(
         0x1B4D2A70;
 }
 
-internal sealed record Ts4MtstChunk(Ts4ChunkReference? DefaultMaterialReference, IReadOnlyList<Ts4ChunkReference> MaterialReferences)
+internal readonly record struct Ts4MtstEntry(Ts4ChunkReference Reference, uint Unknown0, uint StateNameHash)
+{
+    public bool IsNull => Reference.IsNull;
+}
+
+internal sealed record Ts4MtstChunk(Ts4ChunkReference? DefaultMaterialReference, IReadOnlyList<Ts4MtstEntry> Entries)
 {
     public static Ts4MtstChunk Parse(ReadOnlySpan<byte> bytes)
     {
@@ -1283,18 +1615,41 @@ internal sealed record Ts4MtstChunk(Ts4ChunkReference? DefaultMaterialReference,
         }
 
         var entryCount = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(16, 4)));
-        var references = new List<Ts4ChunkReference>(Math.Max(0, entryCount));
+        var entries = new List<Ts4MtstEntry>(Math.Max(0, entryCount));
         var offset = 20;
         for (var i = 0; i < entryCount && offset + 12 <= bytes.Length; i++, offset += 12)
         {
             var reference = new Ts4ChunkReference(BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4)));
-            if (!reference.IsNull)
-            {
-                references.Add(reference);
-            }
+            var unknown0 = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4));
+            var stateNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 8, 4));
+            entries.Add(new Ts4MtstEntry(reference, unknown0, stateNameHash));
         }
 
-        return new(null, references);
+        var defaultReference = entries.FirstOrDefault(static entry => !entry.Reference.IsNull && entry.StateNameHash == 0).Reference;
+        return new(defaultReference.IsNull ? null : defaultReference, entries);
+    }
+
+    public static IReadOnlyList<string> InspectReferences(ReadOnlySpan<byte> bytes)
+    {
+        var lines = new List<string>();
+        if (bytes.Length < 20 || !bytes[..4].SequenceEqual("MTST"u8))
+        {
+            lines.Add("Not an MTST chunk.");
+            return lines;
+        }
+
+        var entryCount = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(16, 4)));
+        lines.Add($"materialRefCount={entryCount}");
+        var offset = 20;
+        for (var i = 0; i < entryCount && offset + 12 <= bytes.Length; i++, offset += 12)
+        {
+            var reference = new Ts4ChunkReference(BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4)));
+            var unknown0 = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4));
+            var stateNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 8, 4));
+            lines.Add($"[{i}] ref=0x{reference.Raw:X8} type={reference.ReferenceType} index={reference.Index} unknown0=0x{unknown0:X8} stateHash=0x{stateNameHash:X8}");
+        }
+
+        return lines;
     }
 }
 
@@ -1419,6 +1774,64 @@ internal ref struct SpanReader
             throw new InvalidDataException($"Unexpected end of {context} data at offset 0x{Position:X}.");
         }
     }
+    private static float[] SelectPreferredUvCoordinates(
+        IReadOnlyList<Ts4DecodedVertex> vertices,
+        uint meshName,
+        ICollection<string> diagnostics)
+    {
+        var uv0 = vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray();
+        var uv1 = vertices.SelectMany(static vertex => vertex.Uv1 ?? []).ToArray();
+
+        if (uv0.Length == 0)
+        {
+            return uv1;
+        }
+
+        if (uv1.Length == 0 || uv1.Length != uv0.Length)
+        {
+            return uv0;
+        }
+
+        var uv0Area = EstimateUvCoverageArea(uv0);
+        var uv1Area = EstimateUvCoverageArea(uv1);
+        if (uv0Area > 0f && uv0Area < 0.01f && uv1Area > uv0Area * 4f)
+        {
+            diagnostics.Add($"Mesh 0x{meshName:X8} uses UV1 for preview because UV0 covers only a tiny atlas region ({uv0Area:0.####}) while UV1 covers {uv1Area:0.####}.");
+            return uv1;
+        }
+
+        return uv0;
+    }
+
+    private static float EstimateUvCoverageArea(float[] uvs)
+    {
+        if (uvs.Length < 2)
+        {
+            return 0f;
+        }
+
+        var minU = float.PositiveInfinity;
+        var maxU = float.NegativeInfinity;
+        var minV = float.PositiveInfinity;
+        var maxV = float.NegativeInfinity;
+
+        for (var index = 0; index + 1 < uvs.Length; index += 2)
+        {
+            var u = uvs[index];
+            var v = uvs[index + 1];
+            minU = Math.Min(minU, u);
+            maxU = Math.Max(maxU, u);
+            minV = Math.Min(minV, v);
+            maxV = Math.Max(maxV, v);
+        }
+
+        if (!float.IsFinite(minU) || !float.IsFinite(maxU) || !float.IsFinite(minV) || !float.IsFinite(maxV))
+        {
+            return 0f;
+        }
+
+        return Math.Max(0f, maxU - minU) * Math.Max(0f, maxV - minV);
+    }
 }
 
 internal enum Ts4VertexUsage : byte
@@ -1476,7 +1889,7 @@ internal sealed class Ts4VrtfChunk
         };
 }
 
-internal sealed record Ts4DecodedVertex(float[] Position, float[]? Normal, float[]? Tangent, float[]? Uv0);
+internal sealed record Ts4DecodedVertex(float[] Position, float[]? Normal, float[]? Tangent, float[]? Uv0, float[]? Uv1);
 
 internal sealed class Ts4VbufChunk
 {
@@ -1516,6 +1929,7 @@ internal sealed class Ts4VbufChunk
             float[]? normal = null;
             float[]? tangent = null;
             float[]? uv0 = null;
+            float[]? uv1 = null;
 
             foreach (var element in vrtf.Elements)
             {
@@ -1539,6 +1953,9 @@ internal sealed class Ts4VbufChunk
                     case Ts4VertexUsage.Uv when element.UsageIndex == 0:
                         uv0 = ReadUv(rawData, offset, element.Format, uvScales);
                         break;
+                    case Ts4VertexUsage.Uv when element.UsageIndex == 1:
+                        uv1 = ReadUv(rawData, offset, element.Format, uvScales);
+                        break;
                 }
             }
 
@@ -1547,7 +1964,7 @@ internal sealed class Ts4VbufChunk
                 continue;
             }
 
-            results.Add(new Ts4DecodedVertex(position, normal, tangent, uv0));
+            results.Add(new Ts4DecodedVertex(position, normal, tangent, uv0, uv1));
         }
 
         return results;
@@ -1606,8 +2023,17 @@ internal sealed class Ts4VbufChunk
 
     private static float[] DecodeShort2Normalized(byte[] data, int offset)
     {
-        var u = ReadInt16(data, offset) / (float)short.MaxValue;
-        var v = ReadInt16(data, offset + 2) / (float)short.MaxValue;
+        // TS4 UV format 0x06 appears in two practical encodings:
+        // - full unsigned-normalized 0..65535
+        // - half-range 0..32767, common on some Build/Buy atlases
+        // The half-range variant otherwise collapses a full atlas into the top-left quarter.
+        var rawU = ReadUInt16(data, offset);
+        var rawV = ReadUInt16(data, offset + 2);
+        var divisor = rawU <= short.MaxValue && rawV <= short.MaxValue
+            ? (float)short.MaxValue
+            : ushort.MaxValue;
+        var u = rawU / divisor;
+        var v = rawV / divisor;
         return [u, v];
     }
 
@@ -1656,10 +2082,13 @@ internal sealed class Ts4IbufChunk
         return new Ts4IbufChunk(flags, indexSize, payload);
     }
 
-    public IReadOnlyList<uint> ReadIndices(int startIndex, int count)
+    public IReadOnlyList<uint> ReadIndices(int startIndex, int count, int expectedVertexCount = 0)
     {
         var directStartOffset = startIndex * indexSize;
+        var canTryCompactDelta = flags == 0x1 && rawData.Length >= 4;
+
         if (directStartOffset + (count * indexSize) > rawData.Length &&
+            canTryCompactDelta &&
             TryReadCompactDeltaIndices(startIndex, count, out var compact))
         {
             return compact;
@@ -1673,7 +2102,35 @@ internal sealed class Ts4IbufChunk
                 : BinaryPrimitives.ReadUInt16LittleEndian(rawData.AsSpan(offset, 2)));
         }
 
+        if (canTryCompactDelta &&
+            expectedVertexCount > 0 &&
+            LooksImplausible(results, expectedVertexCount) &&
+            TryReadCompactDeltaIndices(startIndex, count, out var compactFallback) &&
+            !LooksImplausible(compactFallback, expectedVertexCount))
+        {
+            return compactFallback;
+        }
+
         return results;
+    }
+
+    private static bool LooksImplausible(IReadOnlyList<uint> indices, int expectedVertexCount)
+    {
+        if (indices.Count == 0 || expectedVertexCount <= 0)
+        {
+            return false;
+        }
+
+        var invalid = 0;
+        foreach (var index in indices)
+        {
+            if (index >= expectedVertexCount)
+            {
+                invalid++;
+            }
+        }
+
+        return invalid > indices.Count / 4;
     }
 
     private bool TryReadCompactDeltaIndices(int startIndex, int count, out IReadOnlyList<uint> indices)

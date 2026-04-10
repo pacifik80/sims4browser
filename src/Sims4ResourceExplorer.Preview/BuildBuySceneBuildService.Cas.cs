@@ -52,6 +52,9 @@ public sealed partial class BuildBuySceneBuildService
             geom.Vertices.SelectMany(static vertex => vertex.Normal ?? []).ToArray(),
             geom.Vertices.SelectMany(static vertex => vertex.Tangent ?? []).ToArray(),
             geom.Vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray(),
+            geom.Vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray(),
+            [],
+            0,
             geom.Indices,
             0,
             skinWeights);

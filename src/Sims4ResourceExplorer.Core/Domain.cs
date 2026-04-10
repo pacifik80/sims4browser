@@ -351,6 +351,9 @@ public sealed record CanonicalMesh(
     IReadOnlyList<float> Normals,
     IReadOnlyList<float> Tangents,
     IReadOnlyList<float> Uvs,
+    IReadOnlyList<float>? Uv0s,
+    IReadOnlyList<float>? Uv1s,
+    int PreferredUvChannel,
     IReadOnlyList<int> Indices,
     int MaterialIndex,
     IReadOnlyList<VertexWeight> SkinWeights);
@@ -371,7 +374,12 @@ public sealed record CanonicalTexture(
     ResourceKeyRecord? SourceKey = null,
     string? SourcePackagePath = null,
     CanonicalTextureSemantic Semantic = CanonicalTextureSemantic.Unknown,
-    CanonicalTextureSourceKind SourceKind = CanonicalTextureSourceKind.Unknown);
+    CanonicalTextureSourceKind SourceKind = CanonicalTextureSourceKind.Unknown,
+    int UvChannel = 0,
+    float UvScaleU = 1f,
+    float UvScaleV = 1f,
+    float UvOffsetU = 0f,
+    float UvOffsetV = 0f);
 
 public enum CanonicalMaterialSourceKind
 {

@@ -11,6 +11,8 @@ $projectPath = Join-Path $PSScriptRoot "src\Sims4ResourceExplorer.App\Sims4Resou
 $outputRoot = Join-Path $PSScriptRoot "src\Sims4ResourceExplorer.App\bin\x64\$Configuration\net8.0-windows10.0.19041.0\win-x64"
 $exePath = Join-Path $outputRoot "Sims4ResourceExplorer.App.exe"
 $resolvedExePath = $null
+$projectXml = [xml](Get-Content $projectPath)
+$buildNumber = $projectXml.Project.PropertyGroup.BuildNumber | Select-Object -First 1
 
 if (Test-Path $exePath) {
     $resolvedExePath = (Resolve-Path $exePath).Path
@@ -25,22 +27,32 @@ function Get-LockingAppProcesses {
         [string]$TargetPath
     )
 
+    $appProcesses = @(Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessName -eq "Sims4ResourceExplorer.App" })
+
     if ([string]::IsNullOrWhiteSpace($TargetPath)) {
-        return @()
+        return $appProcesses
     }
 
-    return @(Get-Process -ErrorAction SilentlyContinue |
+    $matchingProcesses = @($appProcesses |
         Where-Object {
-            $_.ProcessName -eq "Sims4ResourceExplorer.App" -and
             $_.Path -and
             ([string]::Equals($_.Path, $TargetPath, [System.StringComparison]::OrdinalIgnoreCase))
         })
+
+    if ($matchingProcesses.Count -gt 0) {
+        return $matchingProcesses
+    }
+
+    # If the expected path is unavailable or the running process reports a slightly
+    # different path, prefer stopping all app instances so the build can refresh DLLs.
+    return $appProcesses
 }
 
 $lockingProcesses = Get-LockingAppProcesses -TargetPath $resolvedExePath
 
 if (-not $NoBuild -and $lockingProcesses.Count -gt 0) {
-    Write-Host "Stopping running x64 app instance(s) so the latest build can be produced..." -ForegroundColor Yellow
+    Write-Host "Stopping running app instance(s) so the latest build can be produced..." -ForegroundColor Yellow
     foreach ($process in $lockingProcesses) {
         try {
             Stop-Process -Id $process.Id -Force -ErrorAction Stop
@@ -62,7 +74,7 @@ if (-not $NoBuild) {
         "-p:Platform=x64"
     )
 
-    Write-Host "Building Sims4 Resource Explorer ($Configuration, x64)..." -ForegroundColor Cyan
+    Write-Host "Building Sims4 Resource Explorer build $buildNumber ($Configuration, x64)..." -ForegroundColor Cyan
     & dotnet @buildArguments
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
@@ -74,7 +86,7 @@ elseif (-not (Test-Path $exePath)) {
     throw "Built executable not found: $exePath`nRun without -NoBuild first."
 }
 
-Write-Host "Starting Sims4 Resource Explorer ($Configuration, x64)..." -ForegroundColor Cyan
+Write-Host "Starting Sims4 Resource Explorer build $buildNumber ($Configuration, x64)..." -ForegroundColor Cyan
 Write-Host "Executable: $resolvedExePath" -ForegroundColor DarkGray
 & $resolvedExePath
 exit $LASTEXITCODE
