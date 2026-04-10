@@ -344,6 +344,7 @@ public sealed class ExplorerTests : IDisposable
                 AssetBrowserDomain.BuildBuy,
                 string.Empty,
                 string.Empty,
+                string.Empty,
                 false,
                 false,
                 AssetBrowserSort.Name,
@@ -362,10 +363,13 @@ public sealed class ExplorerTests : IDisposable
     {
         var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "Model", 1);
         var sceneContent = new ScenePreviewContent(resource, new CanonicalScene("test", [], [], [], new Bounds3D(0, 0, 0, 1, 1, 1)), "ok");
+        var partialSceneContent = new ScenePreviewContent(resource, new CanonicalScene("test", [], [], [], new Bounds3D(0, 0, 0, 1, 1, 1)), "ok", SceneBuildStatus.Partial);
         var imageContent = new TexturePreviewContent(resource, TestAssets.OnePixelPng, 1, 1, "PNG", 1, "decoded");
         var diagnosticContent = new UnsupportedPreviewContent(resource, "unsupported");
 
         Assert.Equal(PreviewSurfaceMode.Scene, PreviewPresentationState.FromPreviewContent(sceneContent).SurfaceMode);
+        Assert.Equal("3D Preview", PreviewPresentationState.FromPreviewContent(sceneContent).SurfaceTitle);
+        Assert.Equal("3D Preview (Partial)", PreviewPresentationState.FromPreviewContent(partialSceneContent).SurfaceTitle);
         Assert.Equal(PreviewSurfaceMode.Image, PreviewPresentationState.FromPreviewContent(imageContent).SurfaceMode);
         Assert.Equal(PreviewSurfaceMode.Diagnostics, PreviewPresentationState.FromPreviewContent(diagnosticContent).SurfaceMode);
     }
@@ -391,14 +395,14 @@ public sealed class ExplorerTests : IDisposable
         var root = CreateResource(sourceId, "fake.package", SourceKind.Game, "Model", 1);
         var summary = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Build/Buy", "fake.package", root.Key, null, 1, 1, "No exact-instance ModelLOD resources were indexed for this model.", new AssetCapabilitySnapshot(true, false, false, false));
         var graph = new AssetGraph(summary, [], ["No exact-instance ModelLOD resources were indexed for this model."], new BuildBuyAssetGraph(root, [], [], [], [], [], [], ["No exact-instance ModelLOD resources were indexed for this model."], true, "subset"));
-        var successfulScene = new ScenePreviewContent(root, new CanonicalScene("chair", [], [], [], new Bounds3D(0, 0, 0, 1, 1, 1)), "Selected LOD root: MLOD0");
-        var failedScene = new ScenePreviewContent(root, null, "No triangle meshes could be reconstructed.");
+        var successfulScene = new ScenePreviewContent(root, new CanonicalScene("chair", [], [], [], new Bounds3D(0, 0, 0, 1, 1, 1)), "Selected LOD root: MLOD0", SceneBuildStatus.SceneReady);
+        var failedScene = new ScenePreviewContent(root, null, "No triangle meshes could be reconstructed.", SceneBuildStatus.Unsupported);
 
         var successDetails = AssetDetailsFormatter.BuildAssetDetails(summary, graph, root, successfulScene);
         var failureDetails = AssetDetailsFormatter.BuildAssetDetails(summary, graph, root, failedScene);
 
         Assert.Contains("Support Status: Metadata", successDetails);
-        Assert.Contains("Scene Reconstruction: Succeeded", successDetails);
+        Assert.Contains("Scene Reconstruction: SceneReady", successDetails);
         Assert.Contains("Scene Reconstruction: Failed", failureDetails);
         Assert.Contains("No triangle meshes could be reconstructed.", failureDetails);
     }

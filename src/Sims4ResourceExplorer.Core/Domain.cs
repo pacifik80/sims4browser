@@ -323,7 +323,8 @@ public sealed record TexturePreviewContent(
 public sealed record ScenePreviewContent(
     ResourceMetadata Resource,
     CanonicalScene? Scene,
-    string Diagnostics) : PreviewContent;
+    string Diagnostics,
+    SceneBuildStatus Status = SceneBuildStatus.Unsupported) : PreviewContent;
 
 public sealed record AudioPreviewContent(
     ResourceMetadata Resource,
@@ -360,14 +361,49 @@ public sealed record CanonicalMaterial(
     string? ShaderName = null,
     bool IsTransparent = false,
     string? AlphaMode = null,
-    string? Approximation = null);
+    string? Approximation = null,
+    CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown);
 
 public sealed record CanonicalTexture(
     string Slot,
     string FileName,
     byte[] PngBytes,
     ResourceKeyRecord? SourceKey = null,
-    string? SourcePackagePath = null);
+    string? SourcePackagePath = null,
+    CanonicalTextureSemantic Semantic = CanonicalTextureSemantic.Unknown,
+    CanonicalTextureSourceKind SourceKind = CanonicalTextureSourceKind.Unknown);
+
+public enum CanonicalMaterialSourceKind
+{
+    Unknown,
+    ExplicitMatd,
+    MaterialSet,
+    FallbackCandidate,
+    ApproximateCas,
+    Unsupported
+}
+
+public enum CanonicalTextureSemantic
+{
+    Unknown,
+    BaseColor,
+    Normal,
+    Specular,
+    Gloss,
+    Opacity,
+    Emissive,
+    Overlay
+}
+
+public enum CanonicalTextureSourceKind
+{
+    Unknown,
+    ExplicitLocal,
+    ExplicitCompanion,
+    ExplicitIndexed,
+    FallbackSameInstanceLocal,
+    FallbackSameInstanceIndexed
+}
 
 public sealed record CanonicalBone(
     string Name,
@@ -380,7 +416,18 @@ public sealed record VertexWeight(int VertexIndex, int BoneIndex, float Weight);
 
 public sealed record Bounds3D(float MinX, float MinY, float MinZ, float MaxX, float MaxY, float MaxZ);
 
-public sealed record SceneBuildResult(bool Success, CanonicalScene? Scene, IReadOnlyList<string> Diagnostics);
+public enum SceneBuildStatus
+{
+    Unsupported,
+    Partial,
+    SceneReady
+}
+
+public sealed record SceneBuildResult(
+    bool Success,
+    CanonicalScene? Scene,
+    IReadOnlyList<string> Diagnostics,
+    SceneBuildStatus Status = SceneBuildStatus.Unsupported);
 
 public sealed record AudioDecodeResult(bool Success, byte[]? WavBytes, string Diagnostics);
 
@@ -429,13 +476,16 @@ public sealed record MaterialManifestEntry(
     bool IsTransparent,
     string? AlphaMode,
     string? Approximation,
-    IReadOnlyList<MaterialTextureEntry> Textures);
+    IReadOnlyList<MaterialTextureEntry> Textures,
+    CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown);
 
 public sealed record MaterialTextureEntry(
     string Slot,
     string FileName,
     ResourceKeyRecord? SourceKey,
-    string? SourcePackagePath);
+    string? SourcePackagePath,
+    CanonicalTextureSemantic Semantic = CanonicalTextureSemantic.Unknown,
+    CanonicalTextureSourceKind SourceKind = CanonicalTextureSourceKind.Unknown);
 
 public sealed record ExportedFileResult(bool Success, string? OutputPath, string Message);
 
@@ -455,6 +505,7 @@ public sealed record PreviewPresentationState(
 {
     public static PreviewPresentationState FromPreviewContent(PreviewContent content) => content switch
     {
+        ScenePreviewContent { Scene: not null, Status: SceneBuildStatus.Partial } => new(PreviewSurfaceMode.Scene, "3D Preview (Partial)", true, false),
         ScenePreviewContent { Scene: not null } => new(PreviewSurfaceMode.Scene, "3D Preview", true, false),
         TexturePreviewContent => new(PreviewSurfaceMode.Image, "Image Preview", false, false),
         _ => new(PreviewSurfaceMode.Diagnostics, "Diagnostics", false, true)
@@ -632,7 +683,12 @@ public static class AssetDetailsFormatter
             return "Pending";
         }
 
-        return scenePreview.Scene is not null ? "Succeeded" : "Failed";
+        return scenePreview.Status switch
+        {
+            SceneBuildStatus.SceneReady => "SceneReady",
+            SceneBuildStatus.Partial => "Partial",
+            _ => scenePreview.Scene is not null ? "Succeeded" : "Failed"
+        };
     }
 
     private static string? ExtractDiagnosticValue(string? diagnostics, string prefix)

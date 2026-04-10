@@ -199,7 +199,8 @@ public sealed partial class MainWindow : Window
     {
         if (e.PropertyName == nameof(MainViewModel.CurrentScene) ||
             e.PropertyName == nameof(MainViewModel.PreviewImageSource) ||
-            e.PropertyName == nameof(MainViewModel.PreviewSurfaceMode))
+            e.PropertyName == nameof(MainViewModel.PreviewSurfaceMode) ||
+            e.PropertyName == nameof(MainViewModel.SelectedSceneRenderMode))
         {
             UpdatePreviewSurface();
         }
@@ -223,14 +224,39 @@ public sealed partial class MainWindow : Window
     private void RenderScene(CanonicalScene scene)
     {
         sceneViewport.Items.Clear();
-        sceneViewport.Items.Add(new AmbientLight3D());
-        sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(-0.4f, -1f, -0.3f) });
-        sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(0.3f, -0.4f, 0.5f) });
+        var renderMode = ViewModel.SelectedSceneRenderMode;
+        var sceneCenter = new Vector3(
+            (scene.Bounds.MinX + scene.Bounds.MaxX) * 0.5f,
+            (scene.Bounds.MinY + scene.Bounds.MaxY) * 0.5f,
+            (scene.Bounds.MinZ + scene.Bounds.MaxZ) * 0.5f);
+        var sceneSize = Math.Max(
+            Math.Max(scene.Bounds.MaxX - scene.Bounds.MinX, scene.Bounds.MaxY - scene.Bounds.MinY),
+            scene.Bounds.MaxZ - scene.Bounds.MinZ);
+        if (sceneSize <= 0f)
+        {
+            sceneSize = 1f;
+        }
+
+        switch (renderMode)
+        {
+            case SceneRenderMode.Wireframe:
+                sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.White });
+                break;
+            case SceneRenderMode.FlatTexture:
+                sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.Black });
+                break;
+            default:
+                sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.DarkGray });
+                sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(-0.55f, -1f, -0.35f), Color = Microsoft.UI.Colors.White });
+                sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(0.65f, -0.2f, 0.45f), Color = Microsoft.UI.Colors.LightGray });
+                sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(0.1f, 0.5f, -1f), Color = Microsoft.UI.Colors.Gray });
+                break;
+        }
 
         for (var meshIndex = 0; meshIndex < scene.Meshes.Count; meshIndex++)
         {
             var mesh = scene.Meshes[meshIndex];
-            var material = CreateMaterial(scene, mesh.MaterialIndex);
+            var material = CreateMaterial(scene, mesh.MaterialIndex, renderMode);
             var geometry = CreateGeometry(mesh);
             if (geometry.Positions is null || geometry.Positions.Count == 0 || geometry.TriangleIndices is null || geometry.TriangleIndices.Count == 0)
             {
@@ -240,7 +266,11 @@ public sealed partial class MainWindow : Window
             sceneViewport.Items.Add(new MeshGeometryModel3D
             {
                 Geometry = geometry,
-                Material = material
+                Material = material,
+                IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex),
+                CullMode = SharpDX.Direct3D11.CullMode.None,
+                RenderWireframe = renderMode == SceneRenderMode.Wireframe,
+                WireframeColor = Microsoft.UI.Colors.Yellow
             });
         }
 
@@ -284,7 +314,13 @@ public sealed partial class MainWindow : Window
             geometry.Positions.Add(new Vector3(mesh.Positions[index], mesh.Positions[index + 1], mesh.Positions[index + 2]));
         }
 
-        if (mesh.Normals.Count >= 3)
+        var vertexCount = geometry.Positions.Count;
+        if (vertexCount == 0)
+        {
+            return geometry;
+        }
+
+        if (mesh.Normals.Count == vertexCount * 3)
         {
             geometry.Normals = new Vector3Collection();
             for (var index = 0; index + 2 < mesh.Normals.Count; index += 3)
@@ -293,7 +329,7 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        if (mesh.Uvs.Count >= 2)
+        if (mesh.Uvs.Count == vertexCount * 2)
         {
             geometry.TextureCoordinates = new Vector2Collection();
             for (var index = 0; index + 1 < mesh.Uvs.Count; index += 2)
@@ -302,30 +338,222 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        foreach (var triangleIndex in mesh.Indices)
+        for (var index = 0; index + 2 < mesh.Indices.Count; index += 3)
         {
-            geometry.TriangleIndices.Add(triangleIndex);
+            var a = mesh.Indices[index];
+            var b = mesh.Indices[index + 1];
+            var c = mesh.Indices[index + 2];
+            if (a < 0 || b < 0 || c < 0 || a >= vertexCount || b >= vertexCount || c >= vertexCount)
+            {
+                continue;
+            }
+
+            geometry.TriangleIndices.Add(a);
+            geometry.TriangleIndices.Add(b);
+            geometry.TriangleIndices.Add(c);
+        }
+
+        if (geometry.Normals is null || geometry.Normals.Count != vertexCount)
+        {
+            geometry.Normals = BuildPreviewNormals(geometry.Positions, geometry.TriangleIndices);
         }
 
         return geometry;
     }
 
-    private static PhongMaterial CreateMaterial(CanonicalScene scene, int materialIndex)
+    private static Vector3Collection BuildPreviewNormals(IList<Vector3> positions, IList<int> triangleIndices)
+    {
+        var normals = Enumerable.Repeat(Vector3.Zero, positions.Count).ToArray();
+
+        for (var index = 0; index + 2 < triangleIndices.Count; index += 3)
+        {
+            var ia = triangleIndices[index];
+            var ib = triangleIndices[index + 1];
+            var ic = triangleIndices[index + 2];
+            if (ia < 0 || ib < 0 || ic < 0 || ia >= positions.Count || ib >= positions.Count || ic >= positions.Count)
+            {
+                continue;
+            }
+
+            var a = positions[ia];
+            var b = positions[ib];
+            var c = positions[ic];
+            var ab = b - a;
+            var ac = c - a;
+            var face = Vector3.Cross(ab, ac);
+            if (face.LengthSquared() <= 1e-12f)
+            {
+                continue;
+            }
+
+            normals[ia] += face;
+            normals[ib] += face;
+            normals[ic] += face;
+        }
+
+        var result = new Vector3Collection();
+        foreach (var normal in normals)
+        {
+            result.Add(normal.LengthSquared() <= 1e-12f ? Vector3.UnitY : Vector3.Normalize(normal));
+        }
+
+        return result;
+    }
+
+    private static PhongMaterial CreateMaterial(CanonicalScene scene, int materialIndex, SceneRenderMode renderMode)
     {
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var diffuseTexture = material?.Textures.FirstOrDefault();
+        var diffuseTexture = SelectBaseColorTexture(material);
+        var opacityTexture = SelectOpacityTexture(material, diffuseTexture);
+
+        var isFlat = renderMode == SceneRenderMode.FlatTexture;
+        var isWireframe = renderMode == SceneRenderMode.Wireframe;
+        var isLit = renderMode == SceneRenderMode.LitTexture;
+        var useLowConfidenceTextureFallback =
+            !string.IsNullOrWhiteSpace(material?.Approximation) &&
+            diffuseTexture?.SourceKey?.TypeName is "DSTImage" or "BuyBuildThumbnail" or "BodyPartThumbnail" or "CASPartThumbnail";
+        var renderDiffuseMap =
+            !isWireframe &&
+            !isFlat &&
+            diffuseTexture is not null &&
+            !useLowConfidenceTextureFallback;
+        var renderEmissiveMap = isFlat && diffuseTexture is not null;
+        var renderAlphaMap = opacityTexture is not null;
+        var textureModel = diffuseTexture is null
+            ? null
+            : new TextureModel(new MemoryStream(diffuseTexture.PngBytes), autoCloseStream: true);
+        var alphaTextureModel = opacityTexture is null
+            ? null
+            : new TextureModel(new MemoryStream(opacityTexture.PngBytes), autoCloseStream: true);
 
         return new PhongMaterial
         {
-            DiffuseColor = new Color4(1f, 1f, 1f, 1f),
-            AmbientColor = new Color4(0.35f, 0.35f, 0.35f, 1f),
-            SpecularColor = new Color4(0.15f, 0.15f, 0.15f, 1f),
-            SpecularShininess = 12f,
-            RenderDiffuseMap = diffuseTexture is not null,
-            DiffuseMap = diffuseTexture is null ? null : new TextureModel(new MemoryStream(diffuseTexture.PngBytes), autoCloseStream: true)
+            DiffuseColor = isWireframe
+                ? new Color4(0.95f, 0.95f, 0.95f, 1f)
+                : isLit
+                    ? new Color4(1f, 1f, 1f, 1f)
+                    : new Color4(0f, 0f, 0f, 1f),
+            AmbientColor = isFlat
+                ? new Color4(0f, 0f, 0f, 1f)
+                : isLit
+                    ? new Color4(0.12f, 0.12f, 0.12f, 1f)
+                    : new Color4(0.2f, 0.2f, 0.2f, 1f),
+            EmissiveColor = isFlat
+                ? new Color4(1f, 1f, 1f, 1f)
+                : new Color4(0f, 0f, 0f, 1f),
+            SpecularColor = isFlat ? new Color4(0f, 0f, 0f, 1f) : new Color4(0.16f, 0.16f, 0.16f, 1f),
+            SpecularShininess = isFlat ? 0f : 24f,
+            RenderDiffuseMap = renderDiffuseMap,
+            DiffuseMap = renderDiffuseMap ? textureModel : null,
+            RenderEmissiveMap = renderEmissiveMap,
+            EmissiveMap = renderEmissiveMap ? textureModel : null,
+            RenderDiffuseAlphaMap = renderAlphaMap,
+            DiffuseAlphaMap = renderAlphaMap ? alphaTextureModel : null
         };
+    }
+
+    private static bool IsTransparentMaterial(CanonicalScene scene, int materialIndex)
+    {
+        var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
+            ? scene.Materials[materialIndex]
+            : null;
+        var diffuseTexture = SelectBaseColorTexture(material);
+        var opacityTexture = SelectOpacityTexture(material, diffuseTexture);
+        return material?.IsTransparent == true || opacityTexture is not null;
+    }
+
+    private static bool TextureSupportsAlpha(CanonicalTexture? texture)
+    {
+        var bytes = texture?.PngBytes;
+        if (bytes is null || bytes.Length < 33)
+        {
+            return false;
+        }
+
+        ReadOnlySpan<byte> pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
+        if (!bytes.AsSpan(0, pngSignature.Length).SequenceEqual(pngSignature))
+        {
+            return false;
+        }
+
+        // PNG IHDR chunk stores the color type at byte 25 of the file.
+        // 4 = grayscale+alpha, 6 = RGBA.
+        var colorType = bytes[25];
+        if (colorType is 4 or 6)
+        {
+            return true;
+        }
+
+        // Palette PNGs may carry transparency through a tRNS chunk.
+        for (var offset = 8; offset + 8 <= bytes.Length;)
+        {
+            var chunkLength = (bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3];
+            if (chunkLength < 0 || offset + 12 + chunkLength > bytes.Length)
+            {
+                break;
+            }
+
+            if (bytes[offset + 4] == (byte)'t' &&
+                bytes[offset + 5] == (byte)'R' &&
+                bytes[offset + 6] == (byte)'N' &&
+                bytes[offset + 7] == (byte)'S')
+            {
+                return true;
+            }
+
+            offset += 12 + chunkLength;
+        }
+
+        return false;
+    }
+
+    private static CanonicalTexture? SelectBaseColorTexture(CanonicalMaterial? material)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return null;
+        }
+
+        static bool IsPreferredDiffuseSlot(string? slot) =>
+            slot is not null &&
+            (slot.Equals("diffuse", StringComparison.OrdinalIgnoreCase) ||
+             slot.Equals("basecolor", StringComparison.OrdinalIgnoreCase) ||
+             slot.Equals("albedo", StringComparison.OrdinalIgnoreCase) ||
+             slot.Equals("texture_0", StringComparison.OrdinalIgnoreCase));
+
+        static bool IsNonColorSlot(string? slot) =>
+            slot is not null &&
+            (slot.Contains("spec", StringComparison.OrdinalIgnoreCase) ||
+             slot.Contains("normal", StringComparison.OrdinalIgnoreCase) ||
+             slot.Contains("rough", StringComparison.OrdinalIgnoreCase) ||
+             slot.Contains("metal", StringComparison.OrdinalIgnoreCase) ||
+             slot.Contains("gloss", StringComparison.OrdinalIgnoreCase) ||
+             slot.Contains("alpha", StringComparison.OrdinalIgnoreCase) ||
+             slot.Contains("mask", StringComparison.OrdinalIgnoreCase) ||
+             slot.Contains("overlay", StringComparison.OrdinalIgnoreCase));
+
+        return material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.BaseColor)
+            ?? material.Textures.FirstOrDefault(texture => IsPreferredDiffuseSlot(texture.Slot))
+            ?? material.Textures.FirstOrDefault(texture => !IsNonColorSlot(texture.Slot))
+            ?? material.Textures.FirstOrDefault();
+    }
+
+    private static CanonicalTexture? SelectOpacityTexture(CanonicalMaterial? material, CanonicalTexture? baseColorTexture)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null;
+        }
+
+        return material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.Opacity)
+            ?? material.Textures.FirstOrDefault(texture =>
+                texture.Slot.Contains("alpha", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("opacity", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("mask", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("overlay", StringComparison.OrdinalIgnoreCase))
+            ?? (TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null);
     }
 
 }

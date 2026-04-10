@@ -96,6 +96,7 @@ public sealed record AssetBrowserQuery(
     AssetBrowserDomain Domain,
     string CategoryText,
     string PackageText,
+    string PackageRelativeText,
     bool HasThumbnailOnly,
     bool VariantsOnly,
     AssetBrowserSort Sort,
@@ -145,6 +146,7 @@ public sealed class AssetBrowserState
     public string PrimaryGeometryTypeText { get; set; } = string.Empty;
     public string ThumbnailTypeText { get; set; } = string.Empty;
     public string PackageText { get; set; } = string.Empty;
+    public string PackageRelativeText { get; set; } = string.Empty;
     public bool HasThumbnailOnly { get; set; }
     public bool VariantsOnly { get; set; }
     public bool RequireSceneRoot { get; set; }
@@ -167,6 +169,7 @@ public sealed class AssetBrowserState
             Domain,
             NormalizeFacetValue(CategoryText),
             PackageText.Trim(),
+            NormalizePackageFragment(PackageRelativeText),
             HasThumbnailOnly,
             VariantsOnly,
             Sort,
@@ -232,6 +235,11 @@ public sealed class AssetBrowserState
         if (!string.IsNullOrWhiteSpace(PackageText))
         {
             chips.Add(new FilterChip("package", $"Package: {PackageText.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(PackageRelativeText))
+        {
+            chips.Add(new FilterChip("packageRelative", $"Package file/folder: {PackageRelativeText.Trim()}"));
         }
 
         if (HasThumbnailOnly)
@@ -333,6 +341,9 @@ public sealed class AssetBrowserState
             case "package":
                 PackageText = string.Empty;
                 break;
+            case "packageRelative":
+                PackageRelativeText = string.Empty;
+                break;
             case "hasThumbnail":
                 HasThumbnailOnly = false;
                 break;
@@ -385,6 +396,7 @@ public sealed class AssetBrowserState
         PrimaryGeometryTypeText = string.Empty;
         ThumbnailTypeText = string.Empty;
         PackageText = string.Empty;
+        PackageRelativeText = string.Empty;
         HasThumbnailOnly = false;
         VariantsOnly = false;
         RequireSceneRoot = false;
@@ -403,6 +415,9 @@ public sealed class AssetBrowserState
 
     private static string NormalizeFacetValue(string value) =>
         string.Equals(value.Trim(), "All", StringComparison.OrdinalIgnoreCase) ? string.Empty : value.Trim();
+
+    private static string NormalizePackageFragment(string value) =>
+        value.Trim().Replace('/', '\\');
 }
 
 public sealed class RawResourceBrowserState

@@ -833,6 +833,11 @@ public sealed class SqliteIndexStore : IIndexStore
             AddLikeFilter(query.PackageText, clauses, binders, "lower(package_path) LIKE $package");
         }
 
+        if (!string.IsNullOrWhiteSpace(query.PackageRelativeText))
+        {
+            AddNormalizedPackageFragmentFilter(query.PackageRelativeText, clauses, binders, "lower(replace(package_path, '/', '\\')) LIKE $packageRelative");
+        }
+
         if (query.HasThumbnailOnly)
         {
             clauses.Add("thumbnail_tgi IS NOT NULL AND thumbnail_tgi <> ''");
@@ -1026,6 +1031,17 @@ public sealed class SqliteIndexStore : IIndexStore
             .FirstOrDefault(static token => token.StartsWith('$'))
             ?? "$type";
         var normalized = $"%{value.Trim().ToLowerInvariant()}%";
+        clauses.Add($"({string.Join(" OR ", expressions)})");
+        binders.Add(command => command.Parameters.AddWithValue(parameterName, normalized));
+    }
+
+    private static void AddNormalizedPackageFragmentFilter(string value, ICollection<string> clauses, ICollection<Action<SqliteCommand>> binders, params string[] expressions)
+    {
+        var parameterName = expressions
+            .SelectMany(static expression => expression.Split([' ', ')', '('], StringSplitOptions.RemoveEmptyEntries))
+            .FirstOrDefault(static token => token.StartsWith('$'))
+            ?? "$packageRelative";
+        var normalized = $"%{value.Trim().Replace('/', '\\').ToLowerInvariant()}%";
         clauses.Add($"({string.Join(" OR ", expressions)})");
         binders.Add(command => command.Parameters.AddWithValue(parameterName, normalized));
     }

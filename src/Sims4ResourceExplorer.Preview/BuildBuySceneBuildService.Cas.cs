@@ -21,12 +21,12 @@ public sealed partial class BuildBuySceneBuildService
         }
         catch (Exception ex)
         {
-            return new SceneBuildResult(false, null, [$"Geometry parsing failed for {geometryResource.Key.FullTgi}: {ex.Message}"]);
+            return new SceneBuildResult(false, null, [$"Geometry parsing failed for {geometryResource.Key.FullTgi}: {ex.Message}"], SceneBuildStatus.Unsupported);
         }
 
         if (geom.Vertices.Count == 0 || geom.Indices.Count == 0)
         {
-            return new SceneBuildResult(false, null, [$"Geometry {geometryResource.Key.FullTgi} did not expose any triangle data."]);
+            return new SceneBuildResult(false, null, [$"Geometry {geometryResource.Key.FullTgi} did not expose any triangle data."], SceneBuildStatus.Unsupported);
         }
 
         if (!geom.HasSkinning)
@@ -65,12 +65,16 @@ public sealed partial class BuildBuySceneBuildService
                 null,
                 false,
                 "portable-approximation",
-                "CAS materials are exported as a portable approximation of package-local texture candidates.")],
+                "CAS materials are exported as a portable approximation of package-local texture candidates.",
+                CanonicalMaterialSourceKind.ApproximateCas)],
             bones,
             ComputeBounds([mesh]));
 
         diagnostics.Insert(0, $"Selected geometry root: {geometryResource.Key.FullTgi}");
-        return new SceneBuildResult(true, scene, diagnostics);
+        var status = textures.Count == 0 || rig.Rig is null
+            ? SceneBuildStatus.Partial
+            : SceneBuildStatus.SceneReady;
+        return new SceneBuildResult(true, scene, diagnostics, status);
     }
 
     private async Task<Ts4RigResolution> TryResolveRigAsync(ResourceMetadata geometryResource, CancellationToken cancellationToken)

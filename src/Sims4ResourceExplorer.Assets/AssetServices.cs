@@ -204,7 +204,10 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                         texture.Key.TypeName,
                         $"{texture.Key.TypeName}_{texture.Key.Type:X8}_{texture.Key.Group:X8}_{texture.Key.FullInstance:X16}.png",
                         texture.Key,
-                        texture.PackagePath)).ToArray())
+                        texture.PackagePath,
+                        CanonicalTextureSemantic.Unknown,
+                        CanonicalTextureSourceKind.FallbackSameInstanceLocal)).ToArray(),
+                    CanonicalMaterialSourceKind.FallbackCandidate)
             };
 
         if (!hasObjectIdentity)
@@ -354,7 +357,10 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                         GuessCasTextureSlot(texture.Key.TypeName),
                         $"{GuessCasTextureSlot(texture.Key.TypeName)}_{texture.Key.Type:X8}_{texture.Key.Group:X8}_{texture.Key.FullInstance:X16}.png",
                         texture.Key,
-                        texture.PackagePath)).ToArray())
+                        texture.PackagePath,
+                        CanonicalTextureSemantic.Unknown,
+                        CanonicalTextureSourceKind.ExplicitLocal)).ToArray(),
+                    CanonicalMaterialSourceKind.ApproximateCas)
             };
 
         var isSupported = category is not null

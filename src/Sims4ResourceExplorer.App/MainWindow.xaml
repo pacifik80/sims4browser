@@ -26,8 +26,8 @@
         <Grid Grid.Row="1" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="320" />
-                <ColumnDefinition Width="2*" />
-                <ColumnDefinition Width="420" />
+                <ColumnDefinition Width="3*" MinWidth="320" />
+                <ColumnDefinition Width="4*" MinWidth="520" />
             </Grid.ColumnDefinitions>
 
             <ScrollViewer Grid.Column="0">
@@ -66,6 +66,7 @@
                         <AutoSuggestBox Header="Geometry type" PlaceholderText="All" Text="{Binding AssetPrimaryGeometryTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetPrimaryGeometryTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="GeometryType" />
                         <AutoSuggestBox Header="Thumbnail type" PlaceholderText="All" Text="{Binding AssetThumbnailTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetThumbnailTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="ThumbnailType" />
                         <TextBox Header="Package path contains" Text="{Binding AssetPackageText, Mode=TwoWay}" />
+                        <TextBox Header="Package file / folder" PlaceholderText="EP01\\ClientFullBuild0.package" Text="{Binding AssetPackageRelativeText, Mode=TwoWay}" />
                         <CheckBox Content="Has thumbnail" IsChecked="{Binding AssetHasThumbnailOnly, Mode=TwoWay}" />
                         <CheckBox Content="Has variants" IsChecked="{Binding AssetVariantsOnly, Mode=TwoWay}" />
                         <CheckBox Content="Has scene root" IsChecked="{Binding AssetRequireSceneRoot, Mode=TwoWay}" />
@@ -195,7 +196,7 @@
             <Grid Grid.Column="2" RowSpacing="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="260" />
+                    <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="140" />
                     <RowDefinition Height="*" />
@@ -209,12 +210,18 @@
                         <TextBox Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
                     </Border>
                 </Grid>
-                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
-                    <Button Click="ExportRaw_Click" Content="Raw Export" />
-                    <Button Click="ExportAsset_Click" Content="Export Asset" IsEnabled="{Binding CanExportSelectedAsset}" />
-                    <Button x:Name="ResetViewButton" Click="ResetView_Click" Content="Reset View" IsEnabled="{Binding CanResetView}" />
-                    <Button Click="PlayAudio_Click" Content="Play" />
-                    <Button Click="StopAudio_Click" Content="Stop" />
+                <StackPanel Grid.Row="2" Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Click="ExportRaw_Click" Content="Raw Export" />
+                        <Button Click="ExportAsset_Click" Content="Export Asset" IsEnabled="{Binding CanExportSelectedAsset}" />
+                        <Button x:Name="ResetViewButton" Click="ResetView_Click" Content="Reset View" IsEnabled="{Binding CanResetView}" />
+                        <Button Click="PlayAudio_Click" Content="Play" />
+                        <Button Click="StopAudio_Click" Content="Stop" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ComboBox Width="160" Header="Render" ItemsSource="{Binding SceneRenderModes}" SelectedItem="{Binding SelectedSceneRenderMode, Mode=TwoWay}" />
+                        <ComboBox Width="320" Header="LOD" ItemsSource="{Binding AvailableSceneLods}" SelectedItem="{Binding SelectedSceneLod, Mode=TwoWay}" DisplayMemberPath="Label" IsEnabled="{Binding HasSceneLodOptions}" />
+                    </StackPanel>
                 </StackPanel>
                 <TextBox Grid.Row="3" Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" Visibility="{Binding SecondaryDiagnosticsVisibility}" />
                 <TextBox Grid.Row="4" Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />

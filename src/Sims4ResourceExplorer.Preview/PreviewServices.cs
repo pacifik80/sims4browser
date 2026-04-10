@@ -60,7 +60,8 @@ public sealed class PlaceholderSceneBuildService : ISceneBuildService
         return Task.FromResult(new SceneBuildResult(
             false,
             null,
-            [$"Scene reconstruction for {resource.Key.TypeName} is not implemented yet. Metadata, diagnostics, and raw export remain available."]));
+            [$"Scene reconstruction for {resource.Key.TypeName} is not implemented yet. Metadata, diagnostics, and raw export remain available."],
+            SceneBuildStatus.Unsupported));
     }
 }
 
@@ -132,7 +133,7 @@ public sealed class ResourcePreviewService : IPreviewService
     private async Task<PreviewResult> CreateScenePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken)
     {
         var result = await sceneBuildService.BuildSceneAsync(resource, cancellationToken);
-        return new PreviewResult(PreviewKind.Scene, new ScenePreviewContent(resource, result.Scene, string.Join(Environment.NewLine, result.Diagnostics)));
+        return new PreviewResult(PreviewKind.Scene, new ScenePreviewContent(resource, result.Scene, string.Join(Environment.NewLine, result.Diagnostics), result.Status));
     }
 
     private async Task<PreviewResult> CreateAudioPreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken)

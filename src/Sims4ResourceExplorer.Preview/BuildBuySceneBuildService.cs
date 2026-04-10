@@ -23,7 +23,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             return new SceneBuildResult(
                 false,
                 null,
-                [$"Scene reconstruction is currently supported for Model, ModelLOD, and skinned Geometry roots only. Selected type: {resource.Key.TypeName}."]);
+                [$"Scene reconstruction is currently supported for Model, ModelLOD, and skinned Geometry roots only. Selected type: {resource.Key.TypeName}."],
+                SceneBuildStatus.Unsupported);
         }
 
         try
@@ -33,12 +34,12 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 "Model" => await BuildModelSceneAsync(resource, cancellationToken),
                 "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken),
                 "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken),
-                _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."])
+                _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."], SceneBuildStatus.Unsupported)
             };
         }
         catch (Exception ex)
         {
-            return new SceneBuildResult(false, null, [$"Scene reconstruction failed for {resource.Key.FullTgi}: {ex.Message}"]);
+            return new SceneBuildResult(false, null, [$"Scene reconstruction failed for {resource.Key.FullTgi}: {ex.Message}"], SceneBuildStatus.Unsupported);
         }
     }
 
@@ -48,26 +49,28 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         Ts4ModlChunk modl;
         try
         {
-            var bytes = await resourceCatalogService.GetResourceBytesAsync(modelResource.PackagePath, modelResource.Key, raw: false, cancellationToken);
+            var resolvedModelResource = await ResolveSceneResourceMetadataAsync(modelResource, cancellationToken).ConfigureAwait(false);
+            var bytes = await resourceCatalogService.GetResourceBytesAsync(resolvedModelResource.PackagePath, resolvedModelResource.Key, raw: false, cancellationToken);
             root = Ts4RcolResource.Parse(bytes);
             var modlChunk = root.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MODL");
             if (modlChunk is null)
             {
-                return new SceneBuildResult(false, null, [$"Model {modelResource.Key.FullTgi} does not contain a MODL chunk."]);
+                return new SceneBuildResult(false, null, [$"Model {resolvedModelResource.Key.FullTgi} does not contain a MODL chunk."], SceneBuildStatus.Unsupported);
             }
 
             modl = Ts4ModlChunk.Parse(modlChunk.Data.Span);
+            modelResource = resolvedModelResource;
         }
         catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
         {
-            return new SceneBuildResult(
-                false,
-                null,
+            return await TryIndexedModelLodFallbackAsync(
+                modelResource,
                 [
                     $"Model {modelResource.Key.FullTgi} could not be parsed cleanly for the current Build/Buy scene path.",
                     "This usually means the object uses a MODL/MLOD variant outside the currently supported static subset.",
                     $"Parser detail: {ex.Message}"
-                ]);
+                ],
+                cancellationToken);
         }
 
         var lodEntries = modl.LodEntries
@@ -77,7 +80,10 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         if (lodEntries.Length == 0)
         {
-            return new SceneBuildResult(false, null, [$"Model {modelResource.Key.FullTgi} does not expose any LOD entries."]);
+            return await TryIndexedModelLodFallbackAsync(
+                modelResource,
+                [$"Model {modelResource.Key.FullTgi} does not expose any LOD entries."],
+                cancellationToken);
         }
 
         var diagnostics = new List<string>
@@ -85,7 +91,10 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             $"Available LODs: {string.Join(", ", lodEntries.Select(static lod => lod.DisplayName))}"
         };
 
-        foreach (var lod in lodEntries)
+        var nonShadowLods = lodEntries.Where(static lod => !lod.IsShadow).ToArray();
+        var shadowLods = lodEntries.Where(static lod => lod.IsShadow).ToArray();
+
+        foreach (var lod in nonShadowLods)
         {
             try
             {
@@ -96,19 +105,87 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken);
                     if (sceneResult.Success)
                     {
-                        return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray());
+                        return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray(), sceneResult.Status);
                     }
 
                     diagnostics.AddRange(sceneResult.Diagnostics);
                 }
             }
-            catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+            catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or KeyNotFoundException)
             {
                 diagnostics.Add($"LOD {lod.DisplayName} could not be reconstructed: {ex.Message}");
             }
         }
 
-        return new SceneBuildResult(false, null, diagnostics);
+        var indexedFallback = await TryIndexedModelLodFallbackAsync(modelResource, diagnostics, cancellationToken).ConfigureAwait(false);
+        if (indexedFallback.Success)
+        {
+            return indexedFallback;
+        }
+
+        diagnostics = indexedFallback.Diagnostics.ToList();
+
+        foreach (var lod in shadowLods)
+        {
+            try
+            {
+                var result = await TryResolveModelLodAsync(modelResource, root, lod.Reference, cancellationToken);
+                diagnostics.AddRange(result.Diagnostics);
+                if (result.Resource is not null)
+                {
+                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken);
+                    if (sceneResult.Success)
+                    {
+                        return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray(), sceneResult.Status);
+                    }
+
+                    diagnostics.AddRange(sceneResult.Diagnostics);
+                }
+            }
+            catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or KeyNotFoundException)
+            {
+                diagnostics.Add($"LOD {lod.DisplayName} could not be reconstructed: {ex.Message}");
+            }
+        }
+
+        return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
+    }
+
+    private async Task<SceneBuildResult> TryIndexedModelLodFallbackAsync(
+        ResourceMetadata modelResource,
+        IEnumerable<string> existingDiagnostics,
+        CancellationToken cancellationToken)
+    {
+        var diagnostics = existingDiagnostics
+            .Where(static message => !string.IsNullOrWhiteSpace(message))
+            .ToList();
+
+        var packageResources = await indexStore.GetPackageResourcesAsync(modelResource.PackagePath, cancellationToken).ConfigureAwait(false);
+        var indexedCandidates = packageResources
+            .Where(resource => resource.Key.TypeName == "ModelLOD" && resource.Key.FullInstance == modelResource.Key.FullInstance)
+            .OrderBy(static resource => resource.Key.Group)
+            .ThenBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (indexedCandidates.Length == 0)
+        {
+            diagnostics.Add("No exact-instance indexed ModelLOD candidates were available for fallback.");
+            return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
+        }
+
+        diagnostics.Add($"Falling back to {indexedCandidates.Length} exact-instance indexed ModelLOD candidate(s).");
+        foreach (var candidate in indexedCandidates)
+        {
+            var candidateResult = await BuildModelLodSceneAsync(candidate, modelResource, cancellationToken).ConfigureAwait(false);
+            if (candidateResult.Success)
+            {
+                return new SceneBuildResult(true, candidateResult.Scene, diagnostics.Concat(candidateResult.Diagnostics).ToArray(), candidateResult.Status);
+            }
+
+            diagnostics.AddRange(candidateResult.Diagnostics);
+        }
+
+        return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
     }
 
     private async Task<SceneBuildResult> BuildModelLodSceneAsync(
@@ -120,19 +197,21 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         Ts4MlodChunk mlod;
         try
         {
-            var bytes = await resourceCatalogService.GetResourceBytesAsync(modelLodResource.PackagePath, modelLodResource.Key, raw: false, cancellationToken);
+            var resolvedModelLodResource = await ResolveSceneResourceMetadataAsync(modelLodResource, cancellationToken).ConfigureAwait(false);
+            var bytes = await resourceCatalogService.GetResourceBytesAsync(resolvedModelLodResource.PackagePath, resolvedModelLodResource.Key, raw: false, cancellationToken);
             rcol = Ts4RcolResource.Parse(bytes);
             var mlodChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MLOD");
             if (mlodChunk is null)
             {
-                return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} does not contain an MLOD chunk."]);
+                return new SceneBuildResult(false, null, [$"ModelLOD {resolvedModelLodResource.Key.FullTgi} does not contain an MLOD chunk."], SceneBuildStatus.Unsupported);
             }
 
             mlod = Ts4MlodChunk.Parse(mlodChunk.Data.Span);
+            modelLodResource = resolvedModelLodResource;
         }
         catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
         {
-            return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} could not be parsed cleanly: {ex.Message}"]);
+            return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} could not be parsed cleanly: {ex.Message}"], SceneBuildStatus.Unsupported);
         }
 
         var diagnostics = new List<string>();
@@ -145,8 +224,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         {
             if (mesh.IsSkinned)
             {
-                diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: skinned/static-blend meshes are outside the supported static Build/Buy subset.");
-                continue;
+                diagnostics.Add($"Mesh 0x{mesh.Name:X8} references skin/static-blend data; rendering it in bind-pose approximation for preview.");
             }
 
             if (mesh.PrimitiveType != Ts4PrimitiveType.TriangleList)
@@ -198,7 +276,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                         materialInfo.ShaderName,
                         materialInfo.IsTransparent,
                         materialInfo.AlphaMode,
-                        materialInfo.Approximation));
+                        materialInfo.Approximation,
+                        materialInfo.SourceKind));
                 }
 
                 var vertices = vbuf.ReadVertices(vrtf, mesh.StreamOffset, mesh.VertexCount, materialInfo.UvScales);
@@ -225,7 +304,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         if (meshes.Count == 0)
         {
             diagnostics.Insert(0, $"No triangle meshes could be reconstructed from {modelLodResource.Key.FullTgi}.");
-            return new SceneBuildResult(false, null, diagnostics);
+            return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
         }
 
         var scene = new CanonicalScene(
@@ -236,7 +315,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             ComputeBounds(meshes));
 
         diagnostics.Insert(0, $"Selected LOD root: {modelLodResource.Key.FullTgi}");
-        return new SceneBuildResult(true, scene, diagnostics);
+        return new SceneBuildResult(true, scene, diagnostics, DetermineSceneBuildStatus(scene));
     }
 
     private async Task<Ts4MaterialInfo> ResolveMaterialAsync(
@@ -254,20 +333,46 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         if (materialChunk.Tag == "MATD")
         {
             var matd = Ts4MatdChunk.Parse(materialChunk.Data.Span);
-            return await BuildMaterialInfoAsync(matd, ownerResource, textureCache, cancellationToken);
+            return await BuildMaterialInfoAsync(matd, ownerResource, textureCache, CanonicalMaterialSourceKind.ExplicitMatd, cancellationToken);
         }
 
         if (materialChunk.Tag == "MTST")
         {
             var mtst = Ts4MtstChunk.Parse(materialChunk.Data.Span);
-            var selectedReference = mtst.DefaultMaterialReference ?? mtst.MaterialReferences.FirstOrDefault();
-            if (!selectedReference.IsNull)
+            Ts4MaterialInfo? bestCandidate = null;
+            foreach (var reference in mtst.MaterialReferences)
+            {
+                if (reference.IsNull)
+                {
+                    continue;
+                }
+
+                var matdChunk = rcol.ResolveChunk(reference);
+                if (matdChunk is null || matdChunk.Tag != "MATD")
+                {
+                    continue;
+                }
+
+                var matd = Ts4MatdChunk.Parse(matdChunk.Data.Span);
+                var candidate = await BuildMaterialInfoAsync(matd, ownerResource, textureCache, CanonicalMaterialSourceKind.MaterialSet, cancellationToken);
+                if (bestCandidate is null || IsPreferredMaterialCandidate(candidate, bestCandidate))
+                {
+                    bestCandidate = candidate;
+                }
+            }
+
+            if (bestCandidate is not null)
+            {
+                return bestCandidate;
+            }
+
+            if (mtst.DefaultMaterialReference is { IsNull: false } selectedReference)
             {
                 var matdChunk = rcol.ResolveChunk(selectedReference);
                 if (matdChunk is not null && matdChunk.Tag == "MATD")
                 {
                     var matd = Ts4MatdChunk.Parse(matdChunk.Data.Span);
-                    return await BuildMaterialInfoAsync(matd, ownerResource, textureCache, cancellationToken);
+                    return await BuildMaterialInfoAsync(matd, ownerResource, textureCache, CanonicalMaterialSourceKind.MaterialSet, cancellationToken);
                 }
             }
 
@@ -285,6 +390,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         Ts4MatdChunk matd,
         ResourceMetadata ownerResource,
         Dictionary<string, CanonicalTexture?> textureCache,
+        CanonicalMaterialSourceKind sourceKind,
         CancellationToken cancellationToken)
     {
         var diagnostics = new List<string>();
@@ -299,16 +405,12 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     reference.Key.Group,
                     reference.Key.Instance,
                     GuessTypeName(reference.Key.Type));
-
-                var pngBytes = await resourceCatalogService.GetTexturePngAsync(ownerResource.PackagePath, coreKey, cancellationToken);
-                cachedTexture = pngBytes is null
-                    ? null
-                    : new CanonicalTexture(
-                        reference.Slot,
-                        BuildTextureFileName(reference.Slot, reference.Key),
-                        pngBytes,
-                        coreKey,
-                        ownerResource.PackagePath);
+                cachedTexture = await TryResolveTextureAsync(
+                    ownerResource,
+                    coreKey,
+                    reference.Slot,
+                    textureCache,
+                    cancellationToken).ConfigureAwait(false);
 
                 textureCache[cacheKey] = cachedTexture;
             }
@@ -319,7 +421,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
             else
             {
-                textures.Add(cachedTexture with { Slot = reference.Slot });
+                textures.Add(cachedTexture with
+                {
+                    Slot = reference.Slot,
+                    Semantic = ClassifyTextureSemantic(reference.Slot)
+                });
             }
         }
 
@@ -333,7 +439,15 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
+        foreach (var texture in textures)
+        {
+            diagnostics.Add(
+                $"Texture {DescribeTextureSemantic(texture.Semantic)} ({texture.Slot}) resolved via {DescribeTextureSourceKind(texture.SourceKind)}" +
+                $"{FormatTextureSourceLocation(texture.SourcePackagePath)}.");
+        }
+
         var isTransparent = matd.IsTransparent || matd.TextureReferences.Any(static texture => texture.Slot is "alpha" or "overlay");
+        var usedFallbackTextureApproximation = textures.Count > 0 && matd.TextureReferences.Count == 0;
         return new Ts4MaterialInfo(
             !string.IsNullOrWhiteSpace(matd.MaterialName) ? matd.MaterialName : $"Material_{matd.MaterialNameHash:X8}",
             matd.ShaderName,
@@ -342,7 +456,32 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             diagnostics,
             isTransparent,
             isTransparent ? "alpha-test-or-blend" : "opaque",
-            "Maxis shaders are approximated to a portable texture-set export.");
+            usedFallbackTextureApproximation ? "Maxis shaders are approximated to a portable texture-set export." : null,
+            usedFallbackTextureApproximation ? CanonicalMaterialSourceKind.FallbackCandidate : sourceKind);
+    }
+
+    private static bool IsPreferredMaterialCandidate(Ts4MaterialInfo candidate, Ts4MaterialInfo current)
+    {
+        if (candidate.Textures.Count != current.Textures.Count)
+        {
+            return candidate.Textures.Count > current.Textures.Count;
+        }
+
+        var candidateSupported = !string.Equals(candidate.ShaderName, "Unsupported", StringComparison.OrdinalIgnoreCase);
+        var currentSupported = !string.Equals(current.ShaderName, "Unsupported", StringComparison.OrdinalIgnoreCase);
+        if (candidateSupported != currentSupported)
+        {
+            return candidateSupported;
+        }
+
+        var candidateHasApproximation = !string.IsNullOrWhiteSpace(candidate.Approximation);
+        var currentHasApproximation = !string.IsNullOrWhiteSpace(current.Approximation);
+        if (candidateHasApproximation != currentHasApproximation)
+        {
+            return !candidateHasApproximation;
+        }
+
+        return false;
     }
 
     private async Task<IReadOnlyList<CanonicalTexture>> ResolveFallbackTexturesAsync(
@@ -355,9 +494,24 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             .Where(resource => resource.Key.FullInstance == ownerResource.Key.FullInstance && IsTextureType(resource.Key.TypeName))
             .OrderBy(static resource => resource.Key.TypeName == "BuyBuildThumbnail" ? 1 : 0)
             .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
-            .ToArray();
+            .ToList();
 
-        var results = new List<CanonicalTexture>(textureCandidates.Length);
+        if (textureCandidates.Count == 0)
+        {
+            var globalTextureCandidates = await FindTextureResourcesByInstanceAsync(ownerResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
+            foreach (var candidate in globalTextureCandidates)
+            {
+                if (textureCandidates.Any(existing => existing.Key.FullTgi.Equals(candidate.Key.FullTgi, StringComparison.OrdinalIgnoreCase) &&
+                                                      existing.PackagePath.Equals(candidate.PackagePath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                textureCandidates.Add(candidate);
+            }
+        }
+
+        var results = new List<CanonicalTexture>(textureCandidates.Count);
         foreach (var candidate in textureCandidates)
         {
             var cacheKey = candidate.Key.FullTgi;
@@ -371,7 +525,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                         BuildTextureFileName(results.Count == 0 ? "diffuse" : $"extra_{results.Count}", new Ts4ResourceKey(candidate.Key.Type, candidate.Key.Group, candidate.Key.FullInstance)),
                         pngBytes,
                         candidate.Key,
-                        candidate.PackagePath);
+                        candidate.PackagePath,
+                        results.Count == 0 ? CanonicalTextureSemantic.BaseColor : CanonicalTextureSemantic.Unknown,
+                        textureCandidates.Count == 1 && candidate.PackagePath.Equals(ownerResource.PackagePath, StringComparison.OrdinalIgnoreCase)
+                            ? CanonicalTextureSourceKind.FallbackSameInstanceLocal
+                            : CanonicalTextureSourceKind.FallbackSameInstanceIndexed);
 
                 textureCache[cacheKey] = cachedTexture;
             }
@@ -385,7 +543,174 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         return results;
     }
 
-    private Task<Ts4ModelLodResolution> TryResolveModelLodAsync(
+    private async Task<CanonicalTexture?> TryResolveTextureAsync(
+        ResourceMetadata ownerResource,
+        ResourceKeyRecord key,
+        string slot,
+        Dictionary<string, CanonicalTexture?> textureCache,
+        CancellationToken cancellationToken)
+    {
+        var semantic = ClassifyTextureSemantic(slot);
+        var localTexture = await TryDecodeTextureAsync(ownerResource.PackagePath, key, slot, semantic, CanonicalTextureSourceKind.ExplicitLocal, cancellationToken).ConfigureAwait(false);
+        if (localTexture is not null)
+        {
+            return localTexture;
+        }
+
+        foreach (var companionPackagePath in EnumerateCompanionPackagePaths(ownerResource.PackagePath))
+        {
+            var companionTexture = await TryDecodeTextureAsync(companionPackagePath, key, slot, semantic, CanonicalTextureSourceKind.ExplicitCompanion, cancellationToken).ConfigureAwait(false);
+            if (companionTexture is not null)
+            {
+                return companionTexture;
+            }
+        }
+
+        var matches = await FindTextureResourcesByKeyAsync(key, cancellationToken).ConfigureAwait(false);
+        foreach (var match in matches)
+        {
+            var cacheKey = match.Key.FullTgi;
+            if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
+            {
+                cachedTexture = await TryDecodeTextureAsync(match.PackagePath, match.Key, slot, semantic, CanonicalTextureSourceKind.ExplicitIndexed, cancellationToken).ConfigureAwait(false);
+                textureCache[cacheKey] = cachedTexture;
+            }
+
+            if (cachedTexture is not null)
+            {
+                return cachedTexture with { Slot = slot, Semantic = semantic };
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateCompanionPackagePaths(string packagePath)
+    {
+        if (string.IsNullOrWhiteSpace(packagePath))
+        {
+            yield break;
+        }
+
+        if (packagePath.IndexOf($"{Path.DirectorySeparatorChar}Delta{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            var fullPath = packagePath.Replace(
+                $"{Path.DirectorySeparatorChar}Delta{Path.DirectorySeparatorChar}",
+                $"{Path.DirectorySeparatorChar}",
+                StringComparison.OrdinalIgnoreCase);
+            fullPath = fullPath.Replace("ClientDeltaBuild", "ClientFullBuild", StringComparison.OrdinalIgnoreCase);
+            fullPath = fullPath.Replace("SimulationDeltaBuild", "SimulationFullBuild", StringComparison.OrdinalIgnoreCase);
+
+            if (!fullPath.Equals(packagePath, StringComparison.OrdinalIgnoreCase) && File.Exists(fullPath))
+            {
+                yield return fullPath;
+            }
+        }
+    }
+
+    private async Task<ResourceMetadata> ResolveSceneResourceMetadataAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    {
+        var bytes = await resourceCatalogService.GetResourceBytesAsync(resource.PackagePath, resource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+        if (bytes.Length > 0)
+        {
+            return resource;
+        }
+
+        foreach (var companionPackagePath in EnumerateCompanionPackagePaths(resource.PackagePath))
+        {
+            var companionBytes = await resourceCatalogService.GetResourceBytesAsync(companionPackagePath, resource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+            if (companionBytes.Length > 0)
+            {
+                return resource with { PackagePath = companionPackagePath };
+            }
+        }
+
+        return resource;
+    }
+
+    private async Task<CanonicalTexture?> TryDecodeTextureAsync(
+        string packagePath,
+        ResourceKeyRecord key,
+        string slot,
+        CanonicalTextureSemantic semantic,
+        CanonicalTextureSourceKind sourceKind,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var pngBytes = await resourceCatalogService.GetTexturePngAsync(packagePath, key, cancellationToken).ConfigureAwait(false);
+            return pngBytes is null
+                ? null
+                : new CanonicalTexture(
+                    slot,
+                    BuildTextureFileName(slot, new Ts4ResourceKey(key.Type, key.Group, key.FullInstance)),
+                    pngBytes,
+                    key,
+                    packagePath,
+                    semantic,
+                    sourceKind);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByKeyAsync(ResourceKeyRecord key, CancellationToken cancellationToken)
+    {
+        var query = new RawResourceBrowserQuery(
+            new SourceScope(),
+            SearchText: string.Empty,
+            Domain: RawResourceDomain.Images,
+            TypeNameText: key.TypeName,
+            PackageText: string.Empty,
+            GroupHexText: key.Group.ToString("X8"),
+            InstanceHexText: key.FullInstance.ToString("X16"),
+            PreviewableOnly: false,
+            ExportCapableOnly: false,
+            CompressedKnownOnly: false,
+            LinkFilter: ResourceLinkFilter.Any,
+            Sort: RawResourceSort.Tgi,
+            Offset: 0,
+            WindowSize: 64);
+
+        var results = await indexStore.QueryResourcesAsync(query, cancellationToken).ConfigureAwait(false);
+        return results.Items
+            .Where(resource => resource.Key.Type == key.Type &&
+                               resource.Key.Group == key.Group &&
+                               resource.Key.FullInstance == key.FullInstance &&
+                               IsTextureType(resource.Key.TypeName))
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByInstanceAsync(ulong instance, CancellationToken cancellationToken)
+    {
+        var query = new RawResourceBrowserQuery(
+            new SourceScope(),
+            SearchText: string.Empty,
+            Domain: RawResourceDomain.Images,
+            TypeNameText: string.Empty,
+            PackageText: string.Empty,
+            GroupHexText: string.Empty,
+            InstanceHexText: instance.ToString("X16"),
+            PreviewableOnly: false,
+            ExportCapableOnly: false,
+            CompressedKnownOnly: false,
+            LinkFilter: ResourceLinkFilter.Any,
+            Sort: RawResourceSort.Tgi,
+            Offset: 0,
+            WindowSize: 128);
+
+        var results = await indexStore.QueryResourcesAsync(query, cancellationToken).ConfigureAwait(false);
+        return results.Items
+            .Where(resource => resource.Key.FullInstance == instance && IsTextureType(resource.Key.TypeName))
+            .OrderBy(static resource => resource.Key.TypeName == "BuyBuildThumbnail" ? 1 : 0)
+            .ThenBy(static resource => resource.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private async Task<Ts4ModelLodResolution> TryResolveModelLodAsync(
         ResourceMetadata modelResource,
         Ts4RcolResource root,
         Ts4ChunkReference reference,
@@ -396,7 +721,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         if (reference.IsNull)
         {
             diagnostics.Add("Encountered a null ModelLOD reference in MODL.");
-            return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
+            return new Ts4ModelLodResolution(null, diagnostics);
         }
 
         if (reference.ReferenceType is Ts4ReferenceType.Public or Ts4ReferenceType.Private)
@@ -405,17 +730,17 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             if (embeddedChunk is null || embeddedChunk.Tag != "MLOD")
             {
                 diagnostics.Add($"Embedded ModelLOD reference {reference.Raw:X8} could not be resolved to an MLOD chunk.");
-                return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
+                return new Ts4ModelLodResolution(null, diagnostics);
             }
 
-            return Task.FromResult(new Ts4ModelLodResolution(
+            return new Ts4ModelLodResolution(
                 modelResource with
                 {
                     Key = new ResourceKeyRecord(embeddedChunk.Key.Type, embeddedChunk.Key.Group, embeddedChunk.Key.Instance, "ModelLOD"),
                     PreviewKind = PreviewKind.Scene,
                     Name = modelResource.Name
                 },
-                diagnostics));
+                diagnostics);
         }
 
         if (reference.ReferenceType == Ts4ReferenceType.Delayed)
@@ -424,10 +749,21 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             if (delayedKey is null)
             {
                 diagnostics.Add($"Delayed ModelLOD reference {reference.Raw:X8} could not be mapped to an external resource key.");
-                return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
+                return new Ts4ModelLodResolution(null, diagnostics);
             }
 
-            return Task.FromResult(new Ts4ModelLodResolution(
+            var directResource = await TryResolveModelLodResourceByKeyAsync(modelResource, delayedKey.Value, cancellationToken).ConfigureAwait(false);
+            if (directResource is not null)
+            {
+                if (!string.Equals(directResource.PackagePath, modelResource.PackagePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    diagnostics.Add($"Resolved external ModelLOD {delayedKey.Value.Type:X8}:{delayedKey.Value.Group:X8}:{delayedKey.Value.Instance:X16} from {Path.GetFileName(directResource.PackagePath)}.");
+                }
+
+                return new Ts4ModelLodResolution(directResource, diagnostics);
+            }
+
+            return new Ts4ModelLodResolution(
                 new ResourceMetadata(
                     Guid.NewGuid(),
                     modelResource.DataSourceId,
@@ -443,19 +779,138 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     true,
                     "Referenced by Model MODL LOD entry.",
                     string.Empty),
-                diagnostics));
+                diagnostics);
         }
 
         diagnostics.Add($"Unsupported MODL reference type {reference.ReferenceType}.");
-        return Task.FromResult(new Ts4ModelLodResolution(null, diagnostics));
+        return new Ts4ModelLodResolution(null, diagnostics);
+    }
+
+    private async Task<ResourceMetadata?> TryResolveModelLodResourceByKeyAsync(
+        ResourceMetadata ownerResource,
+        Ts4ResourceKey key,
+        CancellationToken cancellationToken)
+    {
+        var record = new ResourceKeyRecord(key.Type, key.Group, key.Instance, "ModelLOD");
+
+        var localBytes = await resourceCatalogService.GetResourceBytesAsync(ownerResource.PackagePath, record, raw: false, cancellationToken).ConfigureAwait(false);
+        if (localBytes.Length > 0)
+        {
+            return ownerResource with
+            {
+                Key = record,
+                PreviewKind = PreviewKind.Scene,
+                Name = ownerResource.Name
+            };
+        }
+
+        foreach (var companionPackagePath in EnumerateCompanionPackagePaths(ownerResource.PackagePath))
+        {
+            var companionBytes = await resourceCatalogService.GetResourceBytesAsync(companionPackagePath, record, raw: false, cancellationToken).ConfigureAwait(false);
+            if (companionBytes.Length > 0)
+            {
+                return new ResourceMetadata(
+                    Guid.NewGuid(),
+                    ownerResource.DataSourceId,
+                    ownerResource.SourceKind,
+                    companionPackagePath,
+                    record,
+                    ownerResource.Name,
+                    0,
+                    0,
+                    false,
+                    PreviewKind.Scene,
+                    true,
+                    true,
+                    "Resolved from companion package via MODL external reference.",
+                    string.Empty);
+            }
+        }
+
+        var matches = await FindModelLodResourcesByKeyAsync(record, cancellationToken).ConfigureAwait(false);
+        var match = matches.FirstOrDefault();
+        if (match is not null)
+        {
+            return match with
+            {
+                PreviewKind = PreviewKind.Scene,
+                Name = ownerResource.Name
+            };
+        }
+
+        return null;
+    }
+
+    private async Task<IReadOnlyList<ResourceMetadata>> FindModelLodResourcesByKeyAsync(ResourceKeyRecord key, CancellationToken cancellationToken)
+    {
+        var query = new RawResourceBrowserQuery(
+            new SourceScope(),
+            SearchText: string.Empty,
+            Domain: RawResourceDomain.ThreeDRelated,
+            TypeNameText: "ModelLOD",
+            PackageText: string.Empty,
+            GroupHexText: key.Group.ToString("X8"),
+            InstanceHexText: key.FullInstance.ToString("X16"),
+            PreviewableOnly: false,
+            ExportCapableOnly: false,
+            CompressedKnownOnly: false,
+            LinkFilter: ResourceLinkFilter.Any,
+            Sort: RawResourceSort.Tgi,
+            Offset: 0,
+            WindowSize: 64);
+
+        var results = await indexStore.QueryResourcesAsync(query, cancellationToken).ConfigureAwait(false);
+        return results.Items
+            .Where(resource => resource.Key.Type == key.Type &&
+                               resource.Key.Group == key.Group &&
+                               resource.Key.FullInstance == key.FullInstance &&
+                               string.Equals(resource.Key.TypeName, "ModelLOD", StringComparison.Ordinal))
+            .ToArray();
     }
 
     private static string BuildTextureFileName(string slot, Ts4ResourceKey key) =>
         $"{slot}_{key.Type:X8}_{key.Group:X8}_{key.Instance:X16}.png";
 
+    private static CanonicalTextureSemantic ClassifyTextureSemantic(string? slot) => slot?.ToLowerInvariant() switch
+    {
+        "diffuse" or "basecolor" or "albedo" => CanonicalTextureSemantic.BaseColor,
+        "normal" => CanonicalTextureSemantic.Normal,
+        "specular" => CanonicalTextureSemantic.Specular,
+        "gloss" or "roughness" or "smoothness" => CanonicalTextureSemantic.Gloss,
+        "alpha" or "opacity" or "mask" => CanonicalTextureSemantic.Opacity,
+        "emissive" => CanonicalTextureSemantic.Emissive,
+        "overlay" => CanonicalTextureSemantic.Overlay,
+        _ => CanonicalTextureSemantic.Unknown
+    };
+
+    private static string DescribeTextureSemantic(CanonicalTextureSemantic semantic) => semantic switch
+    {
+        CanonicalTextureSemantic.BaseColor => "BaseColor",
+        CanonicalTextureSemantic.Normal => "Normal",
+        CanonicalTextureSemantic.Specular => "Specular",
+        CanonicalTextureSemantic.Gloss => "Gloss",
+        CanonicalTextureSemantic.Opacity => "Opacity",
+        CanonicalTextureSemantic.Emissive => "Emissive",
+        CanonicalTextureSemantic.Overlay => "Overlay",
+        _ => "Unknown"
+    };
+
+    private static string DescribeTextureSourceKind(CanonicalTextureSourceKind sourceKind) => sourceKind switch
+    {
+        CanonicalTextureSourceKind.ExplicitLocal => "explicit local package lookup",
+        CanonicalTextureSourceKind.ExplicitCompanion => "explicit companion full-build lookup",
+        CanonicalTextureSourceKind.ExplicitIndexed => "explicit indexed cross-package lookup",
+        CanonicalTextureSourceKind.FallbackSameInstanceLocal => "same-instance local fallback",
+        CanonicalTextureSourceKind.FallbackSameInstanceIndexed => "same-instance indexed fallback",
+        _ => "unknown lookup"
+    };
+
+    private static string FormatTextureSourceLocation(string? packagePath) =>
+        string.IsNullOrWhiteSpace(packagePath) ? string.Empty : $" from {Path.GetFileName(packagePath)}";
+
     private static string GuessTypeName(uint type) => type switch
     {
-        0x00B2D882 => "PNGImage",
+        0x00B2D882 => "DSTImage",
         0x2F7D0004 => "PNGImage2",
         0x2BC04EDF => "DSTImage",
         0x0988C7E1 => "LRLEImage",
@@ -500,6 +955,63 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         return new Bounds3D(minX, minY, minZ, maxX, maxY, maxZ);
     }
+
+    private static SceneBuildStatus DetermineSceneBuildStatus(CanonicalScene scene)
+    {
+        if (scene.Meshes.Count == 0)
+        {
+            return SceneBuildStatus.Unsupported;
+        }
+
+        var hasApproximateMaterial = scene.Materials.Any(material =>
+            !string.IsNullOrWhiteSpace(material.Approximation) ||
+            material.SourceKind is CanonicalMaterialSourceKind.FallbackCandidate or CanonicalMaterialSourceKind.Unsupported);
+        var hasMissingTextures = scene.Materials.Any(material => material.Textures.Count == 0);
+
+        return hasApproximateMaterial || hasMissingTextures
+            ? SceneBuildStatus.Partial
+            : SceneBuildStatus.SceneReady;
+    }
+}
+
+public static class PreviewDebugProbe
+{
+    public static string InspectModelLod(byte[] bytes)
+    {
+        var lines = new List<string>();
+        try
+        {
+            var rcol = Ts4RcolResource.Parse(bytes);
+            lines.Add($"RCOL parsed: public={rcol.PublicChunkCount} chunks={rcol.Chunks.Count} external={rcol.ExternalResources.Count}");
+            foreach (var chunk in rcol.Chunks)
+            {
+                lines.Add($"Chunk {chunk.Tag} {chunk.Key.Type:X8}:{chunk.Key.Group:X8}:{chunk.Key.Instance:X16} len={chunk.Length}");
+            }
+
+            var mlodChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MLOD");
+            if (mlodChunk is null)
+            {
+                lines.Add("No MLOD chunk found.");
+                return string.Join(Environment.NewLine, lines);
+            }
+
+            lines.Add($"MLOD chunk bytes={mlodChunk.Data.Length}");
+            var mlod = Ts4MlodChunk.Parse(mlodChunk.Data.Span);
+            lines.Add($"MLOD parsed: meshes={mlod.Meshes.Count}");
+            foreach (var mesh in mlod.Meshes)
+            {
+                lines.Add(
+                    $"Mesh name=0x{mesh.Name:X8} primitive={mesh.PrimitiveType} flags=0x{mesh.Flags:X} vbuf={mesh.VertexBufferReference.Raw:X8} ibuf={mesh.IndexBufferReference.Raw:X8} vrtf={mesh.VertexFormatReference.Raw:X8} verts={mesh.VertexCount} prims={mesh.PrimitiveCount}");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
+            lines.Add(ex.StackTrace ?? "(no stack)");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
 }
 
 internal sealed record Ts4ModelLodResolution(ResourceMetadata? Resource, IReadOnlyList<string> Diagnostics);
@@ -531,7 +1043,8 @@ internal sealed record Ts4MaterialInfo(
     IReadOnlyList<string> Diagnostics,
     bool IsTransparent,
     string AlphaMode,
-    string Approximation)
+    string? Approximation,
+    CanonicalMaterialSourceKind SourceKind)
 {
     public static Ts4MaterialInfo CreateFallback(string name, string reason) =>
         new(
@@ -542,7 +1055,8 @@ internal sealed record Ts4MaterialInfo(
             [reason],
             false,
             "opaque",
-            "Material fell back to a placeholder because the source material chunk was unsupported.");
+            "Material fell back to a placeholder because the source material chunk was unsupported.",
+            CanonicalMaterialSourceKind.Unsupported);
 }
 
 internal readonly record struct Ts4TextureReference(string Slot, Ts4ResourceKey Key);
@@ -555,33 +1069,249 @@ internal sealed record Ts4MatdChunk(
     IReadOnlyList<Ts4TextureReference> TextureReferences,
     bool IsTransparent)
 {
-    public static Ts4MatdChunk Parse(ReadOnlySpan<byte> bytes) =>
+    public static Ts4MatdChunk Parse(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length < 16 || !bytes[..4].SequenceEqual("MATD"u8))
+        {
+            return CreateFallback(0);
+        }
+
+        var materialNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(8, 4));
+        var shaderNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4));
+        var textureReferences = new List<Ts4TextureReference>();
+        var uvScales = new[] { 1f, 1f, 1f };
+
+        var mtrlOffset = bytes.IndexOf("MTRL"u8);
+        if (mtrlOffset < 0 || mtrlOffset + 16 > bytes.Length)
+        {
+            return new Ts4MatdChunk(
+                $"Material_{materialNameHash:X8}",
+                materialNameHash,
+                $"Shader_{shaderNameHash:X8}",
+                uvScales,
+                textureReferences,
+                false);
+        }
+
+        var propertyCount = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(mtrlOffset + 12, 4)));
+        var tableOffset = mtrlOffset + 16;
+        for (var i = 0; i < propertyCount && tableOffset + 16 <= bytes.Length; i++, tableOffset += 16)
+        {
+            var propertyHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset, 4));
+            var propertyType = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 4, 4));
+            var normalizedPropertyType = propertyType & 0xFFFF;
+            var propertyArity = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 8, 4));
+            var propertyOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 12, 4)));
+            if (propertyOffset < 0 || propertyOffset >= bytes.Length)
+            {
+                continue;
+            }
+
+            if (TryReadTextureReference(propertyHash, normalizedPropertyType, propertyArity, propertyOffset, bytes, textureReferences))
+            {
+                continue;
+            }
+
+            if (normalizedPropertyType == 1)
+            {
+                TryApplyScalarProperty(propertyHash, propertyOffset, bytes, uvScales);
+                continue;
+            }
+
+            if (normalizedPropertyType == 4)
+            {
+                TryApplyVectorProperty(propertyHash, propertyOffset, propertyArity, bytes, uvScales);
+            }
+        }
+
+        return new Ts4MatdChunk(
+            $"Material_{materialNameHash:X8}",
+            materialNameHash,
+            $"Shader_{shaderNameHash:X8}",
+            uvScales,
+            textureReferences
+                .GroupBy(static reference => $"{reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}", StringComparer.OrdinalIgnoreCase)
+                .Select(static group => group.First())
+                .ToArray(),
+            false);
+    }
+
+    private static Ts4MatdChunk CreateFallback(uint materialNameHash) =>
         new(
-            "Material",
-            0,
+            $"Material_{materialNameHash:X8}",
+            materialNameHash,
             "Unsupported",
-            [1f / short.MaxValue, 1f / short.MaxValue, 1f / short.MaxValue],
+            [1f, 1f, 1f],
             [],
             false);
+
+    private static Ts4ResourceKey ReadMatdEmbeddedResourceKey(ReadOnlySpan<byte> bytes)
+    {
+        var instance = BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(0, 8));
+        var type = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(8, 4));
+        var group = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4));
+        return new Ts4ResourceKey(type, group, instance);
+    }
+
+    private static bool TryReadTextureReference(
+        uint propertyHash,
+        uint normalizedPropertyType,
+        uint propertyArity,
+        int propertyOffset,
+        ReadOnlySpan<byte> bytes,
+        List<Ts4TextureReference> textureReferences)
+    {
+        if (propertyOffset + 16 > bytes.Length)
+        {
+            return false;
+        }
+
+        if (normalizedPropertyType is not (1 or 2 or 4))
+        {
+            return false;
+        }
+
+        if (normalizedPropertyType == 1 && propertyArity < 3)
+        {
+            return false;
+        }
+
+        if (normalizedPropertyType == 4 && propertyArity < 4)
+        {
+            return false;
+        }
+
+        var keyBytes = bytes.Slice(propertyOffset, 16);
+        foreach (var key in ReadPotentialEmbeddedResourceKeys(keyBytes))
+        {
+            if (!IsImageType(key.Type))
+            {
+                continue;
+            }
+
+            textureReferences.Add(new Ts4TextureReference(GetTextureSlotName(propertyHash, textureReferences.Count), key));
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Ts4ResourceKey[] ReadPotentialEmbeddedResourceKeys(ReadOnlySpan<byte> bytes)
+    {
+        var embeddedKey = ReadMatdEmbeddedResourceKey(bytes);
+        var typeFirstType = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(0, 4));
+        var typeFirstGroup = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(4, 4));
+        var typeFirstInstance = BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(8, 8));
+        var typeFirstKey = new Ts4ResourceKey(typeFirstType, typeFirstGroup, typeFirstInstance);
+        return [embeddedKey, typeFirstKey];
+    }
+
+    private static string GetTextureSlotName(uint propertyHash, int existingTextureCount) => propertyHash switch
+    {
+        0xC53A9D1B => "diffuse",
+        0x773BA60F => "specular",
+        0x9F5D1C9B => "normal",
+        0x3A9F5D1C => "alpha",
+        _ => existingTextureCount == 0 ? "diffuse" : $"texture_{existingTextureCount}"
+    };
+
+    private static void TryApplyScalarProperty(uint propertyHash, int propertyOffset, ReadOnlySpan<byte> bytes, float[] uvScales)
+    {
+        if (propertyOffset + 4 > bytes.Length)
+        {
+            return;
+        }
+
+        var value = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
+        if (!IsPlausibleUvScale(value))
+        {
+            return;
+        }
+
+        switch (propertyHash)
+        {
+            case 0x57002869:
+                uvScales[0] = value;
+                break;
+            case 0x795EAC31:
+                uvScales[1] = value;
+                break;
+        }
+    }
+
+    private static void TryApplyVectorProperty(uint propertyHash, int propertyOffset, uint propertyArity, ReadOnlySpan<byte> bytes, float[] uvScales)
+    {
+        var floatCount = checked((int)Math.Clamp(propertyArity, 2, 4));
+        if (propertyOffset + (floatCount * 4) > bytes.Length)
+        {
+            return;
+        }
+
+        if (propertyHash is 0xC3FAAC4F or 0x04A5DAA3)
+        {
+            var u = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
+            var v = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + 4, 4));
+            if (IsPlausibleUvScale(u) && IsPlausibleUvScale(v))
+            {
+                uvScales[0] = u;
+                uvScales[1] = v;
+            }
+        }
+    }
+
+    private static bool IsPlausibleUvScale(float value) =>
+        float.IsFinite(value) &&
+        Math.Abs(value) >= 0.001f &&
+        Math.Abs(value) <= 1024f;
+
+    private static bool IsImageType(uint type) => type is
+        0x00B2D882 or
+        0x2F7D0004 or
+        0x2BC04EDF or
+        0x0988C7E1 or
+        0x3453CF95 or
+        0x1B4D2A70;
 }
 
 internal sealed record Ts4MtstChunk(Ts4ChunkReference? DefaultMaterialReference, IReadOnlyList<Ts4ChunkReference> MaterialReferences)
 {
-    public static Ts4MtstChunk Parse(ReadOnlySpan<byte> bytes) =>
-        new(null, []);
+    public static Ts4MtstChunk Parse(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length < 20 || !bytes[..4].SequenceEqual("MTST"u8))
+        {
+            return new(null, []);
+        }
+
+        var entryCount = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(16, 4)));
+        var references = new List<Ts4ChunkReference>(Math.Max(0, entryCount));
+        var offset = 20;
+        for (var i = 0; i < entryCount && offset + 12 <= bytes.Length; i++, offset += 12)
+        {
+            var reference = new Ts4ChunkReference(BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset, 4)));
+            if (!reference.IsNull)
+            {
+                references.Add(reference);
+            }
+        }
+
+        return new(null, references);
+    }
 }
 
 internal ref struct SpanReader
 {
     private ReadOnlySpan<byte> remaining;
+    private readonly string context;
 
-    public SpanReader(ReadOnlySpan<byte> data)
+    public SpanReader(ReadOnlySpan<byte> data, string? context = null)
     {
         remaining = data;
+        this.context = string.IsNullOrWhiteSpace(context) ? "TS4 chunk" : context;
         Position = 0;
     }
 
     public int Position { get; private set; }
+    public int RemainingLength => remaining.Length;
 
     public void Skip(int count)
     {
@@ -598,6 +1328,9 @@ internal ref struct SpanReader
         {
             throw new InvalidDataException($"Expected tag '{tag}', found '{actual}'.");
         }
+
+        remaining = remaining[tag.Length..];
+        Position += tag.Length;
     }
 
     public byte ReadByte()
@@ -649,8 +1382,21 @@ internal ref struct SpanReader
         return value;
     }
 
-    public Ts4ResourceKey ReadResourceKey() =>
-        new(ReadUInt32(), ReadUInt32(), ReadUInt64());
+    public Ts4ResourceKey ReadResourceKey()
+    {
+        var instance = ReadUInt64();
+        var type = ReadUInt32();
+        var group = ReadUInt32();
+        return new Ts4ResourceKey(type, group, instance);
+    }
+
+    public Ts4ResourceKey ReadExternalResourceKey()
+    {
+        var instance = ReadUInt64();
+        var type = ReadUInt32();
+        var group = ReadUInt32();
+        return new Ts4ResourceKey(type, group, instance);
+    }
 
     public ulong ReadUInt64()
     {
@@ -670,7 +1416,7 @@ internal ref struct SpanReader
     {
         if (count < 0 || remaining.Length < count)
         {
-            throw new InvalidDataException("Unexpected end of TS4 chunk data.");
+            throw new InvalidDataException($"Unexpected end of {context} data at offset 0x{Position:X}.");
         }
     }
 }
@@ -695,11 +1441,11 @@ internal sealed class Ts4VrtfChunk
 
     public static Ts4VrtfChunk Parse(ReadOnlySpan<byte> data)
     {
-        var reader = new SpanReader(data);
+        var reader = new SpanReader(data, "VRTF chunk");
         reader.ExpectTag("VRTF");
         _ = reader.ReadUInt32();
-        var stride = reader.ReadUInt16();
-        var elementCount = reader.ReadUInt16();
+        var stride = checked((ushort)reader.ReadUInt32());
+        var elementCount = reader.ReadInt32();
         _ = reader.ReadUInt32();
 
         var elements = new List<Ts4VertexElement>(elementCount);
@@ -708,9 +1454,7 @@ internal sealed class Ts4VrtfChunk
             var usage = (Ts4VertexUsage)reader.ReadByte();
             var usageIndex = reader.ReadByte();
             var format = reader.ReadByte();
-            _ = reader.ReadByte();
-            var offset = reader.ReadUInt16();
-            _ = reader.ReadUInt16();
+            var offset = reader.ReadByte();
             elements.Add(new Ts4VertexElement(usage, usageIndex, format, offset));
         }
 
@@ -747,7 +1491,7 @@ internal sealed class Ts4VbufChunk
 
     public static Ts4VbufChunk Parse(ReadOnlySpan<byte> data)
     {
-        var reader = new SpanReader(data);
+        var reader = new SpanReader(data, "VBUF chunk");
         reader.ExpectTag("VBUF");
         _ = reader.ReadUInt32();
         _ = reader.ReadUInt32();
@@ -759,11 +1503,6 @@ internal sealed class Ts4VbufChunk
 
     public IReadOnlyList<Ts4DecodedVertex> ReadVertices(Ts4VrtfChunk vrtf, uint streamOffset, int vertexCount, float[] uvScales)
     {
-        if (!swizzleInfoReference.IsNull)
-        {
-            throw new NotSupportedException("Swizzled VBUF layouts are not supported in this pass.");
-        }
-
         var results = new List<Ts4DecodedVertex>(vertexCount);
         for (var index = 0; index < vertexCount; index++)
         {
@@ -825,6 +1564,7 @@ internal sealed class Ts4VbufChunk
     {
         0x05 => DecodeColor4Normalized(data, offset),
         0x07 => DecodeShort4Normalized(data, offset),
+        0x08 => DecodeByte4Snorm(data, offset),
         _ => throw new NotSupportedException($"Unsupported normal/tangent vertex format 0x{format:X2}.")
     };
 
@@ -871,6 +1611,17 @@ internal sealed class Ts4VbufChunk
         return [u, v];
     }
 
+    private static float[] DecodeByte4Snorm(byte[] data, int offset)
+    {
+        static float Decode(byte value)
+        {
+            var signed = unchecked((sbyte)value);
+            return Math.Clamp(signed / 127f, -1f, 1f);
+        }
+
+        return [Decode(data[offset]), Decode(data[offset + 1]), Decode(data[offset + 2])];
+    }
+
     private static float ReadSingle(byte[] data, int offset) =>
         BinaryPrimitives.ReadSingleLittleEndian(data.AsSpan(offset, 4));
 
@@ -883,31 +1634,39 @@ internal sealed class Ts4VbufChunk
 
 internal sealed class Ts4IbufChunk
 {
+    private readonly uint flags;
     private readonly int indexSize;
     private readonly byte[] rawData;
 
-    private Ts4IbufChunk(int indexSize, byte[] rawData)
+    private Ts4IbufChunk(uint flags, int indexSize, byte[] rawData)
     {
+        this.flags = flags;
         this.indexSize = indexSize;
         this.rawData = rawData;
     }
 
     public static Ts4IbufChunk Parse(ReadOnlySpan<byte> data)
     {
-        var reader = new SpanReader(data);
+        var reader = new SpanReader(data, "IBUF chunk");
         reader.ExpectTag("IBUF");
         _ = reader.ReadUInt32();
         var flags = reader.ReadUInt32();
         var payload = data[reader.Position..].ToArray();
         var indexSize = (flags & 0x1) != 0 ? 4 : 2;
-        return new Ts4IbufChunk(indexSize, payload);
+        return new Ts4IbufChunk(flags, indexSize, payload);
     }
 
     public IReadOnlyList<uint> ReadIndices(int startIndex, int count)
     {
+        var directStartOffset = startIndex * indexSize;
+        if (directStartOffset + (count * indexSize) > rawData.Length &&
+            TryReadCompactDeltaIndices(startIndex, count, out var compact))
+        {
+            return compact;
+        }
+
         var results = new List<uint>(count);
-        var startOffset = startIndex * indexSize;
-        for (var offset = startOffset; offset + indexSize <= rawData.Length && results.Count < count; offset += indexSize)
+        for (var offset = directStartOffset; offset + indexSize <= rawData.Length && results.Count < count; offset += indexSize)
         {
             results.Add(indexSize == 4
                 ? BinaryPrimitives.ReadUInt32LittleEndian(rawData.AsSpan(offset, 4))
@@ -915,6 +1674,34 @@ internal sealed class Ts4IbufChunk
         }
 
         return results;
+    }
+
+    private bool TryReadCompactDeltaIndices(int startIndex, int count, out IReadOnlyList<uint> indices)
+    {
+        indices = Array.Empty<uint>();
+
+        if (flags != 0x1 || rawData.Length < 4)
+        {
+            return false;
+        }
+
+        var encodedCount = (rawData.Length - 4) / 2;
+        if (startIndex < 0 || count < 0 || startIndex + count > encodedCount)
+        {
+            return false;
+        }
+
+        var decoded = new uint[encodedCount];
+        var accumulator = 0;
+        var decodedIndex = 0;
+        for (var offset = 4; offset + 1 < rawData.Length && decodedIndex < encodedCount; offset += 2)
+        {
+            accumulator += BinaryPrimitives.ReadInt16LittleEndian(rawData.AsSpan(offset, 2));
+            decoded[decodedIndex++] = unchecked((uint)accumulator);
+        }
+
+        indices = decoded.Skip(startIndex).Take(count).ToArray();
+        return true;
     }
 }
 
@@ -955,7 +1742,7 @@ internal sealed class Ts4RcolResource
 
     public static Ts4RcolResource Parse(ReadOnlyMemory<byte> bytes)
     {
-        var reader = new SpanReader(bytes.Span);
+        var reader = new SpanReader(bytes.Span, "RCOL resource");
         _ = reader.ReadUInt32();
         var publicChunkCount = reader.ReadInt32();
         _ = reader.ReadUInt32();
@@ -971,13 +1758,18 @@ internal sealed class Ts4RcolResource
         var externalKeys = new Ts4ResourceKey[externalCount];
         for (var i = 0; i < externalCount; i++)
         {
-            externalKeys[i] = reader.ReadResourceKey();
+            externalKeys[i] = reader.ReadExternalResourceKey();
         }
 
         var positions = new (int Position, int Length)[chunkCount];
         for (var i = 0; i < chunkCount; i++)
         {
             positions[i] = (checked((int)reader.ReadUInt32()), reader.ReadInt32());
+        }
+
+        if (chunkCount == 1)
+        {
+            positions[0] = (0x2C + (externalCount * 16), checked((int)bytes.Length - (0x2C + (externalCount * 16))));
         }
 
         var chunks = new List<Ts4RcolChunk>(chunkCount);
@@ -1024,7 +1816,7 @@ internal sealed class Ts4ModlChunk
 
     public static Ts4ModlChunk Parse(ReadOnlySpan<byte> data)
     {
-        var reader = new SpanReader(data);
+        var reader = new SpanReader(data, "MODL chunk");
         reader.ExpectTag("MODL");
         var version = reader.ReadUInt32();
         var lodCount = reader.ReadInt32();
@@ -1077,68 +1869,128 @@ internal sealed class Ts4MlodChunk
 
     public static Ts4MlodChunk Parse(ReadOnlySpan<byte> data)
     {
-        var reader = new SpanReader(data);
+        var reader = new SpanReader(data, "MLOD chunk");
         reader.ExpectTag("MLOD");
         var version = reader.ReadUInt32();
-        var meshCount = reader.ReadInt32();
-        var meshes = new List<Ts4MlodMesh>(meshCount);
+        var declaredMeshCount = reader.ReadInt32();
+        var meshes = new List<Ts4MlodMesh>(Math.Max(0, declaredMeshCount));
 
-        for (var i = 0; i < meshCount; i++)
+        while (meshes.Count < declaredMeshCount && reader.RemainingLength >= 4)
         {
-            var expectedSize = reader.ReadUInt32();
-            var meshStart = reader.Position;
-            var name = reader.ReadUInt32();
-            var materialRef = new Ts4ChunkReference(reader.ReadUInt32());
-            var vrtfRef = new Ts4ChunkReference(reader.ReadUInt32());
-            var vbufRef = new Ts4ChunkReference(reader.ReadUInt32());
-            var ibufRef = new Ts4ChunkReference(reader.ReadUInt32());
-            var primitiveAndFlags = reader.ReadUInt32();
-            var primitiveType = (Ts4PrimitiveType)(primitiveAndFlags & 0xFF);
-            var flags = primitiveAndFlags >> 8;
-            var streamOffset = reader.ReadUInt32();
-            _ = reader.ReadInt32();
-            var startIndex = reader.ReadInt32();
-            _ = reader.ReadInt32();
-            var vertexCount = reader.ReadInt32();
-            var primitiveCount = reader.ReadInt32();
-            reader.Skip(24);
-            var skinRef = new Ts4ChunkReference(reader.ReadUInt32());
-            var jointCount = reader.ReadInt32();
-            reader.Skip(jointCount * 4);
-            _ = reader.ReadUInt32();
-            var geometryStateCount = reader.ReadInt32();
-            reader.Skip(geometryStateCount * 20);
-
-            if (version > 0x00000201)
+            var meshIndex = meshes.Count;
+            try
             {
-                reader.Skip(20);
-            }
+                var expectedSize = reader.ReadUInt32();
+                var meshStart = reader.Position;
+                var name = reader.ReadUInt32();
+                var materialRef = new Ts4ChunkReference(reader.ReadUInt32());
+                var vrtfRef = new Ts4ChunkReference(reader.ReadUInt32());
+                var vbufRef = new Ts4ChunkReference(reader.ReadUInt32());
+                var ibufRef = new Ts4ChunkReference(reader.ReadUInt32());
+                var primitiveAndFlags = reader.ReadUInt32();
+                var primitiveType = (Ts4PrimitiveType)(primitiveAndFlags & 0xFF);
+                var flags = primitiveAndFlags >> 8;
+                var streamOffset = reader.ReadUInt32();
+                var startVertex = reader.ReadInt32();
+                var startIndex = reader.ReadInt32();
+                var minVertexIndex = reader.ReadInt32();
+                var vertexCount = reader.ReadInt32();
+                var primitiveCount = reader.ReadInt32();
+                reader.Skip(24);
+                var bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
 
-            if (version > 0x00000203)
+                var skinRef = bytesRemainingInMesh >= 4
+                    ? new Ts4ChunkReference(reader.ReadUInt32())
+                    : default;
+                bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
+
+                var jointCount = bytesRemainingInMesh >= 4
+                    ? reader.ReadInt32()
+                    : 0;
+                bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
+
+                if (jointCount > 0)
+                {
+                    var jointBytes = checked(jointCount * 4);
+                    if (bytesRemainingInMesh < jointBytes)
+                    {
+                        throw new InvalidDataException($"MLOD mesh joint list overruns its declared size. Remaining {bytesRemainingInMesh} bytes, needed {jointBytes} bytes.");
+                    }
+
+                    reader.Skip(jointBytes);
+                    bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
+                }
+
+                var scaleOffsetRef = bytesRemainingInMesh >= 4
+                    ? new Ts4ChunkReference(reader.ReadUInt32())
+                    : default;
+                bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
+
+                var geometryStateCount = bytesRemainingInMesh >= 4
+                    ? reader.ReadInt32()
+                    : 0;
+                bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
+
+                if (geometryStateCount > 0)
+                {
+                    var geometryStateBytes = checked(geometryStateCount * 20);
+                    if (bytesRemainingInMesh < geometryStateBytes)
+                    {
+                        throw new InvalidDataException($"MLOD geometry state list overruns its declared size. Remaining {bytesRemainingInMesh} bytes, needed {geometryStateBytes} bytes.");
+                    }
+
+                    reader.Skip(geometryStateBytes);
+                    bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
+                }
+
+                if (version > 0x00000201 && bytesRemainingInMesh >= 20)
+                {
+                    reader.Skip(20);
+                    bytesRemainingInMesh = (int)expectedSize - (reader.Position - meshStart);
+                }
+
+                if (version > 0x00000203 && bytesRemainingInMesh >= 4)
+                {
+                    reader.Skip(4);
+                }
+
+                var consumed = reader.Position - meshStart;
+                var hasPlausibleDeclaredSize = expectedSize >= 72;
+                if (hasPlausibleDeclaredSize && expectedSize < consumed)
+                {
+                    throw new InvalidDataException($"MLOD mesh record overruns its declared size. Declared {expectedSize} bytes, consumed {consumed} bytes.");
+                }
+
+                if (hasPlausibleDeclaredSize && consumed < expectedSize)
+                {
+                    reader.Skip((int)(expectedSize - consumed));
+                }
+
+                meshes.Add(new Ts4MlodMesh(
+                    name,
+                    materialRef,
+                    vrtfRef,
+                    vbufRef,
+                    ibufRef,
+                    skinRef,
+                    primitiveType,
+                    flags,
+                    streamOffset,
+                    startVertex,
+                    startIndex,
+                    minVertexIndex,
+                    vertexCount,
+                    primitiveCount,
+                    jointCount,
+                    scaleOffsetRef,
+                    geometryStateCount));
+            }
+            catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
             {
-                reader.Skip(4);
+                throw new InvalidDataException(
+                    $"MLOD mesh[{meshIndex}] of declared {declaredMeshCount} parse failed at absolute offset 0x{reader.Position:X}. {ex.Message}",
+                    ex);
             }
-
-            var consumed = reader.Position - meshStart;
-            if (consumed < expectedSize)
-            {
-                reader.Skip((int)(expectedSize - consumed));
-            }
-
-            meshes.Add(new Ts4MlodMesh(
-                name,
-                materialRef,
-                vrtfRef,
-                vbufRef,
-                ibufRef,
-                skinRef,
-                primitiveType,
-                flags,
-                streamOffset,
-                startIndex,
-                vertexCount,
-                primitiveCount,
-                jointCount));
         }
 
         return new Ts4MlodChunk { Meshes = meshes };
@@ -1155,10 +2007,14 @@ internal readonly record struct Ts4MlodMesh(
     Ts4PrimitiveType PrimitiveType,
     uint Flags,
     uint StreamOffset,
+    int StartVertex,
     int StartIndex,
+    int MinVertexIndex,
     int VertexCount,
     int PrimitiveCount,
-    int JointCount)
+    int JointCount,
+    Ts4ChunkReference ScaleOffsetReference,
+    int GeometryStateCount)
 {
     public bool IsShadowCaster => (Flags & 0x10) != 0;
     public bool IsSkinned => !SkinReference.IsNull || JointCount > 0;

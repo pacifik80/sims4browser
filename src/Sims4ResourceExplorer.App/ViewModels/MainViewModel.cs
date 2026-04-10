@@ -34,6 +34,7 @@ public sealed partial class MainViewModel : ObservableObject
     private AssetSummary? selectedAsset;
     private AssetGraph? selectedAssetGraph;
     private ResourceMetadata? selectedAssetSceneRoot;
+    private bool suppressSceneLodSelectionPreview;
     private byte[]? previewAudioBytes;
     private bool assetQueryDirty = true;
     private bool rawQueryDirty = true;
@@ -85,6 +86,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<string> AssetIdentityTypes { get; } = [];
     public ObservableCollection<string> AssetPrimaryGeometryTypes { get; } = [];
     public ObservableCollection<string> AssetThumbnailTypes { get; } = [];
+    public ObservableCollection<SceneLodOption> AvailableSceneLods { get; } = [];
     public ObservableLog Log { get; } = [];
     public IReadOnlyList<int> AvailableWorkerCounts { get; }
     public IReadOnlyList<BrowserMode> BrowserModes { get; }
@@ -93,6 +95,7 @@ public sealed partial class MainViewModel : ObservableObject
     public IReadOnlyList<RawResourceDomain> RawDomains { get; }
     public IReadOnlyList<RawResourceSort> RawSortOptions { get; }
     public IReadOnlyList<ResourceLinkFilter> LinkFilters { get; }
+    public IReadOnlyList<SceneRenderMode> SceneRenderModes { get; } = Enum.GetValues<SceneRenderMode>();
 
     [ObservableProperty]
     private BrowserMode selectedBrowserMode = BrowserMode.AssetBrowser;
@@ -129,6 +132,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string assetPackageText = string.Empty;
+
+    [ObservableProperty]
+    private string assetPackageRelativeText = string.Empty;
 
     [ObservableProperty]
     private bool assetHasThumbnailOnly;
@@ -241,6 +247,12 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string emptyStateMessage = "Choose a scope to begin.";
 
+    [ObservableProperty]
+    private SceneRenderMode selectedSceneRenderMode = SceneRenderMode.LitTexture;
+
+    [ObservableProperty]
+    private SceneLodOption? selectedSceneLod;
+
     public bool IsNotBusy => !IsBusy;
     public Visibility AssetBrowserVisibility => SelectedBrowserMode == BrowserMode.AssetBrowser ? Visibility.Visible : Visibility.Collapsed;
     public Visibility RawBrowserVisibility => SelectedBrowserMode == BrowserMode.RawResourceBrowser ? Visibility.Visible : Visibility.Collapsed;
@@ -264,6 +276,8 @@ public sealed partial class MainViewModel : ObservableObject
     public Visibility SecondaryDiagnosticsVisibility => !IsDiagnosticsPreviewActive && !string.IsNullOrWhiteSpace(PreviewText) ? Visibility.Visible : Visibility.Collapsed;
     public bool CanResetView => CurrentScene is not null;
     public bool CanExportSelectedAsset => PreviewInteractionPolicy.CanExportSelectedAsset(selectedAsset, selectedAssetGraph, selectedAssetSceneRoot, CurrentScene);
+    public bool HasSceneLodOptions => AvailableSceneLods.Count > 0;
+    public bool CanSelectSceneLod => AvailableSceneLods.Count > 1;
 
     public async Task InitializeAsync()
     {
@@ -427,6 +441,7 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAsset = null;
         selectedAssetGraph = null;
         selectedAssetSceneRoot = null;
+        SetSceneLodOptions([]);
         ResetPreviewState();
 
         try
@@ -460,6 +475,7 @@ public sealed partial class MainViewModel : ObservableObject
         var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         selectedAssetGraph = graph;
         var assetDetails = AssetDetailsFormatter.BuildAssetDetails(asset, graph, null, null);
+        var fallbackPreviewResource = FindAssetFallbackPreviewResource(asset, graph, packageResources);
 
         ResourceMetadata? sceneRoot = null;
         string unsupportedMessage;
@@ -492,20 +508,45 @@ public sealed partial class MainViewModel : ObservableObject
 
         if (sceneRoot is null)
         {
-            PreviewText = string.Join(Environment.NewLine, graph.Diagnostics.DefaultIfEmpty(unsupportedMessage));
-            DetailsText = assetDetails;
-            PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
-            PreviewSurfaceTitle = "Diagnostics";
-            NotifyPreviewStateChanged();
+            SetSceneLodOptions([]);
+            var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(
+                fallbackPreviewResource,
+                assetDetails,
+                unsupportedMessage,
+                graph.Diagnostics);
+            if (!fallbackPreviewApplied)
+            {
+                PreviewText = string.Join(Environment.NewLine, graph.Diagnostics.DefaultIfEmpty(unsupportedMessage));
+                DetailsText = assetDetails;
+                PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
+                PreviewSurfaceTitle = "Diagnostics";
+                NotifyPreviewStateChanged();
+            }
+
             return;
         }
 
         sceneRoot = await resourceMetadataEnrichmentService.EnrichAsync(sceneRoot, CancellationToken.None);
         selectedResource = sceneRoot;
         selectedAssetSceneRoot = sceneRoot;
+        SetSceneLodOptions(BuildSceneLodOptions(graph, sceneRoot), sceneRoot.Key.FullTgi);
 
         var preview = await previewService.CreatePreviewAsync(sceneRoot, CancellationToken.None);
-        await ApplyPreviewAsync(sceneRoot, preview, AssetDetailsFormatter.BuildAssetDetails(asset, graph, sceneRoot, preview.Content as ScenePreviewContent));
+        var assetDetailsWithScene = AssetDetailsFormatter.BuildAssetDetails(asset, graph, sceneRoot, preview.Content as ScenePreviewContent);
+        if (preview.Content is ScenePreviewContent { Scene: null } failedScenePreview)
+        {
+            var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(
+                fallbackPreviewResource,
+                $"{assetDetailsWithScene}{Environment.NewLine}{Environment.NewLine}Fallback: scene reconstruction failed, showing asset image preview instead.",
+                failedScenePreview.Diagnostics,
+                graph.Diagnostics);
+            if (fallbackPreviewApplied)
+            {
+                return;
+            }
+        }
+
+        await ApplyPreviewAsync(sceneRoot, preview, assetDetailsWithScene);
     }
 
     public async Task ExportSelectedRawAsync(string outputDirectory)
@@ -574,6 +615,22 @@ public sealed partial class MainViewModel : ObservableObject
     {
         await audioPlayer.StopAsync();
         StatusMessage = "Audio playback stopped.";
+    }
+
+    public async Task SelectSceneLodAsync(SceneLodOption? option)
+    {
+        if (option?.Resource is null || selectedAsset is null || selectedAssetGraph is null)
+        {
+            return;
+        }
+
+        var resource = await resourceMetadataEnrichmentService.EnrichAsync(option.Resource, CancellationToken.None);
+        selectedResource = resource;
+        selectedAssetSceneRoot = resource;
+
+        var preview = await previewService.CreatePreviewAsync(resource, CancellationToken.None);
+        var assetDetails = AssetDetailsFormatter.BuildAssetDetails(selectedAsset, selectedAssetGraph, resource, preview.Content as ScenePreviewContent);
+        await ApplyPreviewAsync(resource, preview, assetDetails);
     }
 
     private async Task ReloadSourcesAsync()
@@ -704,7 +761,7 @@ public sealed partial class MainViewModel : ObservableObject
 
             case ScenePreviewContent scene:
                 CurrentScene = scene.Scene;
-                PreviewText = scene.Diagnostics;
+                PreviewText = AppendSceneMaterialDiagnostics(scene);
                 if (scene.Scene is null)
                 {
                     PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
@@ -789,6 +846,7 @@ public sealed partial class MainViewModel : ObservableObject
         assetBrowserState.PrimaryGeometryTypeText = AssetPrimaryGeometryTypeText;
         assetBrowserState.ThumbnailTypeText = AssetThumbnailTypeText;
         assetBrowserState.PackageText = AssetPackageText;
+        assetBrowserState.PackageRelativeText = AssetPackageRelativeText;
         assetBrowserState.HasThumbnailOnly = AssetHasThumbnailOnly;
         assetBrowserState.VariantsOnly = AssetVariantsOnly;
         assetBrowserState.RequireSceneRoot = AssetRequireSceneRoot;
@@ -830,6 +888,7 @@ public sealed partial class MainViewModel : ObservableObject
         AssetPrimaryGeometryTypeText = assetBrowserState.PrimaryGeometryTypeText;
         AssetThumbnailTypeText = assetBrowserState.ThumbnailTypeText;
         AssetPackageText = assetBrowserState.PackageText;
+        AssetPackageRelativeText = assetBrowserState.PackageRelativeText;
         AssetHasThumbnailOnly = assetBrowserState.HasThumbnailOnly;
         AssetVariantsOnly = assetBrowserState.VariantsOnly;
         AssetRequireSceneRoot = assetBrowserState.RequireSceneRoot;
@@ -917,6 +976,62 @@ public sealed partial class MainViewModel : ObservableObject
         return bitmap;
     }
 
+    private static ResourceMetadata? FindAssetFallbackPreviewResource(
+        AssetSummary asset,
+        AssetGraph graph,
+        IReadOnlyList<ResourceMetadata> packageResources)
+    {
+        if (!string.IsNullOrWhiteSpace(asset.ThumbnailTgi))
+        {
+            var exactThumbnail = packageResources.FirstOrDefault(resource =>
+                string.Equals(resource.Key.FullTgi, asset.ThumbnailTgi, StringComparison.OrdinalIgnoreCase));
+            if (IsPreviewableAssetFallback(exactThumbnail))
+            {
+                return exactThumbnail;
+            }
+        }
+
+        return graph.LinkedResources.FirstOrDefault(IsPreviewableAssetFallback);
+    }
+
+    private async Task<bool> TryApplyAssetFallbackPreviewAsync(
+        ResourceMetadata? fallbackPreviewResource,
+        string assetDetails,
+        string primaryReason,
+        IReadOnlyList<string> diagnostics)
+    {
+        if (!IsPreviewableAssetFallback(fallbackPreviewResource) || fallbackPreviewResource is null)
+        {
+            return false;
+        }
+
+        var enrichedFallback = await resourceMetadataEnrichmentService.EnrichAsync(fallbackPreviewResource, CancellationToken.None);
+        selectedResource = enrichedFallback;
+        selectedAssetSceneRoot = null;
+
+        var fallbackPreview = await previewService.CreatePreviewAsync(enrichedFallback, CancellationToken.None);
+        if (fallbackPreview.Content is UnsupportedPreviewContent)
+        {
+            return false;
+        }
+
+        var fallbackDetails =
+            $"""
+            {assetDetails}
+
+            Preview Fallback:
+            {primaryReason}
+            {string.Join(Environment.NewLine, diagnostics.Where(static diagnostic => !string.IsNullOrWhiteSpace(diagnostic)))}
+            """;
+        await ApplyPreviewAsync(enrichedFallback, fallbackPreview, fallbackDetails);
+        return true;
+    }
+
+    private static bool IsPreviewableAssetFallback(ResourceMetadata? resource) =>
+        resource is not null &&
+        resource.IsPreviewable &&
+        resource.PreviewKind is PreviewKind.Texture or PreviewKind.Text or PreviewKind.Audio;
+
     private static string BuildResourceDetails(ResourceMetadata resource) =>
         $"""
         Package: {resource.PackagePath}
@@ -938,6 +1053,95 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static string FormatCompressed(bool? value) => value?.ToString() ?? "(deferred)";
 
+    private static string AppendSceneMaterialDiagnostics(ScenePreviewContent scene)
+    {
+        var materialLines = BuildSceneMaterialDiagnostics(scene.Scene);
+        var statusLine = $"Scene Build Status: {scene.Status}";
+        if (materialLines.Count == 0)
+        {
+            if (string.IsNullOrWhiteSpace(scene.Diagnostics))
+            {
+                return statusLine;
+            }
+
+            return $"{statusLine}{Environment.NewLine}{scene.Diagnostics}";
+        }
+
+        if (string.IsNullOrWhiteSpace(scene.Diagnostics))
+        {
+            return $"{statusLine}{Environment.NewLine}{string.Join(Environment.NewLine, materialLines)}";
+        }
+
+        return $"{statusLine}{Environment.NewLine}{scene.Diagnostics}{Environment.NewLine}{Environment.NewLine}{string.Join(Environment.NewLine, materialLines)}";
+    }
+
+    private static IReadOnlyList<string> BuildSceneMaterialDiagnostics(CanonicalScene? scene)
+    {
+        if (scene is null || scene.Materials.Count == 0)
+        {
+            return [];
+        }
+
+        var lines = new List<string> { "Material Diagnostics:" };
+        for (var index = 0; index < scene.Materials.Count; index++)
+        {
+            var material = scene.Materials[index];
+            lines.Add(
+                $"[{index}] {material.Name} | source={FormatMaterialSourceKind(material.SourceKind)} | shader={material.ShaderName ?? "(unknown)"} | alpha={material.AlphaMode ?? "(none)"}");
+
+            if (!string.IsNullOrWhiteSpace(material.Approximation))
+            {
+                lines.Add($"    Approximation: {material.Approximation}");
+            }
+
+            if (material.Textures.Count == 0)
+            {
+                lines.Add("    Textures: none");
+                continue;
+            }
+
+            foreach (var texture in material.Textures)
+            {
+                lines.Add(
+                    $"    {FormatTextureSemantic(texture.Semantic)} ({texture.Slot}) -> {FormatTextureSourceKind(texture.SourceKind)} | {texture.SourceKey?.FullTgi ?? "(no key)"} | {Path.GetFileName(texture.SourcePackagePath ?? string.Empty)}");
+            }
+        }
+
+        return lines;
+    }
+
+    private static string FormatMaterialSourceKind(CanonicalMaterialSourceKind kind) => kind switch
+    {
+        CanonicalMaterialSourceKind.ExplicitMatd => "explicit-matd",
+        CanonicalMaterialSourceKind.MaterialSet => "mtst-material-set",
+        CanonicalMaterialSourceKind.FallbackCandidate => "fallback-candidate",
+        CanonicalMaterialSourceKind.ApproximateCas => "approximate-cas",
+        CanonicalMaterialSourceKind.Unsupported => "unsupported",
+        _ => "unknown"
+    };
+
+    private static string FormatTextureSemantic(CanonicalTextureSemantic semantic) => semantic switch
+    {
+        CanonicalTextureSemantic.BaseColor => "BaseColor",
+        CanonicalTextureSemantic.Normal => "Normal",
+        CanonicalTextureSemantic.Specular => "Specular",
+        CanonicalTextureSemantic.Gloss => "Gloss",
+        CanonicalTextureSemantic.Opacity => "Opacity",
+        CanonicalTextureSemantic.Emissive => "Emissive",
+        CanonicalTextureSemantic.Overlay => "Overlay",
+        _ => "Unknown"
+    };
+
+    private static string FormatTextureSourceKind(CanonicalTextureSourceKind kind) => kind switch
+    {
+        CanonicalTextureSourceKind.ExplicitLocal => "explicit-local",
+        CanonicalTextureSourceKind.ExplicitCompanion => "explicit-companion",
+        CanonicalTextureSourceKind.ExplicitIndexed => "explicit-indexed",
+        CanonicalTextureSourceKind.FallbackSameInstanceLocal => "fallback-same-instance-local",
+        CanonicalTextureSourceKind.FallbackSameInstanceIndexed => "fallback-same-instance-indexed",
+        _ => "unknown"
+    };
+
     private void ResetPreviewState()
     {
         previewAudioBytes = null;
@@ -949,6 +1153,64 @@ public sealed partial class MainViewModel : ObservableObject
         NotifyPreviewStateChanged();
     }
 
+    private void SetSceneLodOptions(IEnumerable<SceneLodOption> options, string? selectedFullTgi = null)
+    {
+        suppressSceneLodSelectionPreview = true;
+        try
+        {
+            ReplaceCollection(AvailableSceneLods, options);
+            SelectedSceneLod = selectedFullTgi is null
+                ? AvailableSceneLods.FirstOrDefault()
+                : AvailableSceneLods.FirstOrDefault(option => string.Equals(option.Resource.Key.FullTgi, selectedFullTgi, StringComparison.OrdinalIgnoreCase))
+                    ?? AvailableSceneLods.FirstOrDefault();
+        }
+        finally
+        {
+            suppressSceneLodSelectionPreview = false;
+        }
+
+        OnPropertyChanged(nameof(HasSceneLodOptions));
+        OnPropertyChanged(nameof(CanSelectSceneLod));
+    }
+
+    private static IReadOnlyList<SceneLodOption> BuildSceneLodOptions(AssetGraph graph, ResourceMetadata selectedSceneRoot)
+    {
+        if (graph.BuildBuyGraph is not null)
+        {
+            var options = new List<SceneLodOption>
+            {
+                new("Auto (Model root)", graph.BuildBuyGraph.ModelResource)
+            };
+
+            foreach (var lod in graph.BuildBuyGraph.ModelLodResources
+                         .OrderBy(static resource => resource.Key.Group)
+                         .ThenBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase))
+            {
+                options.Add(new SceneLodOption($"{DescribeBuildBuyLod(lod.Key.Group)} ({lod.Key.FullTgi})", lod));
+            }
+
+            return options;
+        }
+
+        if (graph.CasGraph?.GeometryResource is not null)
+        {
+            return [new SceneLodOption("Geometry root", graph.CasGraph.GeometryResource)];
+        }
+
+        return [new SceneLodOption(selectedSceneRoot.Key.TypeName, selectedSceneRoot)];
+    }
+
+    private static string DescribeBuildBuyLod(uint group) => group switch
+    {
+        0x00000000 => "High Detail",
+        0x00000001 => "Medium Detail",
+        0x00000002 => "Low Detail",
+        0x00010000 => "High Detail Shadow",
+        0x00010001 => "Medium Detail Shadow",
+        0x00010002 => "Low Detail Shadow",
+        _ => $"LOD {group:X8}"
+    };
+
     private void NotifyPreviewStateChanged()
     {
         OnPropertyChanged(nameof(IsScenePreviewActive));
@@ -958,6 +1220,8 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(SecondaryDiagnosticsVisibility));
         OnPropertyChanged(nameof(CanResetView));
         OnPropertyChanged(nameof(CanExportSelectedAsset));
+        OnPropertyChanged(nameof(HasSceneLodOptions));
+        OnPropertyChanged(nameof(CanSelectSceneLod));
     }
 
     partial void OnSelectedWorkerCountChanged(int value)
@@ -975,6 +1239,13 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnPreviewImageSourceChanged(BitmapImage? value) => NotifyPreviewStateChanged();
     partial void OnCurrentSceneChanged(CanonicalScene? value) => NotifyPreviewStateChanged();
     partial void OnPreviewTextChanged(string value) => NotifyPreviewStateChanged();
+    partial void OnSelectedSceneLodChanged(SceneLodOption? value)
+    {
+        if (!suppressSceneLodSelectionPreview && value is not null)
+        {
+            _ = SelectSceneLodAsync(value);
+        }
+    }
 
     partial void OnSelectedBrowserModeChanged(BrowserMode value)
     {
@@ -1089,6 +1360,17 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     partial void OnAssetPackageTextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetPackageRelativeTextChanged(string value)
     {
         SyncAssetStateFromProperties();
         assetQueryDirty = true;
@@ -1326,7 +1608,10 @@ public sealed partial class MainViewModel : ObservableObject
                     texture.Slot,
                     texture.FileName,
                     texture.SourceKey,
-                    texture.SourcePackagePath)).ToArray()))
+                    texture.SourcePackagePath,
+                    texture.Semantic,
+                    texture.SourceKind)).ToArray(),
+                material.SourceKind))
             .ToArray();
 
     private static string Slugify(string value)
@@ -1356,4 +1641,16 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static IReadOnlyList<string> PrependAll(IReadOnlyList<string> values) =>
         ["All", .. values.Where(static value => !string.Equals(value, "All", StringComparison.Ordinal))];
+}
+
+public enum SceneRenderMode
+{
+    Wireframe,
+    FlatTexture,
+    LitTexture
+}
+
+public sealed record SceneLodOption(string Label, ResourceMetadata Resource)
+{
+    public override string ToString() => Label;
 }
