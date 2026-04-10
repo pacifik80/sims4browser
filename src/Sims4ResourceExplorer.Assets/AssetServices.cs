@@ -47,6 +47,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             var objectDefinition = related.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectDefinition");
             var objectCatalog = related.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectCatalog");
             var modelLods = related.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
+            var materials = related.Where(static resource => resource.Key.TypeName == "MaterialDefinition").ToArray();
             var textures = related.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
             var thumbnail = related.FirstOrDefault(static resource => resource.Key.TypeName == "BuyBuildThumbnail")
                 ?? textures.FirstOrDefault();
@@ -73,7 +74,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             }
 
             yield return new AssetSummary(
-                Guid.NewGuid(),
+                StableEntityIds.ForAsset(model.DataSourceId, AssetKind.BuildBuy, model.PackagePath, model.Key),
                 model.DataSourceId,
                 model.SourceKind,
                 AssetKind.BuildBuy,
@@ -84,7 +85,27 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 thumbnail?.Key.FullTgi,
                 1,
                 related.Length - 1,
-                string.Join(" ", diagnostics));
+                string.Join(" ", diagnostics),
+                new AssetCapabilitySnapshot(
+                    HasSceneRoot: true,
+                    HasExactGeometryCandidate: modelLods.Length > 0,
+                    HasMaterialReferences: materials.Length > 0,
+                    HasTextureReferences: textures.Length > 0,
+                    HasThumbnail: thumbnail is not null,
+                    HasVariants: false,
+                    HasIdentityMetadata: objectCatalog is not null || objectDefinition is not null,
+                    HasRigReference: false,
+                    HasGeometryReference: modelLods.Length > 0,
+                    HasMaterialResourceCandidate: materials.Length > 0,
+                    HasTextureResourceCandidate: textures.Length > 0,
+                    IsPackageLocalGraph: true,
+                    HasDiagnostics: diagnostics.Count > 0),
+                PackageName: Path.GetFileName(model.PackagePath),
+                RootTypeName: model.Key.TypeName,
+                ThumbnailTypeName: thumbnail?.Key.TypeName,
+                PrimaryGeometryType: modelLods.Length > 0 ? "ModelLOD" : null,
+                IdentityType: objectDefinition?.Key.TypeName ?? objectCatalog?.Key.TypeName,
+                CategoryNormalized: "buildbuy");
         }
     }
 
@@ -107,8 +128,11 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 diagnostics.Add("No exact-instance CAS thumbnail was indexed for this CAS part.");
             }
 
+            var geometry = related.FirstOrDefault(static resource => resource.Key.TypeName == "Geometry");
+            var materials = related.Where(static resource => resource.Key.TypeName == "MaterialDefinition").ToArray();
+            var textures = related.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
             yield return new AssetSummary(
-                Guid.NewGuid(),
+                StableEntityIds.ForAsset(casPart.DataSourceId, AssetKind.Cas, casPart.PackagePath, casPart.Key),
                 casPart.DataSourceId,
                 casPart.SourceKind,
                 AssetKind.Cas,
@@ -119,7 +143,27 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 thumbnail?.Key.FullTgi,
                 1,
                 related.Length - 1,
-                string.Join(" ", diagnostics));
+                string.Join(" ", diagnostics),
+                new AssetCapabilitySnapshot(
+                    HasSceneRoot: true,
+                    HasExactGeometryCandidate: geometry is not null,
+                    HasMaterialReferences: materials.Length > 0,
+                    HasTextureReferences: textures.Length > 0,
+                    HasThumbnail: thumbnail is not null,
+                    HasVariants: false,
+                    HasIdentityMetadata: true,
+                    HasRigReference: related.Any(static resource => resource.Key.TypeName == "Rig"),
+                    HasGeometryReference: geometry is not null,
+                    HasMaterialResourceCandidate: materials.Length > 0,
+                    HasTextureResourceCandidate: textures.Length > 0,
+                    IsPackageLocalGraph: true,
+                    HasDiagnostics: diagnostics.Count > 0),
+                PackageName: Path.GetFileName(casPart.PackagePath),
+                RootTypeName: casPart.Key.TypeName,
+                ThumbnailTypeName: thumbnail?.Key.TypeName,
+                PrimaryGeometryType: geometry?.Key.TypeName,
+                IdentityType: casPart.Key.TypeName,
+                CategoryNormalized: "cas");
         }
     }
 

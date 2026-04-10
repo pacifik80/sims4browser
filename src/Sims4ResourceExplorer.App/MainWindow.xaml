@@ -60,10 +60,25 @@
                     <StackPanel Visibility="{Binding AssetBrowserVisibility}" Spacing="8">
                         <TextBlock Text="Asset Browser facets" FontWeight="SemiBold" />
                         <ComboBox Header="Domain" ItemsSource="{Binding AssetDomains}" SelectedItem="{Binding AssetDomain, Mode=TwoWay}" />
-                        <TextBox Header="Category contains" Text="{Binding AssetCategoryText, Mode=TwoWay}" />
+                        <AutoSuggestBox Header="Category" PlaceholderText="All" Text="{Binding AssetCategoryText, Mode=TwoWay}" ItemsSource="{Binding AssetCategories}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="Category" />
+                        <AutoSuggestBox Header="Root type" PlaceholderText="All" Text="{Binding AssetRootTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetRootTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="RootType" />
+                        <AutoSuggestBox Header="Identity type" PlaceholderText="All" Text="{Binding AssetIdentityTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetIdentityTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="IdentityType" />
+                        <AutoSuggestBox Header="Geometry type" PlaceholderText="All" Text="{Binding AssetPrimaryGeometryTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetPrimaryGeometryTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="GeometryType" />
+                        <AutoSuggestBox Header="Thumbnail type" PlaceholderText="All" Text="{Binding AssetThumbnailTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetThumbnailTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="ThumbnailType" />
                         <TextBox Header="Package path contains" Text="{Binding AssetPackageText, Mode=TwoWay}" />
                         <CheckBox Content="Has thumbnail" IsChecked="{Binding AssetHasThumbnailOnly, Mode=TwoWay}" />
                         <CheckBox Content="Has variants" IsChecked="{Binding AssetVariantsOnly, Mode=TwoWay}" />
+                        <CheckBox Content="Has scene root" IsChecked="{Binding AssetRequireSceneRoot, Mode=TwoWay}" />
+                        <CheckBox Content="Has identity metadata" IsChecked="{Binding AssetRequireIdentityMetadata, Mode=TwoWay}" />
+                        <CheckBox Content="Has exact geometry candidate" IsChecked="{Binding AssetRequireExactGeometryCandidate, Mode=TwoWay}" />
+                        <CheckBox Content="Has geometry reference" IsChecked="{Binding AssetRequireGeometryReference, Mode=TwoWay}" />
+                        <CheckBox Content="Has rig reference" IsChecked="{Binding AssetRequireRigReference, Mode=TwoWay}" />
+                        <CheckBox Content="Has material refs" IsChecked="{Binding AssetRequireMaterialReferences, Mode=TwoWay}" />
+                        <CheckBox Content="Has texture refs" IsChecked="{Binding AssetRequireTextureReferences, Mode=TwoWay}" />
+                        <CheckBox Content="Has material candidate" IsChecked="{Binding AssetRequireMaterialResourceCandidate, Mode=TwoWay}" />
+                        <CheckBox Content="Has texture candidate" IsChecked="{Binding AssetRequireTextureResourceCandidate, Mode=TwoWay}" />
+                        <CheckBox Content="Package-local graph" IsChecked="{Binding AssetRequirePackageLocalGraph, Mode=TwoWay}" />
+                        <CheckBox Content="Has diagnostics" IsChecked="{Binding AssetRequireDiagnostics, Mode=TwoWay}" />
                         <ComboBox Header="Sort" ItemsSource="{Binding AssetSortOptions}" SelectedItem="{Binding AssetSort, Mode=TwoWay}" />
                     </StackPanel>
 
@@ -131,15 +146,17 @@
                             <DataTemplate>
                                 <Grid ColumnSpacing="10">
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="100" />
                                         <ColumnDefinition Width="130" />
-                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="160" />
                                         <ColumnDefinition Width="100" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding AssetKind}" />
-                                    <TextBlock Grid.Column="1" Text="{Binding Category}" />
-                                    <TextBlock Grid.Column="2" Text="{Binding VariantCount}" />
-                                    <TextBlock Grid.Column="3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding SupportLabel}" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding AssetKind}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding PrimaryGeometryType}" />
+                                    <TextBlock Grid.Column="3" Text="{Binding VariantCount}" />
+                                    <TextBlock Grid.Column="4" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -177,24 +194,30 @@
 
             <Grid Grid.Column="2" RowSpacing="8">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="260" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="140" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <Grid x:Name="PreviewSurface">
+                <TextBlock Text="{Binding PreviewSurfaceTitle}" FontSize="16" FontWeight="SemiBold" />
+                <Grid x:Name="PreviewSurface" Grid.Row="1">
                     <Image x:Name="PreviewImage" Stretch="Uniform" Source="{Binding PreviewImageSource}" />
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8" Padding="8" Visibility="{Binding DiagnosticsPreviewVisibility}">
+                        <TextBox Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
+                    </Border>
                 </Grid>
-                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
                     <Button Click="ExportRaw_Click" Content="Raw Export" />
-                    <Button Click="ExportAsset_Click" Content="Export Asset" />
-                    <Button x:Name="ResetViewButton" Click="ResetView_Click" Content="Reset View" IsEnabled="False" />
+                    <Button Click="ExportAsset_Click" Content="Export Asset" IsEnabled="{Binding CanExportSelectedAsset}" />
+                    <Button x:Name="ResetViewButton" Click="ResetView_Click" Content="Reset View" IsEnabled="{Binding CanResetView}" />
                     <Button Click="PlayAudio_Click" Content="Play" />
                     <Button Click="StopAudio_Click" Content="Stop" />
                 </StackPanel>
-                <TextBox Grid.Row="2" Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
-                <TextBox Grid.Row="3" Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
+                <TextBox Grid.Row="3" Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" Visibility="{Binding SecondaryDiagnosticsVisibility}" />
+                <TextBox Grid.Row="4" Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
             </Grid>
         </Grid>
 

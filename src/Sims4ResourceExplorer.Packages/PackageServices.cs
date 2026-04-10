@@ -58,7 +58,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
             var resourceKey = ToCoreKey(key);
             var previewKind = ResourceTypeHints.GetPreviewKind(resourceKey.TypeName);
             resources.Add(new ResourceMetadata(
-                Guid.NewGuid(),
+                StableEntityIds.ForResource(source.Id, packagePath, resourceKey),
                 source.Id,
                 source.Kind,
                 packagePath,
@@ -150,10 +150,9 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
     {
         await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
         var llamaKey = ToLlamaKey(key);
-
         return raw
-            ? (await package.GetRawAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray()
-            : (await package.GetAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
+            ? await ReadWithDeletedFallbackAsync(force => package.GetRawAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false)
+            : await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken)
@@ -163,14 +162,14 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
         try
         {
-            var xml = await package.GetXmlAsync(llamaKey, false, cancellationToken).ConfigureAwait(false);
+            var xml = await ReadWithDeletedFallbackAsync(force => package.GetXmlAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
             return xml.ToString();
         }
         catch
         {
             try
             {
-                return await package.GetTextAsync(llamaKey, false, cancellationToken).ConfigureAwait(false);
+                return await ReadWithDeletedFallbackAsync(force => package.GetTextAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -186,20 +185,50 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
         if (key.TypeName is nameof(ResourceType.PNGImage) or nameof(ResourceType.PNGImage2))
         {
-            return (await package.GetAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
+            return await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
 
         if (key.TypeName is nameof(ResourceType.BuyBuildThumbnail) or nameof(ResourceType.BodyPartThumbnail) or nameof(ResourceType.CASPartThumbnail))
         {
-            return (await package.GetTranslucentJpegAsPngAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
+            return await ReadWithDeletedFallbackAsync(force => package.GetTranslucentJpegAsPngAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
 
         if (ResourceTypeHints.IsDdsFamily(key.TypeName))
         {
-            return (await package.GetDdsAsPngAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
+            return await ReadWithDeletedFallbackAsync(force => package.GetDdsAsPngAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
 
         return null;
+    }
+
+    private static async Task<byte[]> ReadWithDeletedFallbackAsync(
+        Func<bool, Task<ReadOnlyMemory<byte>>> readAsync,
+        CancellationToken cancellationToken)
+    {
+        var memory = await ReadWithDeletedFallbackAsyncCore(readAsync, cancellationToken).ConfigureAwait(false);
+        return memory.ToArray();
+    }
+
+    private static async Task<T> ReadWithDeletedFallbackAsync<T>(
+        Func<bool, Task<T>> readAsync,
+        CancellationToken cancellationToken)
+    {
+        return await ReadWithDeletedFallbackAsyncCore(readAsync, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<T> ReadWithDeletedFallbackAsyncCore<T>(
+        Func<bool, Task<T>> readAsync,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            return await readAsync(false).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (LooksLikeDeletedResource(ex))
+        {
+            return await readAsync(true).ConfigureAwait(false);
+        }
     }
 
     private static ResourceKeyRecord ToCoreKey(ResourceKey key) =>
@@ -210,6 +239,9 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
     private static string AppendDiagnostic(string existing, string message) =>
         string.IsNullOrWhiteSpace(existing) ? message : $"{existing} | {message}";
+
+    private static bool LooksLikeDeletedResource(Exception ex) =>
+        ex.Message.Contains("marked as deleted", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<DataBasePackedFile> OpenPackageAsync(string packagePath, CancellationToken cancellationToken)
     {

@@ -17,7 +17,7 @@
         <StackPanel Spacing="10">
             <TextBlock Text="Indexing Progress" FontSize="20" FontWeight="SemiBold" />
             <TextBlock Text="{Binding OverallSummary}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
-            <ProgressBar Maximum="{Binding PackagesProgressMaximum}" Value="{Binding PackagesProgressValue}" />
+            <ProgressBar Maximum="{Binding PackagesProgressMaximum}" Value="{Binding PackagesProgressValue}" IsIndeterminate="{Binding PackagesProgressIndeterminate}" />
             <Grid ColumnSpacing="16" RowSpacing="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

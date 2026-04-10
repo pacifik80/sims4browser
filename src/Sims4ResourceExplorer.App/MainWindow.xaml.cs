@@ -116,6 +116,48 @@ public sealed partial class MainWindow : Window
     private async void PlayAudio_Click(object sender, RoutedEventArgs e) => await ViewModel.PlayAudioAsync();
     private async void StopAudio_Click(object sender, RoutedEventArgs e) => await ViewModel.StopAudioAsync();
     private void ResetView_Click(object sender, RoutedEventArgs e) => ResetSceneCamera(ViewModel.CurrentScene);
+    private void AssetFacetSuggestBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        UpdateAssetFacetSuggestions(sender, userInputOnly: args.Reason == AutoSuggestionBoxTextChangeReason.UserInput);
+    }
+
+    private void AssetFacetSuggestBox_SuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
+    {
+        if (args.SelectedItem is string selected && string.Equals(selected, "All", StringComparison.Ordinal))
+        {
+            sender.Text = string.Empty;
+        }
+    }
+
+    private void AssetFacetSuggestBox_GotFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is AutoSuggestBox suggestBox)
+        {
+            UpdateAssetFacetSuggestions(suggestBox, userInputOnly: false);
+            suggestBox.IsSuggestionListOpen = true;
+        }
+    }
+
+    private void UpdateAssetFacetSuggestions(AutoSuggestBox sender, bool userInputOnly)
+    {
+        var source = sender.Tag switch
+        {
+            "Category" => ViewModel.AssetCategories,
+            "RootType" => ViewModel.AssetRootTypes,
+            "IdentityType" => ViewModel.AssetIdentityTypes,
+            "GeometryType" => ViewModel.AssetPrimaryGeometryTypes,
+            "ThumbnailType" => ViewModel.AssetThumbnailTypes,
+            _ => Enumerable.Empty<string>()
+        };
+
+        var text = sender.Text?.Trim() ?? string.Empty;
+        var filtered = string.IsNullOrWhiteSpace(text)
+            ? source
+            : source.Where(value => value.Contains(text, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        sender.ItemsSource = filtered;
+        sender.IsSuggestionListOpen = filtered.Any() && (!userInputOnly || !string.Equals(text, "All", StringComparison.OrdinalIgnoreCase));
+    }
 
     private async Task AddFolderAsync(SourceKind kind)
     {
@@ -155,7 +197,9 @@ public sealed partial class MainWindow : Window
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MainViewModel.CurrentScene) || e.PropertyName == nameof(MainViewModel.PreviewImageSource))
+        if (e.PropertyName == nameof(MainViewModel.CurrentScene) ||
+            e.PropertyName == nameof(MainViewModel.PreviewImageSource) ||
+            e.PropertyName == nameof(MainViewModel.PreviewSurfaceMode))
         {
             UpdatePreviewSurface();
         }
@@ -163,20 +207,17 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePreviewSurface()
     {
-        var scene = ViewModel.CurrentScene;
-        if (scene is null)
+        if (ViewModel.IsScenePreviewActive && ViewModel.CurrentScene is not null)
         {
-            sceneViewport.Items.Clear();
-            sceneViewport.Visibility = Visibility.Collapsed;
-            PreviewImage.Visibility = Visibility.Visible;
-            ResetViewButton.IsEnabled = false;
+            RenderScene(ViewModel.CurrentScene);
+            sceneViewport.Visibility = Visibility.Visible;
+            PreviewImage.Visibility = Visibility.Collapsed;
             return;
         }
 
-        RenderScene(scene);
-        sceneViewport.Visibility = Visibility.Visible;
-        PreviewImage.Visibility = Visibility.Collapsed;
-        ResetViewButton.IsEnabled = true;
+        sceneViewport.Items.Clear();
+        sceneViewport.Visibility = Visibility.Collapsed;
+        PreviewImage.Visibility = ViewModel.IsImagePreviewActive ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void RenderScene(CanonicalScene scene)

@@ -15,6 +15,13 @@ public enum AssetKind
     Cas
 }
 
+public enum PreviewSurfaceMode
+{
+    Diagnostics,
+    Image,
+    Scene
+}
+
 public enum PreviewKind
 {
     Metadata,
@@ -74,6 +81,45 @@ public sealed record PackageScanResult(
     IReadOnlyList<ResourceMetadata> Resources,
     IReadOnlyList<string> Diagnostics);
 
+public sealed record AssetCapabilitySnapshot(
+    bool HasSceneRoot,
+    bool HasExactGeometryCandidate,
+    bool HasMaterialReferences,
+    bool HasTextureReferences,
+    bool HasThumbnail = false,
+    bool HasVariants = false,
+    bool HasIdentityMetadata = false,
+    bool HasRigReference = false,
+    bool HasGeometryReference = false,
+    bool HasMaterialResourceCandidate = false,
+    bool HasTextureResourceCandidate = false,
+    bool IsPackageLocalGraph = false,
+    bool HasDiagnostics = false)
+{
+    public static AssetCapabilitySnapshot Empty { get; } =
+        new(true, false, false, false);
+}
+
+public sealed record AssetCapabilityFilter(
+    bool RequireSceneRoot = false,
+    bool RequireExactGeometryCandidate = false,
+    bool RequireMaterialReferences = false,
+    bool RequireTextureReferences = false,
+    bool RequireIdentityMetadata = false,
+    bool RequireRigReference = false,
+    bool RequireGeometryReference = false,
+    bool RequireMaterialResourceCandidate = false,
+    bool RequireTextureResourceCandidate = false,
+    bool RequirePackageLocalGraph = false,
+    bool RequireDiagnostics = false);
+
+public sealed record AssetFacetOptions(
+    IReadOnlyList<string> Categories,
+    IReadOnlyList<string> RootTypeNames,
+    IReadOnlyList<string> IdentityTypes,
+    IReadOnlyList<string> PrimaryGeometryTypes,
+    IReadOnlyList<string> ThumbnailTypeNames);
+
 public sealed record AssetSummary(
     Guid Id,
     Guid DataSourceId,
@@ -86,10 +132,38 @@ public sealed record AssetSummary(
     string? ThumbnailTgi,
     int VariantCount,
     int LinkedResourceCount,
-    string Diagnostics)
+    string Diagnostics,
+    AssetCapabilitySnapshot? Capabilities = null,
+    string? PackageName = null,
+    string? RootTypeName = null,
+    string? ThumbnailTypeName = null,
+    string? PrimaryGeometryType = null,
+    string? IdentityType = null,
+    string? CategoryNormalized = null)
 {
     public bool HasThumbnail => !string.IsNullOrWhiteSpace(ThumbnailTgi);
     public bool HasVariants => VariantCount > 1;
+    public AssetCapabilitySnapshot CapabilitySnapshot => Capabilities ?? AssetCapabilitySnapshot.Empty;
+    public string SupportLabel => AssetDerivedState.BuildSupportLabel(CapabilitySnapshot);
+    public string SupportNotes => AssetDerivedState.BuildSupportNotes(this);
+}
+
+public static class StableEntityIds
+{
+    public static Guid ForResource(Guid dataSourceId, string packagePath, ResourceKeyRecord key) =>
+        Create("resource", dataSourceId.ToString("D"), packagePath, key.FullTgi);
+
+    public static Guid ForAsset(Guid dataSourceId, AssetKind assetKind, string packagePath, ResourceKeyRecord rootKey) =>
+        Create("asset", dataSourceId.ToString("D"), assetKind.ToString(), packagePath, rootKey.FullTgi);
+
+    private static Guid Create(params string[] parts)
+    {
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var input = string.Join("|", parts);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(input);
+        var hash = md5.ComputeHash(bytes);
+        return new Guid(hash);
+    }
 }
 
 public sealed record AssetGraph(
@@ -221,6 +295,7 @@ public sealed record IndexingProgress(
     int ActiveWorkerCount = 0,
     int PendingPackageCount = 0,
     int ConfiguredWorkerCount = 0,
+    bool DiscoveryCompleted = false,
     TimeSpan Elapsed = default,
     double OverallThroughput = 0,
     IReadOnlyList<WorkerSlotProgress>? WorkerSlots = null,
@@ -364,6 +439,228 @@ public sealed record MaterialTextureEntry(
 
 public sealed record ExportedFileResult(bool Success, string? OutputPath, string Message);
 
+public sealed record IndexedPackageRecord(
+    Guid DataSourceId,
+    SourceKind SourceKind,
+    string PackagePath,
+    long FileSize,
+    DateTimeOffset LastWriteTimeUtc,
+    int AssetCount);
+
+public sealed record PreviewPresentationState(
+    PreviewSurfaceMode SurfaceMode,
+    string SurfaceTitle,
+    bool CanResetView,
+    bool HasPrimaryDiagnostics)
+{
+    public static PreviewPresentationState FromPreviewContent(PreviewContent content) => content switch
+    {
+        ScenePreviewContent { Scene: not null } => new(PreviewSurfaceMode.Scene, "3D Preview", true, false),
+        TexturePreviewContent => new(PreviewSurfaceMode.Image, "Image Preview", false, false),
+        _ => new(PreviewSurfaceMode.Diagnostics, "Diagnostics", false, true)
+    };
+}
+
+public static class PreviewInteractionPolicy
+{
+    public static bool CanExportSelectedAsset(AssetSummary? selectedAsset, AssetGraph? selectedAssetGraph, ResourceMetadata? sceneRoot, CanonicalScene? scene) =>
+        selectedAsset is not null &&
+        selectedAssetGraph is not null &&
+        sceneRoot is not null &&
+        scene is not null;
+}
+
+public static class AssetDerivedState
+{
+    public static string BuildSupportLabel(AssetCapabilitySnapshot facts)
+    {
+        if (facts.HasExactGeometryCandidate && facts.HasTextureReferences)
+        {
+            return "Geometry+Textures";
+        }
+
+        if (facts.HasExactGeometryCandidate)
+        {
+            return "Geometry";
+        }
+
+        if (facts.HasSceneRoot)
+        {
+            return "Metadata";
+        }
+
+        return "Missing Root";
+    }
+
+    public static string BuildSupportNotes(AssetSummary asset)
+    {
+        var facts = asset.CapabilitySnapshot;
+        if (!facts.HasSceneRoot)
+        {
+            return "The cached asset row does not currently resolve a scene root.";
+        }
+
+        if (facts.HasExactGeometryCandidate && facts.HasTextureReferences)
+        {
+            return "Exact-asset geometry and texture candidates are present in cache.";
+        }
+
+        if (facts.HasExactGeometryCandidate)
+        {
+            return "Exact-asset geometry candidates are present in cache, but texture coverage is incomplete.";
+        }
+
+        return "The asset is cached for browsing, but no exact geometry candidate is currently indexed.";
+    }
+}
+
+public static class AssetDetailsFormatter
+{
+    public static string BuildAssetDetails(AssetSummary asset, AssetGraph graph, ResourceMetadata? sceneRoot, ScenePreviewContent? scenePreview)
+    {
+        var buildBuyGraph = graph.BuildBuyGraph;
+        var casGraph = graph.CasGraph;
+        var scene = scenePreview?.Scene;
+        var diagnostics = graph.Diagnostics
+            .Concat(scenePreview is null ? [] : scenePreview.Diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries))
+            .DefaultIfEmpty(asset.Diagnostics);
+
+        if (buildBuyGraph is not null)
+        {
+            return
+                $"""
+                Asset: {asset.DisplayName}
+                Kind: {asset.AssetKind}
+                Category: {asset.Category ?? "(unknown)"}
+                Package: {asset.PackagePath}
+                Root TGI: {asset.RootKey.FullTgi}
+                Support Status: {asset.SupportLabel}
+                Support Notes: {asset.SupportNotes}
+                Package Name: {asset.PackageName ?? Path.GetFileName(asset.PackagePath)}
+                Root Type: {asset.RootTypeName ?? "(unknown)"}
+                Thumbnail Type: {asset.ThumbnailTypeName ?? "(none)"}
+                Geometry Type: {asset.PrimaryGeometryType ?? "(unknown)"}
+                Identity Type: {asset.IdentityType ?? "(unknown)"}
+                Has Scene Root: {FormatYesNo(asset.CapabilitySnapshot.HasSceneRoot)}
+                Has Exact Geometry Candidate: {FormatYesNo(asset.CapabilitySnapshot.HasExactGeometryCandidate)}
+                Has Material References: {FormatYesNo(asset.CapabilitySnapshot.HasMaterialReferences)}
+                Has Texture References: {FormatYesNo(asset.CapabilitySnapshot.HasTextureReferences)}
+                Has Identity Metadata: {FormatYesNo(asset.CapabilitySnapshot.HasIdentityMetadata)}
+                Has Geometry Reference: {FormatYesNo(asset.CapabilitySnapshot.HasGeometryReference)}
+                Has Rig Reference: {FormatYesNo(asset.CapabilitySnapshot.HasRigReference)}
+                Has Material Resource Candidate: {FormatYesNo(asset.CapabilitySnapshot.HasMaterialResourceCandidate)}
+                Has Texture Resource Candidate: {FormatYesNo(asset.CapabilitySnapshot.HasTextureResourceCandidate)}
+                Package-Local Graph: {FormatYesNo(asset.CapabilitySnapshot.IsPackageLocalGraph)}
+                Has Diagnostics: {FormatYesNo(asset.CapabilitySnapshot.HasDiagnostics)}
+                Scene Reconstruction: {BuildSceneReconstructionStatus(sceneRoot, scenePreview)}
+                Identity Resources: {buildBuyGraph.IdentityResources.Count}
+                Linked Resources: {asset.LinkedResourceCount}
+                Thumbnail: {asset.ThumbnailTgi ?? "(none)"}
+                Supported Subset: {buildBuyGraph.SupportedSubset}
+                Scene Root: {sceneRoot?.Key.FullTgi ?? "(unresolved)"}
+                Selected LOD: {ExtractDiagnosticValue(scenePreview?.Diagnostics, "Selected LOD root:") ?? "(not resolved)"}
+                Model LOD Candidates: {buildBuyGraph.ModelLodResources.Count}
+                Material Candidates: {buildBuyGraph.MaterialResources.Count}
+                Texture Candidates: {buildBuyGraph.TextureResources.Count}
+                Mesh Count: {scene?.Meshes.Count ?? 0}
+                Vertex Count: {(scene?.Meshes.Sum(static mesh => mesh.Positions.Count / 3) ?? 0):N0}
+                Index Count: {(scene?.Meshes.Sum(static mesh => mesh.Indices.Count) ?? 0):N0}
+                Material Slots: {scene?.Materials.Count ?? 0}
+                Texture References: {scene?.Materials.Sum(static material => material.Textures.Count) ?? 0}
+                Bone Count: {scene?.Bones.Count ?? 0}
+                Bounds: {FormatBounds(scene?.Bounds)}
+                Diagnostics:
+                {string.Join(Environment.NewLine, diagnostics)}
+                """;
+        }
+
+        return
+            $"""
+            Asset: {asset.DisplayName}
+            Kind: {asset.AssetKind}
+            Category: {casGraph?.Category ?? asset.Category ?? "(unknown)"}
+            Package: {asset.PackagePath}
+            Root TGI: {asset.RootKey.FullTgi}
+            Support Status: {asset.SupportLabel}
+            Support Notes: {asset.SupportNotes}
+            Package Name: {asset.PackageName ?? Path.GetFileName(asset.PackagePath)}
+            Root Type: {asset.RootTypeName ?? "(unknown)"}
+            Thumbnail Type: {asset.ThumbnailTypeName ?? "(none)"}
+            Geometry Type: {asset.PrimaryGeometryType ?? "(unknown)"}
+            Identity Type: {asset.IdentityType ?? "(unknown)"}
+            Has Scene Root: {FormatYesNo(asset.CapabilitySnapshot.HasSceneRoot)}
+            Has Exact Geometry Candidate: {FormatYesNo(asset.CapabilitySnapshot.HasExactGeometryCandidate)}
+            Has Material References: {FormatYesNo(asset.CapabilitySnapshot.HasMaterialReferences)}
+            Has Texture References: {FormatYesNo(asset.CapabilitySnapshot.HasTextureReferences)}
+            Has Identity Metadata: {FormatYesNo(asset.CapabilitySnapshot.HasIdentityMetadata)}
+            Has Geometry Reference: {FormatYesNo(asset.CapabilitySnapshot.HasGeometryReference)}
+            Has Rig Reference: {FormatYesNo(asset.CapabilitySnapshot.HasRigReference)}
+            Has Material Resource Candidate: {FormatYesNo(asset.CapabilitySnapshot.HasMaterialResourceCandidate)}
+            Has Texture Resource Candidate: {FormatYesNo(asset.CapabilitySnapshot.HasTextureResourceCandidate)}
+            Package-Local Graph: {FormatYesNo(asset.CapabilitySnapshot.IsPackageLocalGraph)}
+            Has Diagnostics: {FormatYesNo(asset.CapabilitySnapshot.HasDiagnostics)}
+            Scene Reconstruction: {BuildSceneReconstructionStatus(sceneRoot, scenePreview)}
+            Swatch/Variant: {casGraph?.SwatchSummary ?? "(unknown)"}
+            Identity Resources: {casGraph?.IdentityResources.Count ?? 0}
+            Geometry Candidates: {casGraph?.GeometryResources.Count ?? 0}
+            Rig Candidates: {casGraph?.RigResources.Count ?? 0}
+            Texture Candidates: {casGraph?.TextureResources.Count ?? 0}
+            Supported Subset: {casGraph?.SupportedSubset ?? "(not supported)"}
+            Scene Root: {sceneRoot?.Key.FullTgi ?? "(unresolved)"}
+            Selected LOD: {casGraph?.SelectedLodLabel ?? "(not resolved)"}
+            Mesh Count: {scene?.Meshes.Count ?? 0}
+            Vertex Count: {(scene?.Meshes.Sum(static mesh => mesh.Positions.Count / 3) ?? 0):N0}
+            Index Count: {(scene?.Meshes.Sum(static mesh => mesh.Indices.Count) ?? 0):N0}
+            Material Slots: {scene?.Materials.Count ?? 0}
+            Texture References: {scene?.Materials.Sum(static material => material.Textures.Count) ?? 0}
+            Bone Count: {scene?.Bones.Count ?? 0}
+            Bounds: {FormatBounds(scene?.Bounds)}
+            Diagnostics:
+            {string.Join(Environment.NewLine, diagnostics)}
+            """;
+    }
+
+    private static string BuildSceneReconstructionStatus(ResourceMetadata? sceneRoot, ScenePreviewContent? scenePreview)
+    {
+        if (sceneRoot is null)
+        {
+            return "Not attempted (no supported scene root resolved)";
+        }
+
+        if (scenePreview is null)
+        {
+            return "Pending";
+        }
+
+        return scenePreview.Scene is not null ? "Succeeded" : "Failed";
+    }
+
+    private static string? ExtractDiagnosticValue(string? diagnostics, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(diagnostics))
+        {
+            return null;
+        }
+
+        foreach (var line in diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return line[prefix.Length..].Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static string FormatBounds(Bounds3D? bounds) =>
+        bounds is null
+            ? "(unavailable)"
+            : $"min ({bounds.MinX:0.###}, {bounds.MinY:0.###}, {bounds.MinZ:0.###}) max ({bounds.MaxX:0.###}, {bounds.MaxY:0.###}, {bounds.MaxZ:0.###})";
+
+    private static string FormatYesNo(bool value) => value ? "Yes" : "No";
+}
+
 public interface IPackageScanner
 {
     IAsyncEnumerable<DiscoveredPackage> DiscoverPackagesAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken);
@@ -432,13 +729,19 @@ public interface IIndexStore
     Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken);
     Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken);
+    Task<AssetFacetOptions> GetAssetFacetOptionsAsync(AssetKind assetKind, CancellationToken cancellationToken);
+    Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken);
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);
+    Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
 }
 
 public interface IIndexWriteSession : IAsyncDisposable
 {
     Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
+    Task ReplacePackagesAsync(IReadOnlyList<(PackageScanResult PackageScan, IReadOnlyList<AssetSummary> Assets)> batch, CancellationToken cancellationToken);
+    Task FinalizeAsync(CancellationToken cancellationToken);
 }
 
 public interface IResourceMetadataEnrichmentService

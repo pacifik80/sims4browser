@@ -31,6 +31,9 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
     private double packagesProgressValue;
 
     [ObservableProperty]
+    private bool packagesProgressIndeterminate;
+
+    [ObservableProperty]
     private string overallSummary = "Preparing indexing run.";
 
     [ObservableProperty]
@@ -70,16 +73,21 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
     {
         PackagesProgressMaximum = Math.Max(1, progress.PackagesTotal);
         PackagesProgressValue = Math.Min(progress.PackagesProcessed, progress.PackagesTotal);
-        OverallSummary = $"Packages {progress.PackagesProcessed}/{progress.PackagesTotal} | Resources {progress.ResourcesProcessed:N0} | Throughput {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec";
+        PackagesProgressIndeterminate = !progress.DiscoveryCompleted;
+        OverallSummary = progress.DiscoveryCompleted
+            ? $"Packages {progress.PackagesProcessed}/{progress.PackagesTotal} | Resources {progress.ResourcesProcessed:N0} | Throughput {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec"
+            : $"Packages {progress.PackagesProcessed} processed / {progress.PackagesTotal} discovered so far | Resources {progress.ResourcesProcessed:N0} | Throughput {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec";
         LatestEventText = string.IsNullOrWhiteSpace(progress.Message)
             ? "Monitoring indexing run."
             : progress.Message;
         WorkerCountText = $"Workers: {progress.ActiveWorkerCount} active / {Math.Max(progress.ConfiguredWorkerCount, ConfiguredWorkerCount)} configured";
-        BacklogText = $"Queue: {progress.PendingPackageCount}";
-        PackagesText = $"Packages: {progress.PackagesProcessed} / {progress.PackagesTotal}";
+        BacklogText = $"Buffered queue: {progress.PendingPackageCount}";
+        PackagesText = progress.DiscoveryCompleted
+            ? $"Packages: {progress.PackagesProcessed} / {progress.PackagesTotal}"
+            : $"Packages: {progress.PackagesProcessed} processed / {progress.PackagesTotal} discovered so far";
         ResourcesText = $"Resources: {progress.ResourcesProcessed:N0}";
         ElapsedText = $"Elapsed: {progress.Elapsed:hh\\:mm\\:ss}";
-        ElapsedEtaText = $"Elapsed / Remaining ETA: {progress.Elapsed:hh\\:mm\\:ss} / {IndexingDisplayFormat.FormatEta(EstimateRemainingEta(progress))}";
+        ElapsedEtaText = $"Elapsed / Remaining ETA: {progress.Elapsed:hh\\:mm\\:ss} / {BuildEtaText(progress)}";
         ThroughputText = $"Throughput: {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec";
         SummaryText = BuildSummary(progress);
 
@@ -97,6 +105,30 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         {
             cancelAction();
         }
+    }
+
+    public void MarkCompleted(string? message = null)
+    {
+        LatestEventText = string.IsNullOrWhiteSpace(message) ? "Indexing completed." : message;
+        SummaryText = string.IsNullOrWhiteSpace(message) ? "Indexing completed." : message;
+        CanCancel = false;
+        CanClose = true;
+    }
+
+    public void MarkCanceled(string? message = null)
+    {
+        LatestEventText = string.IsNullOrWhiteSpace(message) ? "Indexing was canceled." : message;
+        SummaryText = string.IsNullOrWhiteSpace(message) ? "Indexing was canceled." : message;
+        CanCancel = false;
+        CanClose = true;
+    }
+
+    public void MarkFailed(string message)
+    {
+        LatestEventText = message;
+        SummaryText = message;
+        CanCancel = false;
+        CanClose = true;
     }
 
     private void ApplyWorkerSlots(IReadOnlyList<WorkerSlotProgress>? workerSlots)
@@ -121,12 +153,19 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
             return "Indexing was canceled.";
         }
 
-        return $"{progress.PackagesProcessed}/{progress.PackagesTotal} packages processed.";
+        return progress.DiscoveryCompleted
+            ? $"{progress.PackagesProcessed}/{progress.PackagesTotal} packages processed."
+            : $"Streaming discovery is still active. {progress.PackagesProcessed} packages processed and {progress.PackagesTotal} discovered so far.";
     }
 
     private static TimeSpan EstimateRemainingEta(IndexingProgress progress)
     {
         if (progress.Summary is not null)
+        {
+            return TimeSpan.Zero;
+        }
+
+        if (!progress.DiscoveryCompleted)
         {
             return TimeSpan.Zero;
         }
@@ -166,6 +205,11 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
             ? TimeSpan.Zero
             : TimeSpan.FromSeconds(remainingPackages / packageRate);
     }
+
+    private static string BuildEtaText(IndexingProgress progress) =>
+        progress.DiscoveryCompleted
+            ? IndexingDisplayFormat.FormatEta(EstimateRemainingEta(progress))
+            : "provisional while discovery is active";
 }
 
 public sealed partial class WorkerSlotItemViewModel : ObservableObject

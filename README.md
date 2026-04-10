@@ -55,10 +55,12 @@ This repository is being built in vertical slices. The current implementation in
 - a first real Build/Buy vertical slice for static model-rooted furniture/decor objects with scene preview and FBX+textures export
 - a first real CAS vertical slice for adult/young-adult human hair, full body, top, bottom, and shoes parts when the CAS part exposes a direct skinned `Geometry` LOD in the same package
 - a first in-app audio path for RIFF/WAV payloads
+- lightweight factual asset capability fields in the cache so the app can filter Build/Buy and CAS assets without baking support policy into the index
 
 Current 3D note:
 
 - the current supported subset is narrow and honest: static Build/Buy objects with a `Model` root, triangle-list `ModelLOD` geometry, no skinning/animation path, and package-local material/texture candidates
+- the Build/Buy subset now renders in a real in-app 3D viewport when scene reconstruction succeeds, and falls back to explicit diagnostics when reconstruction fails
 - CAS support is also narrow and honest: adult/young-adult human hair, full body, top, bottom, and shoes parts with a direct package-local skinned `Geometry` scene root plus package-local texture candidates
 - unsupported Build/Buy objects remain metadata/raw-export-first and report explicit diagnostics instead of faking scene success
 - unsupported CAS assets remain metadata/raw-export-first and report explicit diagnostics instead of faking scene success
@@ -71,6 +73,8 @@ Browsing is now mode-first instead of tab-symmetric:
 - `Raw Resource Browser` is the diagnostic path for TGI/package/type inspection
 
 Each mode has its own search box, scoped facets, active filter chips, result summary, and incremental result window. The app shows total matches separately from the currently loaded rows so very large libraries stay understandable. Facets are still partly heuristic where Sims 4 categories/linkage are only partially known.
+
+For logical assets, the cache now stores cheap factual fields such as scene-root presence, exact-geometry candidate presence, and material/texture reference presence. The app derives labels and filtering behavior from those fields at runtime, so changing previewability rules does not require rebuilding the cache just to change policy.
 
 ## Read-only safety
 

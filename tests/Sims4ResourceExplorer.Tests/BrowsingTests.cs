@@ -147,8 +147,8 @@ public sealed class BrowsingTests : IDisposable
         var casRoot = CreateResource(source.Id, "cas.package", SourceKind.Game, "CASPart", 2, "Hat");
         var assets = new[]
         {
-            new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Comfort", "objects.package", buildBuyRoot.Key, "thumbnail", 2, 4, string.Empty),
-            new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.Cas, "Hat", "Head", "cas.package", casRoot.Key, null, 1, 2, string.Empty)
+            new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Comfort", "objects.package", buildBuyRoot.Key, "thumbnail", 2, 4, string.Empty, new AssetCapabilitySnapshot(true, true, true, true)),
+            new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.Cas, "Hat", "Head", "cas.package", casRoot.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, true, false, false))
         };
 
         await store.ReplacePackageAsync(
@@ -171,12 +171,164 @@ public sealed class BrowsingTests : IDisposable
                 true,
                 AssetBrowserSort.Name,
                 0,
-                10),
+                10,
+                new AssetCapabilityFilter()),
             CancellationToken.None);
 
         Assert.Single(result.Items);
         Assert.Equal("Chair", result.Items[0].DisplayName);
         Assert.Equal(1, result.TotalCount);
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_QueryAssets_CanFilterBySceneRoot()
+    {
+        var cache = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cache);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Game", tempRoot, SourceKind.Game);
+        await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+        var readyRoot = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 1, "Chair");
+        var unsupportedRoot = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 2, "Lamp");
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, "objects.package", 10, DateTimeOffset.UtcNow, [readyRoot, unsupportedRoot], []),
+            [
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Comfort", "objects.package", readyRoot.Key, "thumbnail", 1, 4, string.Empty, new AssetCapabilitySnapshot(true, true, true, true)),
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Lamp", "Lighting", "objects.package", unsupportedRoot.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(false, false, false, false))
+            ],
+            CancellationToken.None);
+
+        var result = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                string.Empty,
+                AssetBrowserDomain.BuildBuy,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                10,
+                new AssetCapabilityFilter(RequireSceneRoot: true)),
+            CancellationToken.None);
+
+        var asset = Assert.Single(result.Items);
+        Assert.Equal("Chair", asset.DisplayName);
+        Assert.True(asset.CapabilitySnapshot.HasSceneRoot);
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_QueryAssets_CanFilterByTextureReferences()
+    {
+        var cache = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cache);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Game", tempRoot, SourceKind.Game);
+        await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+        var texturedRoot = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 1, "Chair");
+        var untexturedRoot = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 2, "Lamp");
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, "objects.package", 10, DateTimeOffset.UtcNow, [texturedRoot, untexturedRoot], []),
+            [
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Comfort", "objects.package", texturedRoot.Key, "thumbnail", 1, 4, string.Empty, new AssetCapabilitySnapshot(true, true, true, true)),
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Lamp", "Lighting", "objects.package", untexturedRoot.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, true, true, false))
+            ],
+            CancellationToken.None);
+
+        var result = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                string.Empty,
+                AssetBrowserDomain.BuildBuy,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                10,
+                new AssetCapabilityFilter(RequireTextureReferences: true)),
+            CancellationToken.None);
+
+        var asset = Assert.Single(result.Items);
+        Assert.Equal("Chair", asset.DisplayName);
+        Assert.True(asset.CapabilitySnapshot.HasTextureReferences);
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_QueryAssets_CanFilterByExactGeometryCandidate()
+    {
+        var cache = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cache);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Game", tempRoot, SourceKind.Game);
+        await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+        var exactRoot = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 1, "Chair");
+        var nonExactRoot = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 2, "Lamp");
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, "objects.package", 10, DateTimeOffset.UtcNow, [exactRoot, nonExactRoot], []),
+            [
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Comfort", "objects.package", exactRoot.Key, "thumbnail", 1, 4, string.Empty, new AssetCapabilitySnapshot(true, true, true, true)),
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Lamp", "Lighting", "objects.package", nonExactRoot.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, false, false, false))
+            ],
+            CancellationToken.None);
+
+        var result = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                string.Empty,
+                AssetBrowserDomain.BuildBuy,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                10,
+                new AssetCapabilityFilter(RequireExactGeometryCandidate: true)),
+            CancellationToken.None);
+
+        var asset = Assert.Single(result.Items);
+        Assert.Equal("Chair", asset.DisplayName);
+        Assert.True(asset.CapabilitySnapshot.HasExactGeometryCandidate);
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_GetAssetFacetOptions_ReturnsDistinctValues()
+    {
+        var cache = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cache);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Game", tempRoot, SourceKind.Game);
+        await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+        var rootA = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 1, "Chair");
+        var rootB = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 2, "Lamp");
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, "objects.package", 10, DateTimeOffset.UtcNow, [rootA, rootB], []),
+            [
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Comfort", "objects.package", rootA.Key, "thumbnail", 1, 4, string.Empty, new AssetCapabilitySnapshot(true, true, true, true), PackageName: "objects.package", RootTypeName: "Model", ThumbnailTypeName: "BuyBuildThumbnail", PrimaryGeometryType: "ModelLOD", IdentityType: "ObjectDefinition", CategoryNormalized: "buildbuy"),
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Lamp", "Lighting", "objects.package", rootB.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, false, false, false), PackageName: "objects.package", RootTypeName: "Model", ThumbnailTypeName: null, PrimaryGeometryType: null, IdentityType: "ObjectCatalog", CategoryNormalized: "buildbuy")
+            ],
+            CancellationToken.None);
+
+        var options = await store.GetAssetFacetOptionsAsync(AssetKind.BuildBuy, CancellationToken.None);
+
+        Assert.Contains("Comfort", options.Categories);
+        Assert.Contains("Lighting", options.Categories);
+        Assert.Equal(["Model"], options.RootTypeNames);
+        Assert.Contains("ObjectDefinition", options.IdentityTypes);
+        Assert.Contains("ObjectCatalog", options.IdentityTypes);
+        Assert.Equal(["ModelLOD"], options.PrimaryGeometryTypes);
+        Assert.Equal(["BuyBuildThumbnail"], options.ThumbnailTypeNames);
     }
 
     public void Dispose()

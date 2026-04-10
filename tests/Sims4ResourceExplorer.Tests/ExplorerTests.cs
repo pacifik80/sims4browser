@@ -68,7 +68,29 @@ public sealed class ExplorerTests : IDisposable
 
         var summaries = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []));
 
-        Assert.Contains(summaries, summary => summary.AssetKind == AssetKind.BuildBuy);
+        var summary = Assert.Single(summaries.Where(summary => summary.AssetKind == AssetKind.BuildBuy));
+        Assert.Equal("Geometry", summary.SupportLabel);
+        Assert.Contains("geometry", summary.SupportNotes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AssetGraphBuilder_MarksBuildBuySummaryPartialWhenExactLodCoverageIsMissing()
+    {
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var packagePath = Path.Combine(tempRoot, "partial.package");
+        var sourceId = Guid.NewGuid();
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1, "Chair"),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "Chair"),
+        };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.BuildBuy);
+
+        Assert.Equal("Metadata", summary.SupportLabel);
+        Assert.Contains("no exact geometry candidate", summary.SupportNotes, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -175,6 +197,36 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task BuildBuySceneBuildService_ReturnsDiagnosticForMalformedModelLod()
+    {
+        var packagePath = Path.Combine(tempRoot, "broken.package");
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", tempRoot, SourceKind.Game);
+        var modelLod = CreateResource(source.Id, packagePath, SourceKind.Game, "ModelLOD", 1, "BrokenLod");
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [modelLod], []),
+            [],
+            CancellationToken.None);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [modelLod.Key.FullTgi] = [0x52, 0x43, 0x4F, 0x4C, 0x01]
+            },
+            new Dictionary<string, string?>());
+
+        var builder = new BuildBuySceneBuildService(catalog, store);
+        var scene = await builder.BuildSceneAsync(modelLod, CancellationToken.None);
+
+        Assert.False(scene.Success);
+        Assert.Null(scene.Scene);
+        Assert.Contains(scene.Diagnostics, message => message.Contains("could not be parsed cleanly", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task CasLogicalAsset_ExportsBundleFromSyntheticFixture()
     {
         var packagePath = Path.Combine(tempRoot, "cas-export.package");
@@ -265,7 +317,7 @@ public sealed class ExplorerTests : IDisposable
         await store.UpsertDataSourcesAsync([source], CancellationToken.None);
 
         var resource = CreateResource(source.Id, "test.package", SourceKind.Game, "ObjectCatalog", 1);
-        var asset = new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Object", "test.package", resource.Key, null, 1, 1, string.Empty);
+        var asset = new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Object", "test.package", resource.Key, null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, true, true, true));
         await store.ReplacePackageAsync(new PackageScanResult(source.Id, SourceKind.Game, "test.package", 10, DateTimeOffset.UtcNow, [resource], []), [asset], CancellationToken.None);
 
         var resources = await store.QueryResourcesAsync(
@@ -296,11 +348,59 @@ public sealed class ExplorerTests : IDisposable
                 false,
                 AssetBrowserSort.Name,
                 0,
-                10),
+                10,
+                new AssetCapabilityFilter()),
             CancellationToken.None);
 
         Assert.Single(resources.Items);
         Assert.Single(assets.Items);
+        Assert.Equal("Geometry+Textures", assets.Items[0].SupportLabel);
+    }
+
+    [Fact]
+    public void PreviewPresentationState_SwitchesBetweenSceneImageAndDiagnostics()
+    {
+        var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "Model", 1);
+        var sceneContent = new ScenePreviewContent(resource, new CanonicalScene("test", [], [], [], new Bounds3D(0, 0, 0, 1, 1, 1)), "ok");
+        var imageContent = new TexturePreviewContent(resource, TestAssets.OnePixelPng, 1, 1, "PNG", 1, "decoded");
+        var diagnosticContent = new UnsupportedPreviewContent(resource, "unsupported");
+
+        Assert.Equal(PreviewSurfaceMode.Scene, PreviewPresentationState.FromPreviewContent(sceneContent).SurfaceMode);
+        Assert.Equal(PreviewSurfaceMode.Image, PreviewPresentationState.FromPreviewContent(imageContent).SurfaceMode);
+        Assert.Equal(PreviewSurfaceMode.Diagnostics, PreviewPresentationState.FromPreviewContent(diagnosticContent).SurfaceMode);
+    }
+
+    [Fact]
+    public void PreviewInteractionPolicy_OnlyEnablesAssetExportWhenSceneIsReady()
+    {
+        var sourceId = Guid.NewGuid();
+        var root = CreateResource(sourceId, "fake.package", SourceKind.Game, "Model", 1);
+        var summary = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Build/Buy", "fake.package", root.Key, null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, true, true, true));
+        var graph = new AssetGraph(summary, [], [], new BuildBuyAssetGraph(root, [], [], [], [], [], [], [], true, "subset"));
+        var scene = new CanonicalScene("chair", [], [], [], new Bounds3D(0, 0, 0, 1, 1, 1));
+
+        Assert.False(PreviewInteractionPolicy.CanExportSelectedAsset(summary, graph, null, null));
+        Assert.False(PreviewInteractionPolicy.CanExportSelectedAsset(summary, graph, root, null));
+        Assert.True(PreviewInteractionPolicy.CanExportSelectedAsset(summary, graph, root, scene));
+    }
+
+    [Fact]
+    public void AssetDetailsFormatter_ReportsBuildBuySceneSuccessAndFailureExplicitly()
+    {
+        var sourceId = Guid.NewGuid();
+        var root = CreateResource(sourceId, "fake.package", SourceKind.Game, "Model", 1);
+        var summary = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Build/Buy", "fake.package", root.Key, null, 1, 1, "No exact-instance ModelLOD resources were indexed for this model.", new AssetCapabilitySnapshot(true, false, false, false));
+        var graph = new AssetGraph(summary, [], ["No exact-instance ModelLOD resources were indexed for this model."], new BuildBuyAssetGraph(root, [], [], [], [], [], [], ["No exact-instance ModelLOD resources were indexed for this model."], true, "subset"));
+        var successfulScene = new ScenePreviewContent(root, new CanonicalScene("chair", [], [], [], new Bounds3D(0, 0, 0, 1, 1, 1)), "Selected LOD root: MLOD0");
+        var failedScene = new ScenePreviewContent(root, null, "No triangle meshes could be reconstructed.");
+
+        var successDetails = AssetDetailsFormatter.BuildAssetDetails(summary, graph, root, successfulScene);
+        var failureDetails = AssetDetailsFormatter.BuildAssetDetails(summary, graph, root, failedScene);
+
+        Assert.Contains("Support Status: Metadata", successDetails);
+        Assert.Contains("Scene Reconstruction: Succeeded", successDetails);
+        Assert.Contains("Scene Reconstruction: Failed", failureDetails);
+        Assert.Contains("No triangle meshes could be reconstructed.", failureDetails);
     }
 
     [Fact]
@@ -447,6 +547,48 @@ public sealed class ExplorerTests : IDisposable
         var texturesPath = Path.Combine(outputRoot, assetSlug, "Textures");
         Assert.True(Directory.Exists(texturesPath));
         Assert.NotEmpty(Directory.EnumerateFiles(texturesPath, "*.png"));
+    }
+
+    [Fact]
+    public async Task BuildBuyLogicalAsset_PreviewServiceReturnsSceneFromLocalFixture_WhenConfigured()
+    {
+        var fixturePackage = Environment.GetEnvironmentVariable("SIMS4_BUILD_BUY_FIXTURE_PACKAGE");
+        var fixtureTgi = Environment.GetEnvironmentVariable("SIMS4_BUILD_BUY_FIXTURE_TGI");
+        if (string.IsNullOrWhiteSpace(fixturePackage) || string.IsNullOrWhiteSpace(fixtureTgi) || !File.Exists(fixturePackage))
+        {
+            return;
+        }
+
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", Path.GetDirectoryName(fixturePackage)!, SourceKind.Game);
+        var catalog = new LlamaResourceCatalogService();
+        var scan = await catalog.ScanPackageAsync(source, fixturePackage, progress: null, CancellationToken.None);
+        var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+        var assets = graphBuilder.BuildAssetSummaries(scan);
+        await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
+
+        var fixtureResource = scan.Resources.FirstOrDefault(resource => string.Equals(resource.Key.FullTgi, fixtureTgi, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("The configured Build/Buy fixture TGI was not found in the local package.");
+        var asset = assets.FirstOrDefault(asset => asset.RootKey.FullInstance == fixtureResource.Key.FullInstance)
+            ?? throw new InvalidOperationException("No Build/Buy logical asset matched the configured local fixture.");
+        var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+        var assetGraph = await graphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
+        Assert.NotNull(assetGraph.BuildBuyGraph);
+
+        var previewService = new ResourcePreviewService(
+            catalog,
+            new BasicTextureDecodeService(catalog),
+            new BuildBuySceneBuildService(catalog, store),
+            new BasicAudioDecodeService(catalog));
+
+        var preview = await previewService.CreatePreviewAsync(assetGraph.BuildBuyGraph!.ModelResource, CancellationToken.None);
+
+        var scenePreview = Assert.IsType<ScenePreviewContent>(preview.Content);
+        Assert.NotNull(scenePreview.Scene);
+        Assert.NotEmpty(scenePreview.Scene!.Meshes);
     }
 
     [Fact]
@@ -770,6 +912,12 @@ public sealed class ExplorerTests : IDisposable
 
         public Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken) =>
             Task.FromResult<byte[]?>(bytesByTgi[key.FullTgi]);
+    }
+
+    private sealed class FakeSceneBuildService(SceneBuildResult result) : ISceneBuildService
+    {
+        public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken) =>
+            Task.FromResult(result);
     }
 
     private static class TestAssets

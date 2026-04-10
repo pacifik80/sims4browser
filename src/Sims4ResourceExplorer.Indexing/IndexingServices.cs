@@ -67,6 +67,7 @@ public sealed class SqliteIndexStore : IIndexStore
                 data_source_id TEXT NOT NULL,
                 source_kind TEXT NOT NULL,
                 package_path TEXT NOT NULL,
+                scan_token TEXT NULL,
                 type_hex TEXT NOT NULL,
                 type_name TEXT NOT NULL,
                 group_hex TEXT NOT NULL,
@@ -93,19 +94,68 @@ public sealed class SqliteIndexStore : IIndexStore
                 asset_kind TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 category TEXT NULL,
+                category_normalized TEXT NULL,
                 package_path TEXT NOT NULL,
+                scan_token TEXT NULL,
+                package_name TEXT NULL,
                 root_tgi TEXT NOT NULL,
+                root_type_name TEXT NULL,
                 thumbnail_tgi TEXT NULL,
+                thumbnail_type_name TEXT NULL,
+                primary_geometry_type TEXT NULL,
+                identity_type TEXT NULL,
                 variant_count INTEGER NOT NULL,
                 linked_resource_count INTEGER NOT NULL,
+                has_scene_root INTEGER NULL,
+                has_exact_geometry_candidate INTEGER NULL,
+                has_material_references INTEGER NULL,
+                has_texture_references INTEGER NULL,
+                has_identity_metadata INTEGER NULL,
+                has_rig_reference INTEGER NULL,
+                has_geometry_reference INTEGER NULL,
+                has_material_resource_candidate INTEGER NULL,
+                has_texture_resource_candidate INTEGER NULL,
+                is_package_local_graph INTEGER NULL,
+                has_diagnostics INTEGER NULL,
                 diagnostics TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS ix_assets_search ON assets(asset_kind, display_name, package_path);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS resources_fts USING fts5(
+                id UNINDEXED,
+                data_source_id UNINDEXED,
+                package_path,
+                type_name,
+                full_tgi,
+                name,
+                tokenize = "unicode61 remove_diacritics 0 tokenchars '._:-/\\'"
+            );
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS assets_fts USING fts5(
+                id UNINDEXED,
+                data_source_id UNINDEXED,
+                package_path,
+                package_name,
+                display_name,
+                category,
+                root_type_name,
+                identity_type,
+                primary_geometry_type,
+                root_tgi,
+                tokenize = "unicode61 remove_diacritics 0 tokenchars '._:-/\\'"
+            );
             """;
 
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureDeferredMetadataSchemaAsync(connection, cancellationToken);
+        await EnsureScanTokenSchemaAsync(connection, cancellationToken);
+        await EnsureAssetSummarySchemaAsync(connection, cancellationToken);
+        var ftsResyncRequired = await EnsureFtsSchemaAsync(connection, cancellationToken);
+        if (ftsResyncRequired)
+        {
+            await SyncFtsTablesAsync(connection, cancellationToken);
+        }
     }
 
     public async Task UpsertDataSourcesAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken)
@@ -237,6 +287,15 @@ public sealed class SqliteIndexStore : IIndexStore
         command.Parameters.AddWithValue("$isCompressed", resource.IsCompressed.HasValue ? (resource.IsCompressed.Value ? 1 : 0) : DBNull.Value);
         command.Parameters.AddWithValue("$diagnostics", resource.Diagnostics);
         await command.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var ftsCommand = connection.CreateCommand();
+        ftsCommand.CommandText = "UPDATE resources_fts SET name = $name, type_name = $typeName, full_tgi = $fullTgi, package_path = $packagePath WHERE id = $id;";
+        ftsCommand.Parameters.AddWithValue("$id", resource.Id.ToString("D"));
+        ftsCommand.Parameters.AddWithValue("$name", resource.Name ?? string.Empty);
+        ftsCommand.Parameters.AddWithValue("$typeName", resource.Key.TypeName);
+        ftsCommand.Parameters.AddWithValue("$fullTgi", resource.Key.FullTgi);
+        ftsCommand.Parameters.AddWithValue("$packagePath", resource.PackagePath);
+        await ftsCommand.ExecuteNonQueryAsync(cancellationToken);
         return resource;
     }
 
@@ -274,7 +333,10 @@ public sealed class SqliteIndexStore : IIndexStore
         bindParameters(command);
         command.CommandText =
             $"""
-            SELECT id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi, thumbnail_tgi, variant_count, linked_resource_count, diagnostics
+            SELECT id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi, thumbnail_tgi, variant_count, linked_resource_count,
+                   has_scene_root, has_exact_geometry_candidate, has_material_references, has_texture_references, diagnostics,
+                   package_name, root_type_name, thumbnail_type_name, primary_geometry_type, identity_type, category_normalized,
+                   has_identity_metadata, has_rig_reference, has_geometry_reference, has_material_resource_candidate, has_texture_resource_candidate, is_package_local_graph, has_diagnostics
             FROM assets
             {whereClause}
             ORDER BY {BuildAssetSort(query.Sort)}
@@ -308,6 +370,74 @@ public sealed class SqliteIndexStore : IIndexStore
         return results;
     }
 
+    public async Task<AssetFacetOptions> GetAssetFacetOptionsAsync(AssetKind assetKind, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var kind = assetKind.ToString();
+        return new AssetFacetOptions(
+            await ReadDistinctAssetValuesAsync(connection, kind, "category", cancellationToken),
+            await ReadDistinctAssetValuesAsync(connection, kind, "root_type_name", cancellationToken),
+            await ReadDistinctAssetValuesAsync(connection, kind, "identity_type", cancellationToken),
+            await ReadDistinctAssetValuesAsync(connection, kind, "primary_geometry_type", cancellationToken),
+            await ReadDistinctAssetValuesAsync(connection, kind, "thumbnail_type_name", cancellationToken));
+    }
+
+    public async Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken)
+    {
+        var sourceIds = dataSourceIds.Select(id => id.ToString("D")).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+
+        if (sourceIds.Length == 0)
+        {
+            command.CommandText =
+                """
+                SELECT p.data_source_id, ds.kind, p.package_path, p.file_size, p.last_write_utc, COUNT(a.id)
+                FROM packages p
+                JOIN data_sources ds ON ds.id = p.data_source_id
+                LEFT JOIN assets a ON a.data_source_id = p.data_source_id AND a.package_path = p.package_path
+                GROUP BY p.data_source_id, ds.kind, p.package_path, p.file_size, p.last_write_utc
+                ORDER BY p.package_path;
+                """;
+        }
+        else
+        {
+            var parameterNames = new List<string>(sourceIds.Length);
+            for (var index = 0; index < sourceIds.Length; index++)
+            {
+                var parameterName = $"$sourceId{index}";
+                parameterNames.Add(parameterName);
+                command.Parameters.AddWithValue(parameterName, sourceIds[index]);
+            }
+
+            command.CommandText =
+                $"""
+                SELECT p.data_source_id, ds.kind, p.package_path, p.file_size, p.last_write_utc, COUNT(a.id)
+                FROM packages p
+                JOIN data_sources ds ON ds.id = p.data_source_id
+                LEFT JOIN assets a ON a.data_source_id = p.data_source_id AND a.package_path = p.package_path
+                WHERE p.data_source_id IN ({string.Join(", ", parameterNames)})
+                GROUP BY p.data_source_id, ds.kind, p.package_path, p.file_size, p.last_write_utc
+                ORDER BY p.package_path;
+                """;
+        }
+
+        var results = new List<IndexedPackageRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new IndexedPackageRecord(
+                Guid.Parse(reader.GetString(0)),
+                Enum.Parse<SourceKind>(reader.GetString(1)),
+                reader.GetString(2),
+                reader.GetInt64(3),
+                DateTimeOffset.Parse(reader.GetString(4), null, System.Globalization.DateTimeStyles.RoundtripKind),
+                reader.GetInt32(5)));
+        }
+
+        return results;
+    }
+
     public async Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
@@ -323,6 +453,24 @@ public sealed class SqliteIndexStore : IIndexStore
         command.Parameters.AddWithValue("$packagePath", packagePath);
 
         return await ReadResourcesAsync(command, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi, thumbnail_tgi,
+                   variant_count, linked_resource_count, has_scene_root, has_exact_geometry_candidate, has_material_references, has_texture_references, diagnostics,
+                   package_name, root_type_name, thumbnail_type_name, primary_geometry_type, identity_type, category_normalized,
+                   has_identity_metadata, has_rig_reference, has_geometry_reference, has_material_resource_candidate, has_texture_resource_candidate, is_package_local_graph, has_diagnostics
+            FROM assets
+            WHERE package_path = $packagePath
+            ORDER BY display_name, root_tgi;
+            """;
+        command.Parameters.AddWithValue("$packagePath", packagePath);
+        return await ReadAssetsAsync(command, cancellationToken);
     }
 
     public async Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken)
@@ -345,6 +493,40 @@ public sealed class SqliteIndexStore : IIndexStore
                 1),
             cancellationToken);
         return results.Items.FirstOrDefault(resource => resource.Key.FullTgi.Equals(fullTgi, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public async Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var scanToken = Guid.NewGuid().ToString("N");
+        await using var insertCommand = SqliteIndexWriteSession.CreateInsertAssetCommand(connection);
+        await using var syncFtsCommand = SqliteIndexWriteSession.CreateSyncAssetsFtsForPackageCommand(connection);
+        await using var deleteStaleCommand = SqliteIndexWriteSession.CreateDeleteStaleAssetsCommand(connection);
+        await using var deleteFtsCommand = SqliteIndexWriteSession.CreateDeleteAssetsFtsCommand(connection);
+        insertCommand.Transaction = transaction;
+        syncFtsCommand.Transaction = transaction;
+        deleteStaleCommand.Transaction = transaction;
+        deleteFtsCommand.Transaction = transaction;
+        insertCommand.Prepare();
+        syncFtsCommand.Prepare();
+        deleteStaleCommand.Prepare();
+        deleteFtsCommand.Prepare();
+        foreach (var asset in assets)
+        {
+            SqliteIndexWriteSession.Bind(insertCommand, asset, scanToken);
+            await insertCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        SqliteIndexWriteSession.Bind(deleteStaleCommand, transaction, dataSourceId, packagePath, scanToken);
+        await deleteStaleCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        SqliteIndexWriteSession.Bind(deleteFtsCommand, transaction, dataSourceId, packagePath);
+        await deleteFtsCommand.ExecuteNonQueryAsync(cancellationToken);
+        SqliteIndexWriteSession.Bind(syncFtsCommand, transaction, dataSourceId, packagePath);
+        await syncFtsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
@@ -433,6 +615,126 @@ public sealed class SqliteIndexStore : IIndexStore
     private static string BuildFingerprintKey(Guid dataSourceId, string packagePath) =>
         $"{dataSourceId:D}|{packagePath}";
 
+    private static async Task<bool> EnsureFtsSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var resourcesOk = await EnsureFtsTableAsync(
+            connection,
+            "resources_fts",
+            """
+            CREATE VIRTUAL TABLE resources_fts USING fts5(
+                id UNINDEXED,
+                data_source_id UNINDEXED,
+                package_path,
+                type_name,
+                full_tgi,
+                name,
+                tokenize = "unicode61 remove_diacritics 0 tokenchars '._:-/\\'"
+            );
+            """,
+            ["id", "data_source_id", "package_path", "type_name", "full_tgi", "name"],
+            cancellationToken);
+        var assetsOk = await EnsureFtsTableAsync(
+            connection,
+            "assets_fts",
+            """
+            CREATE VIRTUAL TABLE assets_fts USING fts5(
+                id UNINDEXED,
+                data_source_id UNINDEXED,
+                package_path,
+                package_name,
+                display_name,
+                category,
+                root_type_name,
+                identity_type,
+                primary_geometry_type,
+                root_tgi,
+                tokenize = "unicode61 remove_diacritics 0 tokenchars '._:-/\\'"
+            );
+            """,
+            ["id", "data_source_id", "package_path", "package_name", "display_name", "category", "root_type_name", "identity_type", "primary_geometry_type", "root_tgi"],
+            cancellationToken);
+
+        return resourcesOk || assetsOk;
+    }
+
+    private static async Task<bool> EnsureFtsTableAsync(
+        SqliteConnection connection,
+        string tableName,
+        string createSql,
+        IReadOnlyList<string> expectedColumns,
+        CancellationToken cancellationToken)
+    {
+        if (!await TableExistsAsync(connection, tableName, cancellationToken))
+        {
+            await using var create = connection.CreateCommand();
+            create.CommandText = createSql;
+            await create.ExecuteNonQueryAsync(cancellationToken);
+            return true;
+        }
+
+        var actualColumns = await ReadTableColumnsAsync(connection, tableName, cancellationToken);
+        if (actualColumns.SequenceEqual(expectedColumns, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        await using (var drop = connection.CreateCommand())
+        {
+            drop.CommandText = $"DROP TABLE IF EXISTS {tableName};";
+            await drop.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var recreate = connection.CreateCommand())
+        {
+            recreate.CommandText = createSql;
+            await recreate.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        return true;
+    }
+
+    private static async Task<bool> TableExistsAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = $name;";
+        command.Parameters.AddWithValue("$name", tableName);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture) > 0;
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadTableColumnsAsync(SqliteConnection connection, string tableName, CancellationToken cancellationToken)
+    {
+        var columns = new List<string>();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName});";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            columns.Add(reader.GetString(1));
+        }
+
+        return columns;
+    }
+
+    private static async Task SyncFtsTablesAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            DELETE FROM resources_fts;
+            INSERT INTO resources_fts(id, data_source_id, package_path, type_name, full_tgi, name)
+            SELECT id, data_source_id, package_path, type_name, full_tgi, COALESCE(name, '')
+            FROM resources;
+
+            DELETE FROM assets_fts;
+            INSERT INTO assets_fts(id, data_source_id, package_path, package_name, display_name, category, root_type_name, identity_type, primary_geometry_type, root_tgi)
+            SELECT id, data_source_id, package_path, COALESCE(package_name, ''), display_name, COALESCE(category, ''), COALESCE(root_type_name, ''), COALESCE(identity_type, ''), COALESCE(primary_geometry_type, ''), root_tgi
+            FROM assets;
+            """;
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static async Task<int> CountAsync(SqliteConnection connection, string sql, Action<SqliteCommand> bindParameters, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -440,6 +742,28 @@ public sealed class SqliteIndexStore : IIndexStore
         command.CommandText = sql;
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadDistinctAssetValuesAsync(SqliteConnection connection, string assetKind, string columnName, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            $"""
+            SELECT DISTINCT {columnName}
+            FROM assets
+            WHERE asset_kind = $assetKind AND {columnName} IS NOT NULL AND {columnName} <> ''
+            ORDER BY {columnName};
+            """;
+        command.Parameters.AddWithValue("$assetKind", assetKind);
+
+        var results = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(reader.GetString(0));
+        }
+
+        return results;
     }
 
     private static string BuildAssetSort(AssetBrowserSort sort) => sort switch
@@ -474,19 +798,34 @@ public sealed class SqliteIndexStore : IIndexStore
 
         if (!string.IsNullOrWhiteSpace(query.SearchText))
         {
-            AddLikeFilter(
-                query.SearchText,
-                clauses,
-                binders,
-                "lower(display_name) LIKE $search",
-                "lower(package_path) LIKE $search",
-                "lower(root_tgi) LIKE $search",
-                "lower(COALESCE(category, '')) LIKE $search");
+            clauses.Add("id IN (SELECT id FROM assets_fts WHERE assets_fts MATCH $searchFts)");
+            var searchFts = BuildFtsQuery(query.SearchText);
+            binders.Add(command => command.Parameters.AddWithValue("$searchFts", searchFts));
         }
 
         if (!string.IsNullOrWhiteSpace(query.CategoryText))
         {
             AddLikeFilter(query.CategoryText, clauses, binders, "lower(COALESCE(category, '')) LIKE $category");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.RootTypeText))
+        {
+            AddLikeFilter(query.RootTypeText, clauses, binders, "lower(COALESCE(root_type_name, '')) LIKE $rootType");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.IdentityTypeText))
+        {
+            AddLikeFilter(query.IdentityTypeText, clauses, binders, "lower(COALESCE(identity_type, '')) LIKE $identityType");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.PrimaryGeometryTypeText))
+        {
+            AddLikeFilter(query.PrimaryGeometryTypeText, clauses, binders, "lower(COALESCE(primary_geometry_type, '')) LIKE $geometryType");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ThumbnailTypeText))
+        {
+            AddLikeFilter(query.ThumbnailTypeText, clauses, binders, "lower(COALESCE(thumbnail_type_name, '')) LIKE $thumbnailType");
         }
 
         if (!string.IsNullOrWhiteSpace(query.PackageText))
@@ -502,6 +841,65 @@ public sealed class SqliteIndexStore : IIndexStore
         if (query.VariantsOnly)
         {
             clauses.Add("variant_count > 1");
+        }
+
+        var capabilityFilter = query.CapabilityFilter;
+        if (capabilityFilter is not null)
+        {
+            if (capabilityFilter.RequireSceneRoot)
+            {
+                clauses.Add("COALESCE(has_scene_root, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireExactGeometryCandidate)
+            {
+                clauses.Add("COALESCE(has_exact_geometry_candidate, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireMaterialReferences)
+            {
+                clauses.Add("COALESCE(has_material_references, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireTextureReferences)
+            {
+                clauses.Add("COALESCE(has_texture_references, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireIdentityMetadata)
+            {
+                clauses.Add("COALESCE(has_identity_metadata, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireRigReference)
+            {
+                clauses.Add("COALESCE(has_rig_reference, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireGeometryReference)
+            {
+                clauses.Add("COALESCE(has_geometry_reference, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireMaterialResourceCandidate)
+            {
+                clauses.Add("COALESCE(has_material_resource_candidate, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireTextureResourceCandidate)
+            {
+                clauses.Add("COALESCE(has_texture_resource_candidate, 0) = 1");
+            }
+
+            if (capabilityFilter.RequirePackageLocalGraph)
+            {
+                clauses.Add("COALESCE(is_package_local_graph, 0) = 1");
+            }
+
+            if (capabilityFilter.RequireDiagnostics)
+            {
+                clauses.Add("COALESCE(has_diagnostics, 0) = 1");
+            }
         }
 
         return (BuildWhereClause(clauses), command =>
@@ -522,17 +920,9 @@ public sealed class SqliteIndexStore : IIndexStore
 
         if (!string.IsNullOrWhiteSpace(query.SearchText))
         {
-            AddLikeFilter(
-                query.SearchText,
-                clauses,
-                binders,
-                "lower(COALESCE(name, '')) LIKE $search",
-                "lower(package_path) LIKE $search",
-                "lower(type_name) LIKE $search",
-                "lower(full_tgi) LIKE $search",
-                "lower(group_hex) LIKE $search",
-                "lower(instance_hex) LIKE $search",
-                "lower(asset_linkage_summary) LIKE $search");
+            clauses.Add("id IN (SELECT id FROM resources_fts WHERE resources_fts MATCH $searchFts)");
+            var searchFts = BuildFtsQuery(query.SearchText);
+            binders.Add(command => command.Parameters.AddWithValue("$searchFts", searchFts));
         }
 
         if (!string.IsNullOrWhiteSpace(query.TypeNameText))
@@ -631,15 +1021,29 @@ public sealed class SqliteIndexStore : IIndexStore
 
     private static void AddLikeFilter(string value, ICollection<string> clauses, ICollection<Action<SqliteCommand>> binders, params string[] expressions)
     {
-        var parameterName = expressions[0].Contains("$search", StringComparison.Ordinal) ? "$search" :
-            expressions[0].Contains("$category", StringComparison.Ordinal) ? "$category" :
-            expressions[0].Contains("$package", StringComparison.Ordinal) ? "$package" :
-            expressions[0].Contains("$group", StringComparison.Ordinal) ? "$group" :
-            expressions[0].Contains("$instance", StringComparison.Ordinal) ? "$instance" :
-            "$type";
+        var parameterName = expressions
+            .SelectMany(static expression => expression.Split([' ', ')', '('], StringSplitOptions.RemoveEmptyEntries))
+            .FirstOrDefault(static token => token.StartsWith('$'))
+            ?? "$type";
         var normalized = $"%{value.Trim().ToLowerInvariant()}%";
         clauses.Add($"({string.Join(" OR ", expressions)})");
         binders.Add(command => command.Parameters.AddWithValue(parameterName, normalized));
+    }
+
+    private static string BuildFtsQuery(string value)
+    {
+        var terms = value
+            .Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(static term => term.Replace("\"", "\"\""))
+            .Where(static term => !string.IsNullOrWhiteSpace(term))
+            .ToArray();
+
+        if (terms.Length == 0)
+        {
+            return "\"\"";
+        }
+
+        return string.Join(" AND ", terms.Select(static term => $"\"{term}\"*"));
     }
 
     private static string BuildWhereClause(IReadOnlyCollection<string> clauses) =>
@@ -663,7 +1067,27 @@ public sealed class SqliteIndexStore : IIndexStore
                 reader.IsDBNull(8) ? null : reader.GetString(8),
                 reader.GetInt32(9),
                 reader.GetInt32(10),
-                reader.GetString(11)));
+                reader.GetString(15),
+                new AssetCapabilitySnapshot(
+                    reader.IsDBNull(11) ? true : ReadOptionalBool(reader, 11),
+                    ReadOptionalBool(reader, 12),
+                    ReadOptionalBool(reader, 13),
+                    ReadOptionalBool(reader, 14),
+                    HasThumbnail: !reader.IsDBNull(8) && !string.IsNullOrWhiteSpace(reader.GetString(8)),
+                    HasVariants: reader.GetInt32(9) > 1,
+                    HasIdentityMetadata: ReadOptionalBool(reader, 22),
+                    HasRigReference: ReadOptionalBool(reader, 23),
+                    HasGeometryReference: ReadOptionalBool(reader, 24),
+                    HasMaterialResourceCandidate: ReadOptionalBool(reader, 25),
+                    HasTextureResourceCandidate: ReadOptionalBool(reader, 26),
+                    IsPackageLocalGraph: ReadOptionalBool(reader, 27),
+                    HasDiagnostics: ReadOptionalBool(reader, 28)),
+                PackageName: reader.IsDBNull(16) ? null : reader.GetString(16),
+                RootTypeName: reader.IsDBNull(17) ? null : reader.GetString(17),
+                ThumbnailTypeName: reader.IsDBNull(18) ? null : reader.GetString(18),
+                PrimaryGeometryType: reader.IsDBNull(19) ? null : reader.GetString(19),
+                IdentityType: reader.IsDBNull(20) ? null : reader.GetString(20),
+                CategoryNormalized: reader.IsDBNull(21) ? null : reader.GetString(21)));
         }
 
         return results;
@@ -735,20 +1159,102 @@ public sealed class SqliteIndexStore : IIndexStore
         await migration.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static bool ReadOptionalBool(SqliteDataReader reader, int ordinal) =>
+        !reader.IsDBNull(ordinal) && reader.GetInt32(ordinal) == 1;
+
+    private static async Task EnsureScanTokenSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await EnsureColumnAsync(connection, "resources", "scan_token", "TEXT NULL", cancellationToken);
+        await EnsureColumnAsync(connection, "assets", "scan_token", "TEXT NULL", cancellationToken);
+    }
+
+    private static async Task EnsureColumnAsync(SqliteConnection connection, string tableName, string columnName, string declaration, CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = $"PRAGMA table_info({tableName});";
+            await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        if (columns.Contains(columnName))
+        {
+            return;
+        }
+
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {declaration};";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task EnsureAssetSummarySchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA table_info(assets);";
+            await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        await EnsureAssetColumnAsync(connection, columns, "has_scene_root", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_exact_geometry_candidate", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_material_references", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_texture_references", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "category_normalized", "TEXT NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "package_name", "TEXT NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "root_type_name", "TEXT NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "thumbnail_type_name", "TEXT NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "primary_geometry_type", "TEXT NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "identity_type", "TEXT NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_identity_metadata", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_rig_reference", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_geometry_reference", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_material_resource_candidate", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_texture_resource_candidate", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "is_package_local_graph", "INTEGER NULL", cancellationToken);
+        await EnsureAssetColumnAsync(connection, columns, "has_diagnostics", "INTEGER NULL", cancellationToken);
+    }
+
+    private static async Task EnsureAssetColumnAsync(SqliteConnection connection, ISet<string> columns, string columnName, string declaration, CancellationToken cancellationToken)
+    {
+        if (columns.Contains(columnName))
+        {
+            return;
+        }
+
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE assets ADD COLUMN {columnName} {declaration};";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
+        columns.Add(columnName);
+    }
+
     private sealed class SqliteIndexWriteSession : IIndexWriteSession
     {
         private readonly SqliteConnection connection;
-        private readonly SqliteCommand deleteResourcesCommand;
-        private readonly SqliteCommand deleteAssetsCommand;
+        private readonly SqliteCommand deleteStaleResourcesCommand;
+        private readonly SqliteCommand deleteStaleAssetsCommand;
+        private readonly SqliteCommand deleteResourcesFtsCommand;
+        private readonly SqliteCommand deleteAssetsFtsCommand;
         private readonly SqliteCommand upsertPackageCommand;
         private readonly SqliteCommand insertResourceCommand;
         private readonly SqliteCommand insertAssetCommand;
+        private bool hasPendingFtsSync;
 
         public SqliteIndexWriteSession(SqliteConnection connection)
         {
             this.connection = connection;
-            deleteResourcesCommand = CreateDeleteResourcesCommand(connection);
-            deleteAssetsCommand = CreateDeleteAssetsCommand(connection);
+            deleteStaleResourcesCommand = CreateDeleteStaleResourcesCommand(connection);
+            deleteStaleAssetsCommand = CreateDeleteStaleAssetsCommand(connection);
+            deleteResourcesFtsCommand = CreateDeleteResourcesFtsCommand(connection);
+            deleteAssetsFtsCommand = CreateDeleteAssetsFtsCommand(connection);
             upsertPackageCommand = CreateUpsertPackageCommand(connection);
             insertResourceCommand = CreateInsertResourceCommand(connection);
             insertAssetCommand = CreateInsertAssetCommand(connection);
@@ -758,11 +1264,38 @@ public sealed class SqliteIndexStore : IIndexStore
         public async Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
         {
             await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-            Bind(deleteResourcesCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
-            await deleteResourcesCommand.ExecuteNonQueryAsync(cancellationToken);
+            await ReplacePackageCoreAsync(transaction, packageScan, assets, maintainFtsPerPackage: true, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
 
-            Bind(deleteAssetsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
-            await deleteAssetsCommand.ExecuteNonQueryAsync(cancellationToken);
+        public async Task ReplacePackagesAsync(IReadOnlyList<(PackageScanResult PackageScan, IReadOnlyList<AssetSummary> Assets)> batch, CancellationToken cancellationToken)
+        {
+            if (batch.Count == 0)
+            {
+                return;
+            }
+
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            foreach (var item in batch)
+            {
+                await ReplacePackageCoreAsync(transaction, item.PackageScan, item.Assets, maintainFtsPerPackage: false, cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        private async Task ReplacePackageCoreAsync(SqliteTransaction transaction, PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, bool maintainFtsPerPackage, CancellationToken cancellationToken)
+        {
+            var scanToken = Guid.NewGuid().ToString("N");
+
+            if (maintainFtsPerPackage)
+            {
+                Bind(deleteResourcesFtsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
+                await deleteResourcesFtsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                Bind(deleteAssetsFtsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
+                await deleteAssetsFtsCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
 
             Bind(upsertPackageCommand, transaction, packageScan);
             await upsertPackageCommand.ExecuteNonQueryAsync(cancellationToken);
@@ -770,18 +1303,63 @@ public sealed class SqliteIndexStore : IIndexStore
             insertResourceCommand.Transaction = transaction;
             foreach (var resource in packageScan.Resources)
             {
-                Bind(insertResourceCommand, resource);
+                Bind(insertResourceCommand, resource, scanToken);
                 await insertResourceCommand.ExecuteNonQueryAsync(cancellationToken);
             }
 
             insertAssetCommand.Transaction = transaction;
             foreach (var asset in assets)
             {
-                Bind(insertAssetCommand, asset);
+                Bind(insertAssetCommand, asset, scanToken);
                 await insertAssetCommand.ExecuteNonQueryAsync(cancellationToken);
             }
 
-            await transaction.CommitAsync(cancellationToken);
+            Bind(deleteStaleResourcesCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath, scanToken);
+            await deleteStaleResourcesCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            Bind(deleteStaleAssetsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath, scanToken);
+            await deleteStaleAssetsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            if (maintainFtsPerPackage)
+            {
+                await SyncFtsForPackageAsync(transaction, packageScan.DataSourceId, packageScan.PackagePath, cancellationToken);
+            }
+            else
+            {
+                hasPendingFtsSync = true;
+            }
+        }
+
+        public async Task FinalizeAsync(CancellationToken cancellationToken)
+        {
+            if (!hasPendingFtsSync)
+            {
+                return;
+            }
+
+            await SyncFtsTablesAsync(connection, cancellationToken);
+            hasPendingFtsSync = false;
+        }
+
+        private async Task SyncFtsForPackageAsync(SqliteTransaction transaction, Guid dataSourceId, string packagePath, CancellationToken cancellationToken)
+        {
+            Bind(deleteResourcesFtsCommand, transaction, dataSourceId, packagePath);
+            await deleteResourcesFtsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            Bind(deleteAssetsFtsCommand, transaction, dataSourceId, packagePath);
+            await deleteAssetsFtsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            await using var syncResourcesCommand = CreateSyncResourcesFtsForPackageCommand(connection);
+            syncResourcesCommand.Transaction = transaction;
+            syncResourcesCommand.Prepare();
+            Bind(syncResourcesCommand, transaction, dataSourceId, packagePath);
+            await syncResourcesCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            await using var syncAssetsCommand = CreateSyncAssetsFtsForPackageCommand(connection);
+            syncAssetsCommand.Transaction = transaction;
+            syncAssetsCommand.Prepare();
+            Bind(syncAssetsCommand, transaction, dataSourceId, packagePath);
+            await syncAssetsCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
         public async ValueTask DisposeAsync()
@@ -789,33 +1367,57 @@ public sealed class SqliteIndexStore : IIndexStore
             await insertAssetCommand.DisposeAsync();
             await insertResourceCommand.DisposeAsync();
             await upsertPackageCommand.DisposeAsync();
-            await deleteAssetsCommand.DisposeAsync();
-            await deleteResourcesCommand.DisposeAsync();
+            await deleteStaleAssetsCommand.DisposeAsync();
+            await deleteAssetsFtsCommand.DisposeAsync();
+            await deleteStaleResourcesCommand.DisposeAsync();
+            await deleteResourcesFtsCommand.DisposeAsync();
             await connection.DisposeAsync();
         }
 
         private void PrepareCommands()
         {
-            deleteResourcesCommand.Prepare();
-            deleteAssetsCommand.Prepare();
+            deleteStaleResourcesCommand.Prepare();
+            deleteStaleAssetsCommand.Prepare();
+            deleteResourcesFtsCommand.Prepare();
+            deleteAssetsFtsCommand.Prepare();
             upsertPackageCommand.Prepare();
             insertResourceCommand.Prepare();
             insertAssetCommand.Prepare();
         }
 
-        private static SqliteCommand CreateDeleteResourcesCommand(SqliteConnection connection)
+        private static SqliteCommand CreateDeleteStaleResourcesCommand(SqliteConnection connection)
         {
             var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM resources WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
+            command.CommandText = "DELETE FROM resources WHERE data_source_id = $dataSourceId AND package_path = $packagePath AND COALESCE(scan_token, '') <> $scanToken;";
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            command.Parameters.Add("$scanToken", SqliteType.Text);
+            return command;
+        }
+
+        internal static SqliteCommand CreateDeleteStaleAssetsCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM assets WHERE data_source_id = $dataSourceId AND package_path = $packagePath AND COALESCE(scan_token, '') <> $scanToken;";
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            command.Parameters.Add("$scanToken", SqliteType.Text);
+            return command;
+        }
+
+        private static SqliteCommand CreateDeleteResourcesFtsCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM resources_fts WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
             command.Parameters.Add("$dataSourceId", SqliteType.Text);
             command.Parameters.Add("$packagePath", SqliteType.Text);
             return command;
         }
 
-        private static SqliteCommand CreateDeleteAssetsCommand(SqliteConnection connection)
+        internal static SqliteCommand CreateDeleteAssetsFtsCommand(SqliteConnection connection)
         {
             var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM assets WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
+            command.CommandText = "DELETE FROM assets_fts WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
             command.Parameters.Add("$dataSourceId", SqliteType.Text);
             command.Parameters.Add("$packagePath", SqliteType.Text);
             return command;
@@ -847,13 +1449,32 @@ public sealed class SqliteIndexStore : IIndexStore
             command.CommandText =
                 """
                 INSERT INTO resources(
-                    id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
+                    id, data_source_id, source_kind, package_path, scan_token, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
                     compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics)
                 VALUES(
-                    $id, $dataSourceId, $sourceKind, $packagePath, $typeHex, $typeName, $groupHex, $instanceHex, $fullTgi, $name,
-                    $compressedSize, $uncompressedSize, $isCompressed, $previewKind, $isPreviewable, $isExportCapable, $assetLinkageSummary, $diagnostics);
+                    $id, $dataSourceId, $sourceKind, $packagePath, $scanToken, $typeHex, $typeName, $groupHex, $instanceHex, $fullTgi, $name,
+                    $compressedSize, $uncompressedSize, $isCompressed, $previewKind, $isPreviewable, $isExportCapable, $assetLinkageSummary, $diagnostics)
+                ON CONFLICT(id) DO UPDATE SET
+                    data_source_id = excluded.data_source_id,
+                    source_kind = excluded.source_kind,
+                    package_path = excluded.package_path,
+                    scan_token = excluded.scan_token,
+                    type_hex = excluded.type_hex,
+                    type_name = excluded.type_name,
+                    group_hex = excluded.group_hex,
+                    instance_hex = excluded.instance_hex,
+                    full_tgi = excluded.full_tgi,
+                    name = excluded.name,
+                    compressed_size = excluded.compressed_size,
+                    uncompressed_size = excluded.uncompressed_size,
+                    is_compressed = excluded.is_compressed,
+                    preview_kind = excluded.preview_kind,
+                    is_previewable = excluded.is_previewable,
+                    is_export_capable = excluded.is_export_capable,
+                    asset_linkage_summary = excluded.asset_linkage_summary,
+                    diagnostics = excluded.diagnostics;
                 """;
-            foreach (var parameterName in new[] { "$id", "$dataSourceId", "$sourceKind", "$packagePath", "$typeHex", "$typeName", "$groupHex", "$instanceHex", "$fullTgi", "$name", "$compressedSize", "$uncompressedSize", "$isCompressed", "$previewKind", "$isPreviewable", "$isExportCapable", "$assetLinkageSummary", "$diagnostics" })
+            foreach (var parameterName in new[] { "$id", "$dataSourceId", "$sourceKind", "$packagePath", "$scanToken", "$typeHex", "$typeName", "$groupHex", "$instanceHex", "$fullTgi", "$name", "$compressedSize", "$uncompressedSize", "$isCompressed", "$previewKind", "$isPreviewable", "$isExportCapable", "$assetLinkageSummary", "$diagnostics" })
             {
                 command.Parameters.Add(new SqliteParameter(parameterName, DBNull.Value));
             }
@@ -861,19 +1482,66 @@ public sealed class SqliteIndexStore : IIndexStore
             return command;
         }
 
-        private static SqliteCommand CreateInsertAssetCommand(SqliteConnection connection)
+        private static SqliteCommand CreateSyncResourcesFtsForPackageCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO resources_fts(id, data_source_id, package_path, type_name, full_tgi, name)
+                SELECT id, data_source_id, package_path, type_name, full_tgi, COALESCE(name, '')
+                FROM resources
+                WHERE data_source_id = $dataSourceId AND package_path = $packagePath;
+                """;
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            return command;
+        }
+
+        internal static SqliteCommand CreateInsertAssetCommand(SqliteConnection connection)
         {
             var command = connection.CreateCommand();
             command.CommandText =
                 """
                 INSERT INTO assets(
-                    id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi, thumbnail_tgi,
-                    variant_count, linked_resource_count, diagnostics)
+                    id, data_source_id, source_kind, asset_kind, display_name, category, category_normalized, package_path, scan_token, package_name, root_tgi, root_type_name, thumbnail_tgi, thumbnail_type_name,
+                    primary_geometry_type, identity_type, variant_count, linked_resource_count, has_scene_root, has_exact_geometry_candidate, has_material_references, has_texture_references,
+                    has_identity_metadata, has_rig_reference, has_geometry_reference, has_material_resource_candidate, has_texture_resource_candidate, is_package_local_graph, has_diagnostics, diagnostics)
                 VALUES(
-                    $id, $dataSourceId, $sourceKind, $assetKind, $displayName, $category, $packagePath, $rootTgi, $thumbnailTgi,
-                    $variantCount, $linkedResourceCount, $diagnostics);
+                    $id, $dataSourceId, $sourceKind, $assetKind, $displayName, $category, $categoryNormalized, $packagePath, $scanToken, $packageName, $rootTgi, $rootTypeName, $thumbnailTgi, $thumbnailTypeName,
+                    $primaryGeometryType, $identityType, $variantCount, $linkedResourceCount, $hasSceneRoot, $hasExactGeometryCandidate, $hasMaterialReferences, $hasTextureReferences,
+                    $hasIdentityMetadata, $hasRigReference, $hasGeometryReference, $hasMaterialResourceCandidate, $hasTextureResourceCandidate, $isPackageLocalGraph, $hasDiagnostics, $diagnostics)
+                ON CONFLICT(id) DO UPDATE SET
+                    data_source_id = excluded.data_source_id,
+                    source_kind = excluded.source_kind,
+                    asset_kind = excluded.asset_kind,
+                    display_name = excluded.display_name,
+                    category = excluded.category,
+                    category_normalized = excluded.category_normalized,
+                    package_path = excluded.package_path,
+                    scan_token = excluded.scan_token,
+                    package_name = excluded.package_name,
+                    root_tgi = excluded.root_tgi,
+                    root_type_name = excluded.root_type_name,
+                    thumbnail_tgi = excluded.thumbnail_tgi,
+                    thumbnail_type_name = excluded.thumbnail_type_name,
+                    primary_geometry_type = excluded.primary_geometry_type,
+                    identity_type = excluded.identity_type,
+                    variant_count = excluded.variant_count,
+                    linked_resource_count = excluded.linked_resource_count,
+                    has_scene_root = excluded.has_scene_root,
+                    has_exact_geometry_candidate = excluded.has_exact_geometry_candidate,
+                    has_material_references = excluded.has_material_references,
+                    has_texture_references = excluded.has_texture_references,
+                    has_identity_metadata = excluded.has_identity_metadata,
+                    has_rig_reference = excluded.has_rig_reference,
+                    has_geometry_reference = excluded.has_geometry_reference,
+                    has_material_resource_candidate = excluded.has_material_resource_candidate,
+                    has_texture_resource_candidate = excluded.has_texture_resource_candidate,
+                    is_package_local_graph = excluded.is_package_local_graph,
+                    has_diagnostics = excluded.has_diagnostics,
+                    diagnostics = excluded.diagnostics;
                 """;
-            foreach (var parameterName in new[] { "$id", "$dataSourceId", "$sourceKind", "$assetKind", "$displayName", "$category", "$packagePath", "$rootTgi", "$thumbnailTgi", "$variantCount", "$linkedResourceCount", "$diagnostics" })
+            foreach (var parameterName in new[] { "$id", "$dataSourceId", "$sourceKind", "$assetKind", "$displayName", "$category", "$categoryNormalized", "$packagePath", "$scanToken", "$packageName", "$rootTgi", "$rootTypeName", "$thumbnailTgi", "$thumbnailTypeName", "$primaryGeometryType", "$identityType", "$variantCount", "$linkedResourceCount", "$hasSceneRoot", "$hasExactGeometryCandidate", "$hasMaterialReferences", "$hasTextureReferences", "$hasIdentityMetadata", "$hasRigReference", "$hasGeometryReference", "$hasMaterialResourceCandidate", "$hasTextureResourceCandidate", "$isPackageLocalGraph", "$hasDiagnostics", "$diagnostics" })
             {
                 command.Parameters.Add(new SqliteParameter(parameterName, DBNull.Value));
             }
@@ -881,11 +1549,34 @@ public sealed class SqliteIndexStore : IIndexStore
             return command;
         }
 
-        private static void Bind(SqliteCommand command, SqliteTransaction transaction, Guid dataSourceId, string packagePath)
+        internal static SqliteCommand CreateSyncAssetsFtsForPackageCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO assets_fts(id, data_source_id, package_path, package_name, display_name, category, root_type_name, identity_type, primary_geometry_type, root_tgi)
+                SELECT id, data_source_id, package_path, COALESCE(package_name, ''), display_name, COALESCE(category, ''), COALESCE(root_type_name, ''), COALESCE(identity_type, ''), COALESCE(primary_geometry_type, ''), root_tgi
+                FROM assets
+                WHERE data_source_id = $dataSourceId AND package_path = $packagePath;
+                """;
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            return command;
+        }
+
+        internal static void Bind(SqliteCommand command, SqliteTransaction transaction, Guid dataSourceId, string packagePath)
         {
             command.Transaction = transaction;
             command.Parameters["$dataSourceId"].Value = dataSourceId.ToString("D");
             command.Parameters["$packagePath"].Value = packagePath;
+        }
+
+        internal static void Bind(SqliteCommand command, SqliteTransaction transaction, Guid dataSourceId, string packagePath, string scanToken)
+        {
+            command.Transaction = transaction;
+            command.Parameters["$dataSourceId"].Value = dataSourceId.ToString("D");
+            command.Parameters["$packagePath"].Value = packagePath;
+            command.Parameters["$scanToken"].Value = scanToken;
         }
 
         private static void Bind(SqliteCommand command, SqliteTransaction transaction, PackageScanResult packageScan)
@@ -898,12 +1589,13 @@ public sealed class SqliteIndexStore : IIndexStore
             command.Parameters["$indexedUtc"].Value = DateTimeOffset.UtcNow.ToString("O");
         }
 
-        private static void Bind(SqliteCommand command, ResourceMetadata resource)
+        private static void Bind(SqliteCommand command, ResourceMetadata resource, string scanToken)
         {
             command.Parameters["$id"].Value = resource.Id.ToString("D");
             command.Parameters["$dataSourceId"].Value = resource.DataSourceId.ToString("D");
             command.Parameters["$sourceKind"].Value = resource.SourceKind.ToString();
             command.Parameters["$packagePath"].Value = resource.PackagePath;
+            command.Parameters["$scanToken"].Value = scanToken;
             command.Parameters["$typeHex"].Value = $"{resource.Key.Type:X8}";
             command.Parameters["$typeName"].Value = resource.Key.TypeName;
             command.Parameters["$groupHex"].Value = $"{resource.Key.Group:X8}";
@@ -920,7 +1612,7 @@ public sealed class SqliteIndexStore : IIndexStore
             command.Parameters["$diagnostics"].Value = resource.Diagnostics;
         }
 
-        private static void Bind(SqliteCommand command, AssetSummary asset)
+        internal static void Bind(SqliteCommand command, AssetSummary asset, string scanToken)
         {
             command.Parameters["$id"].Value = asset.Id.ToString("D");
             command.Parameters["$dataSourceId"].Value = asset.DataSourceId.ToString("D");
@@ -928,13 +1620,32 @@ public sealed class SqliteIndexStore : IIndexStore
             command.Parameters["$assetKind"].Value = asset.AssetKind.ToString();
             command.Parameters["$displayName"].Value = asset.DisplayName;
             command.Parameters["$category"].Value = (object?)asset.Category ?? DBNull.Value;
+            command.Parameters["$categoryNormalized"].Value = (object?)asset.CategoryNormalized ?? DBNull.Value;
             command.Parameters["$packagePath"].Value = asset.PackagePath;
+            command.Parameters["$scanToken"].Value = scanToken;
+            command.Parameters["$packageName"].Value = (object?)asset.PackageName ?? DBNull.Value;
             command.Parameters["$rootTgi"].Value = asset.RootKey.FullTgi;
+            command.Parameters["$rootTypeName"].Value = (object?)asset.RootTypeName ?? DBNull.Value;
             command.Parameters["$thumbnailTgi"].Value = (object?)asset.ThumbnailTgi ?? DBNull.Value;
+            command.Parameters["$thumbnailTypeName"].Value = (object?)asset.ThumbnailTypeName ?? DBNull.Value;
+            command.Parameters["$primaryGeometryType"].Value = (object?)asset.PrimaryGeometryType ?? DBNull.Value;
+            command.Parameters["$identityType"].Value = (object?)asset.IdentityType ?? DBNull.Value;
             command.Parameters["$variantCount"].Value = asset.VariantCount;
             command.Parameters["$linkedResourceCount"].Value = asset.LinkedResourceCount;
+            command.Parameters["$hasSceneRoot"].Value = asset.CapabilitySnapshot.HasSceneRoot ? 1 : 0;
+            command.Parameters["$hasExactGeometryCandidate"].Value = asset.CapabilitySnapshot.HasExactGeometryCandidate ? 1 : 0;
+            command.Parameters["$hasMaterialReferences"].Value = asset.CapabilitySnapshot.HasMaterialReferences ? 1 : 0;
+            command.Parameters["$hasTextureReferences"].Value = asset.CapabilitySnapshot.HasTextureReferences ? 1 : 0;
+            command.Parameters["$hasIdentityMetadata"].Value = asset.CapabilitySnapshot.HasIdentityMetadata ? 1 : 0;
+            command.Parameters["$hasRigReference"].Value = asset.CapabilitySnapshot.HasRigReference ? 1 : 0;
+            command.Parameters["$hasGeometryReference"].Value = asset.CapabilitySnapshot.HasGeometryReference ? 1 : 0;
+            command.Parameters["$hasMaterialResourceCandidate"].Value = asset.CapabilitySnapshot.HasMaterialResourceCandidate ? 1 : 0;
+            command.Parameters["$hasTextureResourceCandidate"].Value = asset.CapabilitySnapshot.HasTextureResourceCandidate ? 1 : 0;
+            command.Parameters["$isPackageLocalGraph"].Value = asset.CapabilitySnapshot.IsPackageLocalGraph ? 1 : 0;
+            command.Parameters["$hasDiagnostics"].Value = asset.CapabilitySnapshot.HasDiagnostics ? 1 : 0;
             command.Parameters["$diagnostics"].Value = asset.Diagnostics;
         }
+
     }
 }
 
@@ -1014,9 +1725,8 @@ public sealed class PackageIndexCoordinator
         {
             progress?.Report(state.CreateSnapshot("preparing", "Opening SQLite write session."));
 
-            var scanChannel = System.Threading.Channels.Channel.CreateBounded<PackageWorkItem>(new System.Threading.Channels.BoundedChannelOptions(effectiveOptions.PackageQueueCapacity)
+            var scanChannel = System.Threading.Channels.Channel.CreateUnbounded<PackageWorkItem>(new System.Threading.Channels.UnboundedChannelOptions
             {
-                FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait,
                 SingleWriter = true,
                 SingleReader = false
             });
@@ -1038,12 +1748,13 @@ public sealed class PackageIndexCoordinator
             var workers = Enumerable.Range(0, effectiveOptions.MaxPackageConcurrency)
                 .Select(workerId => RunWorkerAsync(workerId + 1, scanChannel.Reader, persistChannel.Writer, state, cancellationToken))
                 .ToArray();
-            var writer = RunWriterAsync(persistChannel.Reader, writeSession, state, cancellationToken);
+            var writer = RunWriterAsync(persistChannel.Reader, writeSession, state, effectiveOptions.SqliteBatchSize, cancellationToken);
 
             await producer.ConfigureAwait(false);
             await Task.WhenAll(workers).ConfigureAwait(false);
             persistChannel.Writer.TryComplete();
             await writer.ConfigureAwait(false);
+            await writeSession.FinalizeAsync(cancellationToken).ConfigureAwait(false);
 
             progress?.Report(state.CreateSnapshot("complete", "Indexing completed.", state.CreateSummary()));
         }
@@ -1101,6 +1812,7 @@ public sealed class PackageIndexCoordinator
             discoveryStopwatch.Stop();
             state.RecordRunPhase("discovery", discoveryStopwatch.Elapsed);
             state.RecordRunPhase("queueing", queueElapsed);
+            state.MarkDiscoveryCompleted();
             writer.TryComplete();
         }
     }
@@ -1159,29 +1871,56 @@ public sealed class PackageIndexCoordinator
         System.Threading.Channels.ChannelReader<PersistWorkItem> reader,
         IIndexWriteSession writeSession,
         IndexingRunState state,
+        int sqliteBatchSize,
         CancellationToken cancellationToken)
     {
-        await foreach (var item in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
         {
+            var batch = new List<PersistWorkItem>();
+            var batchResourceCount = 0;
+            while (reader.TryRead(out var item))
+            {
+                batch.Add(item);
+                batchResourceCount += Math.Max(1, item.PackageScan.Resources.Count);
+                if (batchResourceCount >= sqliteBatchSize)
+                {
+                    break;
+                }
+            }
+
+            if (batch.Count == 0)
+            {
+                continue;
+            }
+
             try
             {
-                state.UpdatePackageProgress(item.WorkItem.PackagePath, new PackageScanProgress(
-                    "batching DB writes",
-                    item.PackageScan.Resources.Count,
-                    item.PackageScan.Resources.Count,
-                    0,
-                    state.GetElapsed(item.WorkItem.PackagePath)));
+                foreach (var item in batch)
+                {
+                    state.UpdatePackageProgress(item.WorkItem.PackagePath, new PackageScanProgress(
+                        "batching DB writes",
+                        item.PackageScan.Resources.Count,
+                        item.PackageScan.Resources.Count,
+                        0,
+                        state.GetElapsed(item.WorkItem.PackagePath)));
+                }
 
-                await writeSession.ReplacePackageAsync(item.PackageScan, item.Assets, cancellationToken).ConfigureAwait(false);
+                var payload = batch
+                    .Select(static item => (item.PackageScan, item.Assets))
+                    .ToArray();
+                await writeSession.ReplacePackagesAsync(payload, cancellationToken).ConfigureAwait(false);
 
-                state.UpdatePackageProgress(item.WorkItem.PackagePath, new PackageScanProgress(
-                    "finalizing package",
-                    item.PackageScan.Resources.Count,
-                    item.PackageScan.Resources.Count,
-                    item.PackageScan.Resources.Count,
-                    state.GetElapsed(item.WorkItem.PackagePath)));
+                foreach (var item in batch)
+                {
+                    state.UpdatePackageProgress(item.WorkItem.PackagePath, new PackageScanProgress(
+                        "finalizing package",
+                        item.PackageScan.Resources.Count,
+                        item.PackageScan.Resources.Count,
+                        item.PackageScan.Resources.Count,
+                        state.GetElapsed(item.WorkItem.PackagePath)));
 
-                state.MarkCompleted(item.WorkItem.PackagePath, item.PackageScan.Resources.Count);
+                    state.MarkCompleted(item.WorkItem.PackagePath, item.PackageScan.Resources.Count);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -1189,7 +1928,10 @@ public sealed class PackageIndexCoordinator
             }
             catch (Exception ex)
             {
-                state.MarkFailure(item.WorkItem.PackagePath, ex.Message);
+                foreach (var item in batch)
+                {
+                    state.MarkFailure(item.WorkItem.PackagePath, ex.Message);
+                }
             }
         }
     }
@@ -1238,6 +1980,7 @@ public sealed class PackageIndexCoordinator
         private int packagesSkipped;
         private int packagesFailed;
         private int resourcesCompleted;
+        private bool discoveryCompleted;
 
         public IndexingRunState(IndexingRunOptions options)
         {
@@ -1277,6 +2020,15 @@ public sealed class PackageIndexCoordinator
                 runPhases[phase] = runPhases.TryGetValue(phase, out var current)
                     ? current + elapsed
                     : elapsed;
+            }
+        }
+
+        public void MarkDiscoveryCompleted()
+        {
+            lock (gate)
+            {
+                discoveryCompleted = true;
+                RecordActivityUnsafe("discovery", $"Package discovery completed with {packagesDiscovered:N0} package(s) discovered.");
             }
         }
 
@@ -1437,6 +2189,7 @@ public sealed class PackageIndexCoordinator
                     ActiveWorkerCount: workerSlots.Values.Count(static slot => slot.Status == WorkerSlotStatus.Active),
                     PendingPackageCount: pendingPackageCount,
                     ConfiguredWorkerCount: options.MaxPackageConcurrency,
+                    DiscoveryCompleted: discoveryCompleted,
                     Elapsed: elapsed,
                     OverallThroughput: overallThroughput,
                     WorkerSlots: workerSlots.Values.OrderBy(static slot => slot.WorkerId).Select(static slot => slot.ToSnapshot()).ToArray(),
@@ -1533,6 +2286,7 @@ public sealed class PackageIndexCoordinator
         private readonly Stopwatch stopwatch = new();
         private readonly List<PackagePhaseTiming> phaseTimings = [];
         private string currentStage = "queued";
+        private string? currentMessage;
         private TimeSpan stageStartedAt;
         private TimeSpan lastHeartbeatAt;
 
@@ -1557,6 +2311,7 @@ public sealed class PackageIndexCoordinator
         public bool HeartbeatDue { get; private set; }
         public TimeSpan Elapsed => stopwatch.Elapsed;
         public string CurrentStage => currentStage;
+        public string? CurrentMessage => currentMessage;
 
         public void Start()
         {
@@ -1581,12 +2336,18 @@ public sealed class PackageIndexCoordinator
             {
                 CompleteCurrentStage();
                 currentStage = progress.Stage;
+                currentMessage = progress.Message;
                 stageStartedAt = stopwatch.Elapsed;
                 HeartbeatDue = false;
                 stageChanged = true;
             }
             else
             {
+                if (!string.IsNullOrWhiteSpace(progress.Message))
+                {
+                    currentMessage = progress.Message;
+                }
+
                 HeartbeatDue = stopwatch.Elapsed - lastHeartbeatAt >= heartbeatInterval;
             }
 
@@ -1602,7 +2363,10 @@ public sealed class PackageIndexCoordinator
         public string BuildHeartbeatMessage()
         {
             var throughput = Elapsed.TotalSeconds <= 0 ? 0 : ResourcesProcessed / Elapsed.TotalSeconds;
-            return $"{PackageName}: {currentStage} {ResourcesProcessed:N0} / {Math.Max(ResourcesDiscovered, ResourcesProcessed):N0} resources, {throughput:N0} res/sec, elapsed {Elapsed:hh\\:mm\\:ss}";
+            var detail = string.IsNullOrWhiteSpace(currentMessage)
+                ? $"{ResourcesProcessed:N0} / {Math.Max(ResourcesDiscovered, ResourcesProcessed):N0} resources"
+                : currentMessage;
+            return $"{PackageName}: {currentStage} {detail}, {throughput:N0} res/sec, elapsed {Elapsed:hh\\:mm\\:ss}";
         }
 
         public void Complete(int resourceCount)
@@ -1704,7 +2468,9 @@ public sealed class PackageIndexCoordinator
             Status = WorkerSlotStatus.Active;
             PackagePath = packageState.PackagePath;
             PackageName = packageState.PackageName;
-            Stage = packageState.CurrentStage;
+            Stage = string.IsNullOrWhiteSpace(packageState.CurrentMessage)
+                ? packageState.CurrentStage
+                : $"{packageState.CurrentStage} - {packageState.CurrentMessage}";
             ResourcesDiscovered = packageState.ResourcesDiscovered;
             ResourcesProcessed = packageState.ResourcesProcessed;
             ResourcesWritten = packageState.ResourcesWritten;

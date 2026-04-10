@@ -44,15 +44,32 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
     private async Task<SceneBuildResult> BuildModelSceneAsync(ResourceMetadata modelResource, CancellationToken cancellationToken)
     {
-        var bytes = await resourceCatalogService.GetResourceBytesAsync(modelResource.PackagePath, modelResource.Key, raw: false, cancellationToken);
-        var root = Ts4RcolResource.Parse(bytes);
-        var modlChunk = root.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MODL");
-        if (modlChunk is null)
+        Ts4RcolResource root;
+        Ts4ModlChunk modl;
+        try
         {
-            return new SceneBuildResult(false, null, [$"Model {modelResource.Key.FullTgi} does not contain a MODL chunk."]);
+            var bytes = await resourceCatalogService.GetResourceBytesAsync(modelResource.PackagePath, modelResource.Key, raw: false, cancellationToken);
+            root = Ts4RcolResource.Parse(bytes);
+            var modlChunk = root.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MODL");
+            if (modlChunk is null)
+            {
+                return new SceneBuildResult(false, null, [$"Model {modelResource.Key.FullTgi} does not contain a MODL chunk."]);
+            }
+
+            modl = Ts4ModlChunk.Parse(modlChunk.Data.Span);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        {
+            return new SceneBuildResult(
+                false,
+                null,
+                [
+                    $"Model {modelResource.Key.FullTgi} could not be parsed cleanly for the current Build/Buy scene path.",
+                    "This usually means the object uses a MODL/MLOD variant outside the currently supported static subset.",
+                    $"Parser detail: {ex.Message}"
+                ]);
         }
 
-        var modl = Ts4ModlChunk.Parse(modlChunk.Data.Span);
         var lodEntries = modl.LodEntries
             .OrderBy(static lod => lod.IsShadow)
             .ThenBy(static lod => lod.Id)
@@ -70,17 +87,24 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         foreach (var lod in lodEntries)
         {
-            var result = await TryResolveModelLodAsync(modelResource, root, lod.Reference, cancellationToken);
-            diagnostics.AddRange(result.Diagnostics);
-            if (result.Resource is not null)
+            try
             {
-                var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken);
-                if (sceneResult.Success)
+                var result = await TryResolveModelLodAsync(modelResource, root, lod.Reference, cancellationToken);
+                diagnostics.AddRange(result.Diagnostics);
+                if (result.Resource is not null)
                 {
-                    return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray());
-                }
+                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken);
+                    if (sceneResult.Success)
+                    {
+                        return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray());
+                    }
 
-                diagnostics.AddRange(sceneResult.Diagnostics);
+                    diagnostics.AddRange(sceneResult.Diagnostics);
+                }
+            }
+            catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+            {
+                diagnostics.Add($"LOD {lod.DisplayName} could not be reconstructed: {ex.Message}");
             }
         }
 
@@ -92,15 +116,25 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata logicalRootResource,
         CancellationToken cancellationToken)
     {
-        var bytes = await resourceCatalogService.GetResourceBytesAsync(modelLodResource.PackagePath, modelLodResource.Key, raw: false, cancellationToken);
-        var rcol = Ts4RcolResource.Parse(bytes);
-        var mlodChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MLOD");
-        if (mlodChunk is null)
+        Ts4RcolResource rcol;
+        Ts4MlodChunk mlod;
+        try
         {
-            return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} does not contain an MLOD chunk."]);
+            var bytes = await resourceCatalogService.GetResourceBytesAsync(modelLodResource.PackagePath, modelLodResource.Key, raw: false, cancellationToken);
+            rcol = Ts4RcolResource.Parse(bytes);
+            var mlodChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MLOD");
+            if (mlodChunk is null)
+            {
+                return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} does not contain an MLOD chunk."]);
+            }
+
+            mlod = Ts4MlodChunk.Parse(mlodChunk.Data.Span);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        {
+            return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} could not be parsed cleanly: {ex.Message}"]);
         }
 
-        var mlod = Ts4MlodChunk.Parse(mlodChunk.Data.Span);
         var diagnostics = new List<string>();
         var meshes = new List<CanonicalMesh>();
         var materials = new List<CanonicalMaterial>();

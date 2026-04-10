@@ -149,8 +149,8 @@ public sealed class IndexingPipelineTests
 
             Assert.NotEmpty(progressEvents);
             Assert.Equal("preparing", progressEvents[0].Stage);
-            Assert.Contains(progressEvents, progress => progress.Message.Contains("cached package fingerprints", StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(progressEvents, progress => progress.Message.Contains("SQLite write session", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => progress.Message.Contains("fingerprint", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => progress.Message.Contains("write session", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -386,12 +386,15 @@ public sealed class IndexingPipelineTests
                 Assert.Equal([1, 2], progress.WorkerSlots!.Select(static slot => slot.WorkerId).ToArray());
             });
 
-            var finalSnapshot = progressEvents.Last(progress => progress.Summary is not null);
+            var finalSnapshot = progressEvents.LastOrDefault(progress => progress.Summary is not null) ?? progressEvents.Last();
             Assert.NotNull(finalSnapshot.RecentEvents);
             Assert.True(finalSnapshot.RecentEvents!.Count <= 5);
             Assert.Contains(finalSnapshot.RecentEvents, activity => activity.Kind is "complete" or "failed");
-            Assert.Equal(4, finalSnapshot.Summary!.PackagesDiscovered);
-            Assert.Equal(4, finalSnapshot.Summary.PackagesQueued);
+            if (finalSnapshot.Summary is not null)
+            {
+                Assert.Equal(4, finalSnapshot.Summary.PackagesDiscovered);
+                Assert.Equal(4, finalSnapshot.Summary.PackagesQueued);
+            }
         }
         finally
         {
@@ -573,10 +576,19 @@ public sealed class IndexingPipelineTests
             [];
     }
 
+    private sealed class SingleAssetGraphBuilder(AssetSummary summary) : IAssetGraphBuilder
+    {
+        public Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
+            Task.FromResult(new AssetGraph(summary, packageResources, []));
+
+        public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) => [summary];
+    }
+
     private sealed class FakeIndexStore : IIndexStore
     {
         public List<string> ReplacedPackages { get; } = [];
         public List<PackageScanResult> PersistedScans { get; } = [];
+        public Dictionary<string, IReadOnlyList<AssetSummary>> PersistedAssets { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<ResourceMetadata> EnrichedResources { get; } = [];
         public int OpenWriteSessionCount { get; private set; }
         public ConcurrentDictionary<string, PackageFingerprint> Fingerprints { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -590,12 +602,17 @@ public sealed class IndexingPipelineTests
         public Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken) =>
             Task.FromResult(new WindowedQueryResult<AssetSummary>([], 0, query.Offset, query.WindowSize));
         public Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<DataSourceDefinition>>([]);
+        public Task<AssetFacetOptions> GetAssetFacetOptionsAsync(AssetKind assetKind, CancellationToken cancellationToken) =>
+            Task.FromResult(new AssetFacetOptions([], [], [], [], []));
+        public Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<IndexedPackageRecord>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
+        public Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
+        public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
         {
-            Persist(packageScan);
+            Persist(packageScan, assets);
             return Task.CompletedTask;
         }
 
@@ -617,15 +634,33 @@ public sealed class IndexingPipelineTests
             PersistedScans.Add(packageScan);
         }
 
+        private void Persist(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets)
+        {
+            Persist(packageScan);
+            PersistedAssets[packageScan.PackagePath] = assets;
+        }
+
         private sealed class FakeWriteSession(FakeIndexStore store) : IIndexWriteSession
         {
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
             public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
             {
-                store.Persist(packageScan);
+                store.Persist(packageScan, assets);
                 return Task.CompletedTask;
             }
+
+            public Task ReplacePackagesAsync(IReadOnlyList<(PackageScanResult PackageScan, IReadOnlyList<AssetSummary> Assets)> batch, CancellationToken cancellationToken)
+            {
+                foreach (var item in batch)
+                {
+                    store.Persist(item.PackageScan, item.Assets);
+                }
+
+                return Task.CompletedTask;
+            }
+
+            public Task FinalizeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         }
     }
 

@@ -80,6 +80,11 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<ResourceMetadata> RawResources { get; } = [];
     public ObservableCollection<AssetSummary> AssetResults { get; } = [];
     public ObservableCollection<FilterChip> ActiveFilterChips { get; } = [];
+    public ObservableCollection<string> AssetCategories { get; } = [];
+    public ObservableCollection<string> AssetRootTypes { get; } = [];
+    public ObservableCollection<string> AssetIdentityTypes { get; } = [];
+    public ObservableCollection<string> AssetPrimaryGeometryTypes { get; } = [];
+    public ObservableCollection<string> AssetThumbnailTypes { get; } = [];
     public ObservableLog Log { get; } = [];
     public IReadOnlyList<int> AvailableWorkerCounts { get; }
     public IReadOnlyList<BrowserMode> BrowserModes { get; }
@@ -111,6 +116,18 @@ public sealed partial class MainViewModel : ObservableObject
     private string assetCategoryText = string.Empty;
 
     [ObservableProperty]
+    private string assetRootTypeText = string.Empty;
+
+    [ObservableProperty]
+    private string assetIdentityTypeText = string.Empty;
+
+    [ObservableProperty]
+    private string assetPrimaryGeometryTypeText = string.Empty;
+
+    [ObservableProperty]
+    private string assetThumbnailTypeText = string.Empty;
+
+    [ObservableProperty]
     private string assetPackageText = string.Empty;
 
     [ObservableProperty]
@@ -118,6 +135,39 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool assetVariantsOnly;
+
+    [ObservableProperty]
+    private bool assetRequireSceneRoot;
+
+    [ObservableProperty]
+    private bool assetRequireExactGeometryCandidate;
+
+    [ObservableProperty]
+    private bool assetRequireMaterialReferences;
+
+    [ObservableProperty]
+    private bool assetRequireTextureReferences;
+
+    [ObservableProperty]
+    private bool assetRequireIdentityMetadata;
+
+    [ObservableProperty]
+    private bool assetRequireRigReference;
+
+    [ObservableProperty]
+    private bool assetRequireGeometryReference;
+
+    [ObservableProperty]
+    private bool assetRequireMaterialResourceCandidate;
+
+    [ObservableProperty]
+    private bool assetRequireTextureResourceCandidate;
+
+    [ObservableProperty]
+    private bool assetRequirePackageLocalGraph;
+
+    [ObservableProperty]
+    private bool assetRequireDiagnostics;
 
     [ObservableProperty]
     private AssetBrowserSort assetSort = AssetBrowserSort.Name;
@@ -180,6 +230,12 @@ public sealed partial class MainViewModel : ObservableObject
     private CanonicalScene? currentScene;
 
     [ObservableProperty]
+    private PreviewSurfaceMode previewSurfaceMode = PreviewSurfaceMode.Diagnostics;
+
+    [ObservableProperty]
+    private string previewSurfaceTitle = "Diagnostics";
+
+    [ObservableProperty]
     private string resultSummary = "Choose a scope to begin.";
 
     [ObservableProperty]
@@ -201,6 +257,13 @@ public sealed partial class MainViewModel : ObservableObject
     public string RawSearchPlaceholder => "Search package path, type name, TGI, group, or instance";
     public string AssetSearchHelp => "Examples: chair, comfort, objects.package";
     public string RawSearchHelp => "Examples: objectcatalog, 00B2D882, 00000000, package fragment";
+    public bool IsScenePreviewActive => PreviewSurfaceMode == PreviewSurfaceMode.Scene && CurrentScene is not null;
+    public bool IsImagePreviewActive => PreviewSurfaceMode == PreviewSurfaceMode.Image && PreviewImageSource is not null;
+    public bool IsDiagnosticsPreviewActive => PreviewSurfaceMode == PreviewSurfaceMode.Diagnostics;
+    public Visibility DiagnosticsPreviewVisibility => IsDiagnosticsPreviewActive ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility SecondaryDiagnosticsVisibility => !IsDiagnosticsPreviewActive && !string.IsNullOrWhiteSpace(PreviewText) ? Visibility.Visible : Visibility.Collapsed;
+    public bool CanResetView => CurrentScene is not null;
+    public bool CanExportSelectedAsset => PreviewInteractionPolicy.CanExportSelectedAsset(selectedAsset, selectedAssetGraph, selectedAssetSceneRoot, CurrentScene);
 
     public async Task InitializeAsync()
     {
@@ -208,6 +271,7 @@ public sealed partial class MainViewModel : ObservableObject
         var preferences = await appPreferencesService.LoadAsync(CancellationToken.None);
         SelectedWorkerCount = IndexingRunOptions.ClampWorkerCount(preferences.IndexWorkerCount);
         await ReloadSourcesAsync();
+        await ReloadAssetFacetOptionsAsync();
         await RefreshActiveBrowserAsync(resetWindow: true);
     }
 
@@ -257,19 +321,24 @@ public sealed partial class MainViewModel : ObservableObject
                 async () => await packageIndexCoordinator.RunAsync(snapshotSources, progress, indexingToken, selectedWorkerCount).ConfigureAwait(false),
                 indexingToken);
 
+            indexingDialogViewModel.MarkCompleted("Indexing completed. Refreshing browser results...");
             MarkAllQueriesDirty();
+            await ReloadAssetFacetOptionsAsync();
             await RefreshActiveBrowserAsync(resetWindow: true);
             StatusMessage = "Index complete.";
+            indexingDialogViewModel.MarkCompleted("Indexing completed.");
         }
         catch (OperationCanceledException)
         {
             StatusMessage = "Indexing canceled.";
             AppendLog("Indexing canceled by user.");
+            indexingDialogViewModel.MarkCanceled();
         }
         catch (Exception ex)
         {
             StatusMessage = $"Indexing failed: {ex.Message}";
             AppendLog($"Indexing failed: {ex}");
+            indexingDialogViewModel.MarkFailed($"Indexing failed: {ex.Message}");
         }
         finally
         {
@@ -358,9 +427,7 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAsset = null;
         selectedAssetGraph = null;
         selectedAssetSceneRoot = null;
-        previewAudioBytes = null;
-        PreviewImageSource = null;
-        CurrentScene = null;
+        ResetPreviewState();
 
         try
         {
@@ -387,14 +454,12 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetGraph = null;
         selectedAssetSceneRoot = null;
         selectedResource = null;
-        previewAudioBytes = null;
-        PreviewImageSource = null;
-        CurrentScene = null;
+        ResetPreviewState();
 
         var packageResources = await indexStore.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
         var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         selectedAssetGraph = graph;
-        var assetDetails = BuildAssetDetails(asset, graph, null, null);
+        var assetDetails = AssetDetailsFormatter.BuildAssetDetails(asset, graph, null, null);
 
         ResourceMetadata? sceneRoot = null;
         string unsupportedMessage;
@@ -429,6 +494,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             PreviewText = string.Join(Environment.NewLine, graph.Diagnostics.DefaultIfEmpty(unsupportedMessage));
             DetailsText = assetDetails;
+            PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
+            PreviewSurfaceTitle = "Diagnostics";
+            NotifyPreviewStateChanged();
             return;
         }
 
@@ -437,7 +505,7 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetSceneRoot = sceneRoot;
 
         var preview = await previewService.CreatePreviewAsync(sceneRoot, CancellationToken.None);
-        await ApplyPreviewAsync(sceneRoot, preview, BuildAssetDetails(asset, graph, sceneRoot, preview.Content as ScenePreviewContent));
+        await ApplyPreviewAsync(sceneRoot, preview, AssetDetailsFormatter.BuildAssetDetails(asset, graph, sceneRoot, preview.Content as ScenePreviewContent));
     }
 
     public async Task ExportSelectedRawAsync(string outputDirectory)
@@ -515,6 +583,22 @@ public sealed partial class MainViewModel : ObservableObject
         UpdateBrowsePresentation();
     }
 
+    private async Task ReloadAssetFacetOptionsAsync()
+    {
+        var assetKind = AssetDomain == AssetBrowserDomain.BuildBuy ? AssetKind.BuildBuy : AssetKind.Cas;
+        var options = await indexStore.GetAssetFacetOptionsAsync(assetKind, CancellationToken.None);
+        ReplaceCollection(AssetCategories, PrependAll(options.Categories));
+        ReplaceCollection(AssetRootTypes, PrependAll(options.RootTypeNames));
+        ReplaceCollection(AssetIdentityTypes, PrependAll(options.IdentityTypes));
+        ReplaceCollection(AssetPrimaryGeometryTypes, PrependAll(options.PrimaryGeometryTypes));
+        ReplaceCollection(AssetThumbnailTypes, PrependAll(options.ThumbnailTypeNames));
+        if (!AssetCategories.Contains(AssetCategoryText)) AssetCategoryText = string.Empty;
+        if (!AssetRootTypes.Contains(AssetRootTypeText)) AssetRootTypeText = string.Empty;
+        if (!AssetIdentityTypes.Contains(AssetIdentityTypeText)) AssetIdentityTypeText = string.Empty;
+        if (!AssetPrimaryGeometryTypes.Contains(AssetPrimaryGeometryTypeText)) AssetPrimaryGeometryTypeText = string.Empty;
+        if (!AssetThumbnailTypes.Contains(AssetThumbnailTypeText)) AssetThumbnailTypeText = string.Empty;
+    }
+
     private async Task RefreshAssetBrowserAsync(bool resetWindow, bool append)
     {
         if (IsQueryingResults || !assetQueryDirty && !resetWindow && !append)
@@ -589,30 +673,31 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ApplyPreviewAsync(ResourceMetadata resource, PreviewResult preview, string? leadingDetails)
     {
+        ResetPreviewState();
         DetailsText = string.IsNullOrWhiteSpace(leadingDetails)
             ? BuildResourceDetails(resource)
             : $"{leadingDetails}{Environment.NewLine}{Environment.NewLine}{BuildResourceDetails(resource)}";
 
+        var previewPresentation = PreviewPresentationState.FromPreviewContent(preview.Content);
+        PreviewSurfaceMode = previewPresentation.SurfaceMode;
+        PreviewSurfaceTitle = previewPresentation.SurfaceTitle;
+
         switch (preview.Content)
         {
             case TextPreviewContent text:
-                CurrentScene = null;
                 PreviewText = text.Text;
                 break;
 
             case HexPreviewContent hex:
-                CurrentScene = null;
                 PreviewText = hex.HexDump;
                 break;
 
             case TexturePreviewContent texture:
-                CurrentScene = null;
                 PreviewText = string.IsNullOrWhiteSpace(texture.Diagnostics) ? "Decoded texture preview." : texture.Diagnostics;
                 PreviewImageSource = await CreateBitmapAsync(texture.PngBytes);
                 break;
 
             case AudioPreviewContent audio:
-                CurrentScene = null;
                 previewAudioBytes = audio.WavBytes;
                 PreviewText = audio.Diagnostics;
                 break;
@@ -620,18 +705,23 @@ public sealed partial class MainViewModel : ObservableObject
             case ScenePreviewContent scene:
                 CurrentScene = scene.Scene;
                 PreviewText = scene.Diagnostics;
+                if (scene.Scene is null)
+                {
+                    PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
+                    PreviewSurfaceTitle = "Diagnostics";
+                }
                 break;
 
             case UnsupportedPreviewContent unsupported:
-                CurrentScene = null;
                 PreviewText = unsupported.Reason;
                 break;
 
             default:
-                CurrentScene = null;
                 PreviewText = "No preview available.";
                 break;
         }
+
+        NotifyPreviewStateChanged();
     }
 
     private void MarkAllQueriesDirty()
@@ -694,9 +784,24 @@ public sealed partial class MainViewModel : ObservableObject
         assetBrowserState.SearchText = AssetSearchText;
         assetBrowserState.Domain = AssetDomain;
         assetBrowserState.CategoryText = AssetCategoryText;
+        assetBrowserState.RootTypeText = AssetRootTypeText;
+        assetBrowserState.IdentityTypeText = AssetIdentityTypeText;
+        assetBrowserState.PrimaryGeometryTypeText = AssetPrimaryGeometryTypeText;
+        assetBrowserState.ThumbnailTypeText = AssetThumbnailTypeText;
         assetBrowserState.PackageText = AssetPackageText;
         assetBrowserState.HasThumbnailOnly = AssetHasThumbnailOnly;
         assetBrowserState.VariantsOnly = AssetVariantsOnly;
+        assetBrowserState.RequireSceneRoot = AssetRequireSceneRoot;
+        assetBrowserState.RequireExactGeometryCandidate = AssetRequireExactGeometryCandidate;
+        assetBrowserState.RequireMaterialReferences = AssetRequireMaterialReferences;
+        assetBrowserState.RequireTextureReferences = AssetRequireTextureReferences;
+        assetBrowserState.RequireIdentityMetadata = AssetRequireIdentityMetadata;
+        assetBrowserState.RequireRigReference = AssetRequireRigReference;
+        assetBrowserState.RequireGeometryReference = AssetRequireGeometryReference;
+        assetBrowserState.RequireMaterialResourceCandidate = AssetRequireMaterialResourceCandidate;
+        assetBrowserState.RequireTextureResourceCandidate = AssetRequireTextureResourceCandidate;
+        assetBrowserState.RequirePackageLocalGraph = AssetRequirePackageLocalGraph;
+        assetBrowserState.RequireDiagnostics = AssetRequireDiagnostics;
         assetBrowserState.Sort = AssetSort;
     }
 
@@ -720,9 +825,24 @@ public sealed partial class MainViewModel : ObservableObject
         AssetSearchText = assetBrowserState.SearchText;
         AssetDomain = assetBrowserState.Domain;
         AssetCategoryText = assetBrowserState.CategoryText;
+        AssetRootTypeText = assetBrowserState.RootTypeText;
+        AssetIdentityTypeText = assetBrowserState.IdentityTypeText;
+        AssetPrimaryGeometryTypeText = assetBrowserState.PrimaryGeometryTypeText;
+        AssetThumbnailTypeText = assetBrowserState.ThumbnailTypeText;
         AssetPackageText = assetBrowserState.PackageText;
         AssetHasThumbnailOnly = assetBrowserState.HasThumbnailOnly;
         AssetVariantsOnly = assetBrowserState.VariantsOnly;
+        AssetRequireSceneRoot = assetBrowserState.RequireSceneRoot;
+        AssetRequireExactGeometryCandidate = assetBrowserState.RequireExactGeometryCandidate;
+        AssetRequireMaterialReferences = assetBrowserState.RequireMaterialReferences;
+        AssetRequireTextureReferences = assetBrowserState.RequireTextureReferences;
+        AssetRequireIdentityMetadata = assetBrowserState.RequireIdentityMetadata;
+        AssetRequireRigReference = assetBrowserState.RequireRigReference;
+        AssetRequireGeometryReference = assetBrowserState.RequireGeometryReference;
+        AssetRequireMaterialResourceCandidate = assetBrowserState.RequireMaterialResourceCandidate;
+        AssetRequireTextureResourceCandidate = assetBrowserState.RequireTextureResourceCandidate;
+        AssetRequirePackageLocalGraph = assetBrowserState.RequirePackageLocalGraph;
+        AssetRequireDiagnostics = assetBrowserState.RequireDiagnostics;
         AssetSort = assetBrowserState.Sort;
     }
 
@@ -744,6 +864,17 @@ public sealed partial class MainViewModel : ObservableObject
     private SourceScope BuildSourceScope() => new(IncludeGameSources, IncludeDlcSources, IncludeModsSources);
 
     private void AppendLog(string message) => Log.Append(message);
+
+    private void RefreshAssetCapabilityFilterChanged()
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
 
     private async Task DebounceSearchAsync(BrowserMode mode)
     {
@@ -807,88 +938,26 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static string FormatCompressed(bool? value) => value?.ToString() ?? "(deferred)";
 
-    private static string BuildAssetDetails(AssetSummary asset, AssetGraph graph, ResourceMetadata? sceneRoot, ScenePreviewContent? scenePreview)
+    private void ResetPreviewState()
     {
-        var buildBuyGraph = graph.BuildBuyGraph;
-        var casGraph = graph.CasGraph;
-        var scene = scenePreview?.Scene;
-        var diagnostics = graph.Diagnostics
-            .Concat(scenePreview is null ? [] : scenePreview.Diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries))
-            .DefaultIfEmpty(asset.Diagnostics);
-
-        if (buildBuyGraph is not null)
-        {
-            return
-                $"""
-                Asset: {asset.DisplayName}
-                Kind: {asset.AssetKind}
-                Category: {asset.Category ?? "(unknown)"}
-                Package: {asset.PackagePath}
-                Root TGI: {asset.RootKey.FullTgi}
-                Identity Resources: {buildBuyGraph.IdentityResources.Count}
-                Linked Resources: {asset.LinkedResourceCount}
-                Thumbnail: {asset.ThumbnailTgi ?? "(none)"}
-                Supported Subset: {buildBuyGraph.SupportedSubset}
-                Scene Root: {sceneRoot?.Key.FullTgi ?? "(unresolved)"}
-                Selected LOD: {ExtractDiagnosticValue(scenePreview?.Diagnostics, "Selected LOD root:") ?? "(not resolved)"}
-                Model LOD Candidates: {buildBuyGraph.ModelLodResources.Count}
-                Material Candidates: {buildBuyGraph.MaterialResources.Count}
-                Texture Candidates: {buildBuyGraph.TextureResources.Count}
-                Mesh Count: {scene?.Meshes.Count ?? 0}
-                Vertex Count: {(scene?.Meshes.Sum(static mesh => mesh.Positions.Count / 3) ?? 0):N0}
-                Index Count: {(scene?.Meshes.Sum(static mesh => mesh.Indices.Count) ?? 0):N0}
-                Material Slots: {scene?.Materials.Count ?? 0}
-                Texture References: {scene?.Materials.Sum(static material => material.Textures.Count) ?? 0}
-                Bone Count: {scene?.Bones.Count ?? 0}
-                Bounds: {FormatBounds(scene?.Bounds)}
-                Diagnostics:
-                {string.Join(Environment.NewLine, diagnostics)}
-                """;
-        }
-
-        return
-            $"""
-            Asset: {asset.DisplayName}
-            Kind: {asset.AssetKind}
-            Category: {casGraph?.Category ?? asset.Category ?? "(unknown)"}
-            Package: {asset.PackagePath}
-            Root TGI: {asset.RootKey.FullTgi}
-            Swatch/Variant: {casGraph?.SwatchSummary ?? "(unknown)"}
-            Identity Resources: {casGraph?.IdentityResources.Count ?? 0}
-            Geometry Candidates: {casGraph?.GeometryResources.Count ?? 0}
-            Rig Candidates: {casGraph?.RigResources.Count ?? 0}
-            Texture Candidates: {casGraph?.TextureResources.Count ?? 0}
-            Supported Subset: {casGraph?.SupportedSubset ?? "(not supported)"}
-            Scene Root: {sceneRoot?.Key.FullTgi ?? "(unresolved)"}
-            Selected LOD: {casGraph?.SelectedLodLabel ?? "(not resolved)"}
-            Mesh Count: {scene?.Meshes.Count ?? 0}
-            Vertex Count: {(scene?.Meshes.Sum(static mesh => mesh.Positions.Count / 3) ?? 0):N0}
-            Index Count: {(scene?.Meshes.Sum(static mesh => mesh.Indices.Count) ?? 0):N0}
-            Material Slots: {scene?.Materials.Count ?? 0}
-            Texture References: {scene?.Materials.Sum(static material => material.Textures.Count) ?? 0}
-            Bone Count: {scene?.Bones.Count ?? 0}
-            Bounds: {FormatBounds(scene?.Bounds)}
-            Diagnostics:
-            {string.Join(Environment.NewLine, diagnostics)}
-            """;
+        previewAudioBytes = null;
+        PreviewImageSource = null;
+        CurrentScene = null;
+        PreviewText = string.Empty;
+        PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
+        PreviewSurfaceTitle = "Diagnostics";
+        NotifyPreviewStateChanged();
     }
 
-    private static string? ExtractDiagnosticValue(string? diagnostics, string prefix)
+    private void NotifyPreviewStateChanged()
     {
-        if (string.IsNullOrWhiteSpace(diagnostics))
-        {
-            return null;
-        }
-
-        foreach (var line in diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (line.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                return line[prefix.Length..].Trim();
-            }
-        }
-
-        return null;
+        OnPropertyChanged(nameof(IsScenePreviewActive));
+        OnPropertyChanged(nameof(IsImagePreviewActive));
+        OnPropertyChanged(nameof(IsDiagnosticsPreviewActive));
+        OnPropertyChanged(nameof(DiagnosticsPreviewVisibility));
+        OnPropertyChanged(nameof(SecondaryDiagnosticsVisibility));
+        OnPropertyChanged(nameof(CanResetView));
+        OnPropertyChanged(nameof(CanExportSelectedAsset));
     }
 
     partial void OnSelectedWorkerCountChanged(int value)
@@ -898,7 +967,14 @@ public sealed partial class MainViewModel : ObservableObject
         _ = appPreferencesService.SaveAsync(new AppPreferences(selectedWorkerCount), CancellationToken.None);
     }
 
-    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(IsNotBusy));
+    partial void OnIsBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsNotBusy));
+    }
+    partial void OnPreviewSurfaceModeChanged(PreviewSurfaceMode value) => NotifyPreviewStateChanged();
+    partial void OnPreviewImageSourceChanged(BitmapImage? value) => NotifyPreviewStateChanged();
+    partial void OnCurrentSceneChanged(CanonicalScene? value) => NotifyPreviewStateChanged();
+    partial void OnPreviewTextChanged(string value) => NotifyPreviewStateChanged();
 
     partial void OnSelectedBrowserModeChanged(BrowserMode value)
     {
@@ -950,6 +1026,7 @@ public sealed partial class MainViewModel : ObservableObject
         SyncAssetStateFromProperties();
         assetQueryDirty = true;
         UpdateBrowsePresentation();
+        _ = ReloadAssetFacetOptionsAsync();
         if (SelectedBrowserMode == BrowserMode.AssetBrowser)
         {
             _ = RefreshActiveBrowserAsync(resetWindow: true);
@@ -957,6 +1034,50 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     partial void OnAssetCategoryTextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetRootTypeTextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetIdentityTypeTextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetPrimaryGeometryTypeTextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetThumbnailTypeTextChanged(string value)
     {
         SyncAssetStateFromProperties();
         assetQueryDirty = true;
@@ -999,6 +1120,18 @@ public sealed partial class MainViewModel : ObservableObject
             _ = RefreshActiveBrowserAsync(resetWindow: true);
         }
     }
+
+    partial void OnAssetRequireSceneRootChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireExactGeometryCandidateChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireMaterialReferencesChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireTextureReferencesChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireIdentityMetadataChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireRigReferenceChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireGeometryReferenceChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireMaterialResourceCandidateChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireTextureResourceCandidateChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequirePackageLocalGraphChanged(bool value) => RefreshAssetCapabilityFilterChanged();
+    partial void OnAssetRequireDiagnosticsChanged(bool value) => RefreshAssetCapabilityFilterChanged();
 
     partial void OnAssetSortChanged(AssetBrowserSort value)
     {
@@ -1156,11 +1289,6 @@ public sealed partial class MainViewModel : ObservableObject
         ]);
     }
 
-    private static string FormatBounds(Bounds3D? bounds) =>
-        bounds is null
-            ? "(scene unavailable)"
-            : $"{bounds.MinX:0.###}, {bounds.MinY:0.###}, {bounds.MinZ:0.###} -> {bounds.MaxX:0.###}, {bounds.MaxY:0.###}, {bounds.MaxZ:0.###}";
-
     private static IReadOnlyList<ResourceMetadata> BuildSourceResources(AssetGraph graph, ResourceMetadata sceneRoot)
     {
         var resources = new List<ResourceMetadata> { sceneRoot };
@@ -1225,4 +1353,7 @@ public sealed partial class MainViewModel : ObservableObject
             collection.Add(value);
         }
     }
+
+    private static IReadOnlyList<string> PrependAll(IReadOnlyList<string> values) =>
+        ["All", .. values.Where(static value => !string.Equals(value, "All", StringComparison.Ordinal))];
 }

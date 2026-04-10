@@ -3,6 +3,8 @@
 - v1 does not attempt full Sim assembly from CAS parts.
 - Animation and CLIP export are out of scope.
 - Real 3D preview/export is currently limited to two narrow subsets: static Build/Buy model-rooted furniture/decor objects, and adult/young-adult human CAS hair/full body/top/bottom/shoes parts whose CAS part exposes a direct package-local skinned `Geometry` LOD.
+- Build/Buy logical assets that only resolve partially still appear in the browser, but they may fall back to diagnostics if no triangle meshes can be reconstructed.
+- The cache stores only cheap factual capability fields. Previewability/exportability labels are derived in the app at runtime, so some assets may still look promising in filters and fail later during actual scene reconstruction.
 - Generalized Geometry-root browsing, GEOM-list/container CAS resolution, occult/pet/child CAS coverage, assembled character preview, and broader Build/Buy dependency resolution remain unsupported.
 - Logical Build/Buy asset resolution is still package-local and best-effort rather than a fully reverse-engineered cross-package dependency graph.
 - CAS logical asset resolution is also still package-local and only supports direct `CASPart -> Geometry` links in the current pass.

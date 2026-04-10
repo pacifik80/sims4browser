@@ -100,7 +100,12 @@ public sealed record AssetBrowserQuery(
     bool VariantsOnly,
     AssetBrowserSort Sort,
     int Offset,
-    int WindowSize);
+    int WindowSize,
+    AssetCapabilityFilter? CapabilityFilter = null,
+    string RootTypeText = "",
+    string IdentityTypeText = "",
+    string PrimaryGeometryTypeText = "",
+    string ThumbnailTypeText = "");
 
 public sealed record RawResourceBrowserQuery(
     SourceScope SourceScope,
@@ -135,9 +140,24 @@ public sealed class AssetBrowserState
     public string SearchText { get; set; } = string.Empty;
     public AssetBrowserDomain Domain { get; set; } = AssetBrowserDomain.BuildBuy;
     public string CategoryText { get; set; } = string.Empty;
+    public string RootTypeText { get; set; } = string.Empty;
+    public string IdentityTypeText { get; set; } = string.Empty;
+    public string PrimaryGeometryTypeText { get; set; } = string.Empty;
+    public string ThumbnailTypeText { get; set; } = string.Empty;
     public string PackageText { get; set; } = string.Empty;
     public bool HasThumbnailOnly { get; set; }
     public bool VariantsOnly { get; set; }
+    public bool RequireSceneRoot { get; set; }
+    public bool RequireExactGeometryCandidate { get; set; }
+    public bool RequireMaterialReferences { get; set; }
+    public bool RequireTextureReferences { get; set; }
+    public bool RequireIdentityMetadata { get; set; }
+    public bool RequireRigReference { get; set; }
+    public bool RequireGeometryReference { get; set; }
+    public bool RequireMaterialResourceCandidate { get; set; }
+    public bool RequireTextureResourceCandidate { get; set; }
+    public bool RequirePackageLocalGraph { get; set; }
+    public bool RequireDiagnostics { get; set; }
     public AssetBrowserSort Sort { get; set; } = AssetBrowserSort.Name;
 
     public AssetBrowserQuery ToQuery(SourceScope sourceScope, int offset, int windowSize) =>
@@ -145,13 +165,29 @@ public sealed class AssetBrowserState
             sourceScope,
             SearchText.Trim(),
             Domain,
-            CategoryText.Trim(),
+            NormalizeFacetValue(CategoryText),
             PackageText.Trim(),
             HasThumbnailOnly,
             VariantsOnly,
             Sort,
             offset,
-            windowSize);
+            windowSize,
+            new AssetCapabilityFilter(
+                RequireSceneRoot,
+                RequireExactGeometryCandidate,
+                RequireMaterialReferences,
+                RequireTextureReferences,
+                RequireIdentityMetadata,
+                RequireRigReference,
+                RequireGeometryReference,
+                RequireMaterialResourceCandidate,
+                RequireTextureResourceCandidate,
+                RequirePackageLocalGraph,
+                RequireDiagnostics),
+            NormalizeFacetValue(RootTypeText),
+            NormalizeFacetValue(IdentityTypeText),
+            NormalizeFacetValue(PrimaryGeometryTypeText),
+            NormalizeFacetValue(ThumbnailTypeText));
 
     public IReadOnlyList<FilterChip> BuildFilterChips(SourceScope sourceScope)
     {
@@ -173,6 +209,26 @@ public sealed class AssetBrowserState
             chips.Add(new FilterChip("category", $"Category: {CategoryText.Trim()}"));
         }
 
+        if (!string.IsNullOrWhiteSpace(RootTypeText))
+        {
+            chips.Add(new FilterChip("rootType", $"Root type: {RootTypeText.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(IdentityTypeText))
+        {
+            chips.Add(new FilterChip("identityType", $"Identity type: {IdentityTypeText.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(PrimaryGeometryTypeText))
+        {
+            chips.Add(new FilterChip("geometryType", $"Geometry type: {PrimaryGeometryTypeText.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(ThumbnailTypeText))
+        {
+            chips.Add(new FilterChip("thumbnailType", $"Thumbnail type: {ThumbnailTypeText.Trim()}"));
+        }
+
         if (!string.IsNullOrWhiteSpace(PackageText))
         {
             chips.Add(new FilterChip("package", $"Package: {PackageText.Trim()}"));
@@ -186,6 +242,61 @@ public sealed class AssetBrowserState
         if (VariantsOnly)
         {
             chips.Add(new FilterChip("variants", "Has variants"));
+        }
+
+        if (RequireSceneRoot)
+        {
+            chips.Add(new FilterChip("sceneRoot", "Has scene root"));
+        }
+
+        if (RequireExactGeometryCandidate)
+        {
+            chips.Add(new FilterChip("exactGeometry", "Has exact geometry"));
+        }
+
+        if (RequireMaterialReferences)
+        {
+            chips.Add(new FilterChip("materialRefs", "Has material refs"));
+        }
+
+        if (RequireTextureReferences)
+        {
+            chips.Add(new FilterChip("textureRefs", "Has texture refs"));
+        }
+
+        if (RequireIdentityMetadata)
+        {
+            chips.Add(new FilterChip("identityMetadata", "Has identity metadata"));
+        }
+
+        if (RequireRigReference)
+        {
+            chips.Add(new FilterChip("rigReference", "Has rig reference"));
+        }
+
+        if (RequireGeometryReference)
+        {
+            chips.Add(new FilterChip("geometryReference", "Has geometry reference"));
+        }
+
+        if (RequireMaterialResourceCandidate)
+        {
+            chips.Add(new FilterChip("materialCandidate", "Has material candidate"));
+        }
+
+        if (RequireTextureResourceCandidate)
+        {
+            chips.Add(new FilterChip("textureCandidate", "Has texture candidate"));
+        }
+
+        if (RequirePackageLocalGraph)
+        {
+            chips.Add(new FilterChip("packageLocal", "Package-local graph"));
+        }
+
+        if (RequireDiagnostics)
+        {
+            chips.Add(new FilterChip("diagnostics", "Has diagnostics"));
         }
 
         return chips;
@@ -207,6 +318,18 @@ public sealed class AssetBrowserState
             case "category":
                 CategoryText = string.Empty;
                 break;
+            case "rootType":
+                RootTypeText = string.Empty;
+                break;
+            case "identityType":
+                IdentityTypeText = string.Empty;
+                break;
+            case "geometryType":
+                PrimaryGeometryTypeText = string.Empty;
+                break;
+            case "thumbnailType":
+                ThumbnailTypeText = string.Empty;
+                break;
             case "package":
                 PackageText = string.Empty;
                 break;
@@ -216,6 +339,39 @@ public sealed class AssetBrowserState
             case "variants":
                 VariantsOnly = false;
                 break;
+            case "sceneRoot":
+                RequireSceneRoot = false;
+                break;
+            case "exactGeometry":
+                RequireExactGeometryCandidate = false;
+                break;
+            case "materialRefs":
+                RequireMaterialReferences = false;
+                break;
+            case "textureRefs":
+                RequireTextureReferences = false;
+                break;
+            case "identityMetadata":
+                RequireIdentityMetadata = false;
+                break;
+            case "rigReference":
+                RequireRigReference = false;
+                break;
+            case "geometryReference":
+                RequireGeometryReference = false;
+                break;
+            case "materialCandidate":
+                RequireMaterialResourceCandidate = false;
+                break;
+            case "textureCandidate":
+                RequireTextureResourceCandidate = false;
+                break;
+            case "packageLocal":
+                RequirePackageLocalGraph = false;
+                break;
+            case "diagnostics":
+                RequireDiagnostics = false;
+                break;
         }
     }
 
@@ -224,11 +380,29 @@ public sealed class AssetBrowserState
         SearchText = string.Empty;
         Domain = AssetBrowserDomain.BuildBuy;
         CategoryText = string.Empty;
+        RootTypeText = string.Empty;
+        IdentityTypeText = string.Empty;
+        PrimaryGeometryTypeText = string.Empty;
+        ThumbnailTypeText = string.Empty;
         PackageText = string.Empty;
         HasThumbnailOnly = false;
         VariantsOnly = false;
+        RequireSceneRoot = false;
+        RequireExactGeometryCandidate = false;
+        RequireMaterialReferences = false;
+        RequireTextureReferences = false;
+        RequireIdentityMetadata = false;
+        RequireRigReference = false;
+        RequireGeometryReference = false;
+        RequireMaterialResourceCandidate = false;
+        RequireTextureResourceCandidate = false;
+        RequirePackageLocalGraph = false;
+        RequireDiagnostics = false;
         Sort = AssetBrowserSort.Name;
     }
+
+    private static string NormalizeFacetValue(string value) =>
+        string.Equals(value.Trim(), "All", StringComparison.OrdinalIgnoreCase) ? string.Empty : value.Trim();
 }
 
 public sealed class RawResourceBrowserState
