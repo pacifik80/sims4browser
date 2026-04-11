@@ -1069,6 +1069,45 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void MaterialDecoder_DecodesPackedUvMapping_FromHalfFloatWindow()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var uvCategory = Enum.Parse(shaderCategoryType, "UvMapping");
+        var packedRepresentation = Enum.Parse(representationType, "PackedUInt32");
+        var property = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 1u, 1u, 4u, uvCategory, packedRepresentation, "packed32=[...]", null, new uint[] { 0x34003800, 0x3A003C00 }, null],
+            culture: null)!;
+        var mapping = Activator.CreateInstance(
+            uvMappingType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0, 1f, 1f, 0f, 0f],
+            culture: null)!;
+        var args = new object?[] { property, mapping, null, null };
+
+        var interpreted = (bool)decoderType
+            .GetMethod("TryInterpretPackedUvMapping", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, args)!;
+
+        Assert.True(interpreted);
+        Assert.NotNull(args[2]);
+        Assert.Contains("half-float", (string)args[3]!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0.5f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(args[2])!, 3);
+        Assert.Equal(0.25f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(args[2])!, 3);
+        Assert.Equal(1f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(args[2])!, 3);
+        Assert.Equal(0.75f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(args[2])!, 3);
+    }
+
+    [Fact]
     public async Task CasLogicalAsset_ExportsBundleFromSyntheticFixture()
     {
         var packagePath = Path.Combine(tempRoot, "cas-export.package");

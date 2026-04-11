@@ -115,7 +115,15 @@ internal static class Ts4MaterialDecoder
             if (string.Equals(property.Name, "uvMapping", StringComparison.OrdinalIgnoreCase) &&
                 property.ValueRepresentation == MaterialValueRepresentation.PackedUInt32)
             {
-                notes.Add("uvMapping is stored as packed data and is not yet decoded by the generic material pipeline.");
+                if (TryInterpretPackedUvMapping(property, mapping, out var packedMapping, out var packedNote))
+                {
+                    mapping = packedMapping;
+                    notes.Add(packedNote);
+                }
+                else
+                {
+                    notes.Add("uvMapping is stored as packed data and is not yet decoded by the generic material pipeline.");
+                }
             }
 
             if (!suggestsAlphaCutout &&
@@ -355,6 +363,162 @@ internal static class Ts4MaterialDecoder
             .Select(static group => group.First())
             .OrderBy(static instruction => instruction.Slot, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    internal static bool TryInterpretPackedUvMapping(MaterialIrProperty property, Ts4TextureUvMapping current, out Ts4TextureUvMapping updated, out string note)
+    {
+        updated = current;
+        note = string.Empty;
+        if (property.PackedUInt32Values is not { Length: > 0 } packed)
+        {
+            return false;
+        }
+
+        if (TryExtractPlausibleUvVector(EnumerateHalfFloatWindows(packed), out var halfVector))
+        {
+            updated = current with
+            {
+                UvScaleU = halfVector[0],
+                UvScaleV = halfVector[1],
+                UvOffsetU = halfVector[2],
+                UvOffsetV = halfVector[3]
+            };
+            note = $"Packed uvMapping decoded from half-float window -> scale=({halfVector[0]:0.###}, {halfVector[1]:0.###}) offset=({halfVector[2]:0.###}, {halfVector[3]:0.###}).";
+            return true;
+        }
+
+        if (TryExtractPlausibleUvVector(EnumerateNormalizedUInt16Windows(packed), out var normalizedVector))
+        {
+            updated = current with
+            {
+                UvScaleU = normalizedVector[0],
+                UvScaleV = normalizedVector[1],
+                UvOffsetU = normalizedVector[2],
+                UvOffsetV = normalizedVector[3]
+            };
+            note = $"Packed uvMapping decoded from normalized-uint16 window -> scale=({normalizedVector[0]:0.###}, {normalizedVector[1]:0.###}) offset=({normalizedVector[2]:0.###}, {normalizedVector[3]:0.###}).";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<float[]> EnumerateHalfFloatWindows(uint[] packed)
+    {
+        var halves = UnpackUInt16Values(packed);
+        if (halves.Length < 4)
+        {
+            yield break;
+        }
+
+        var values = new float[halves.Length];
+        for (var i = 0; i < halves.Length; i++)
+        {
+            values[i] = ConvertHalfToSingle(halves[i]);
+        }
+
+        for (var i = 0; i + 3 < values.Length; i++)
+        {
+            yield return [values[i], values[i + 1], values[i + 2], values[i + 3]];
+        }
+    }
+
+    private static IEnumerable<float[]> EnumerateNormalizedUInt16Windows(uint[] packed)
+    {
+        var halves = UnpackUInt16Values(packed);
+        if (halves.Length < 4)
+        {
+            yield break;
+        }
+
+        var values = new float[halves.Length];
+        for (var i = 0; i < halves.Length; i++)
+        {
+            values[i] = halves[i] / 65535f;
+        }
+
+        for (var i = 0; i + 3 < values.Length; i++)
+        {
+            yield return [values[i], values[i + 1], values[i + 2], values[i + 3]];
+        }
+    }
+
+    private static ushort[] UnpackUInt16Values(uint[] packed)
+    {
+        var values = new ushort[packed.Length * 2];
+        for (var i = 0; i < packed.Length; i++)
+        {
+            values[i * 2] = (ushort)(packed[i] & 0xFFFF);
+            values[(i * 2) + 1] = (ushort)(packed[i] >> 16);
+        }
+
+        return values;
+    }
+
+    private static bool TryExtractPlausibleUvVector(IEnumerable<float[]> candidates, out float[] vector)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (!IsPlausiblePackedUvValue(candidate[0], requirePositive: true) ||
+                !IsPlausiblePackedUvValue(candidate[1], requirePositive: true) ||
+                !IsPlausiblePackedUvValue(candidate[2], requirePositive: false) ||
+                !IsPlausiblePackedUvValue(candidate[3], requirePositive: false))
+            {
+                continue;
+            }
+
+            if (candidate[0] <= 0.0001f || candidate[1] <= 0.0001f)
+            {
+                continue;
+            }
+
+            vector = candidate;
+            return true;
+        }
+
+        vector = [];
+        return false;
+    }
+
+    private static bool IsPlausiblePackedUvValue(float value, bool requirePositive)
+    {
+        if (!float.IsFinite(value))
+        {
+            return false;
+        }
+
+        if (requirePositive && value < 0f)
+        {
+            return false;
+        }
+
+        return MathF.Abs(value) <= 8f;
+    }
+
+    private static float ConvertHalfToSingle(ushort value)
+    {
+        var sign = (value >> 15) & 0x1;
+        var exponent = (value >> 10) & 0x1F;
+        var fraction = value & 0x03FF;
+
+        if (exponent == 0)
+        {
+            if (fraction == 0)
+            {
+                return sign == 0 ? 0f : -0f;
+            }
+
+            return (float)((sign == 0 ? 1.0 : -1.0) * Math.Pow(2, -14) * (fraction / 1024.0));
+        }
+
+        if (exponent == 31)
+        {
+            return fraction == 0
+                ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity)
+                : float.NaN;
+        }
+
+        return (float)((sign == 0 ? 1.0 : -1.0) * Math.Pow(2, exponent - 15) * (1.0 + (fraction / 1024.0)));
     }
 }
 
