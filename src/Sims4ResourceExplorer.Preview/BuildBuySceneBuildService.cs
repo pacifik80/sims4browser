@@ -603,6 +603,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         foreach (var reference in matd.TextureReferences)
         {
             var resolvedSlot = Ts4ShaderSemantics.ResolveTextureSlotName(reference, shaderProfile);
+            var samplingInstruction = materialDecode.SamplingInstructions
+                .FirstOrDefault(instruction => instruction.Slot.Equals(resolvedSlot, StringComparison.OrdinalIgnoreCase));
             var cacheKey = $"{reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}";
             if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
             {
@@ -631,21 +633,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 {
                     Slot = resolvedSlot,
                     Semantic = ClassifyTextureSemantic(resolvedSlot),
-                    UvChannel = resolvedSlot is "diffuse" or "basecolor" or "albedo"
-                        ? materialDecode.DiffuseUvMapping.UvChannel
-                        : cachedTexture.UvChannel,
-                    UvScaleU = resolvedSlot is "diffuse" or "basecolor" or "albedo"
-                        ? materialDecode.DiffuseUvMapping.UvScaleU
-                        : cachedTexture.UvScaleU,
-                    UvScaleV = resolvedSlot is "diffuse" or "basecolor" or "albedo"
-                        ? materialDecode.DiffuseUvMapping.UvScaleV
-                        : cachedTexture.UvScaleV,
-                    UvOffsetU = resolvedSlot is "diffuse" or "basecolor" or "albedo"
-                        ? materialDecode.DiffuseUvMapping.UvOffsetU
-                        : cachedTexture.UvOffsetU,
-                    UvOffsetV = resolvedSlot is "diffuse" or "basecolor" or "albedo"
-                        ? materialDecode.DiffuseUvMapping.UvOffsetV
-                        : cachedTexture.UvOffsetV
+                    UvChannel = samplingInstruction?.UvChannel ?? cachedTexture.UvChannel,
+                    UvScaleU = samplingInstruction?.UvScaleU ?? cachedTexture.UvScaleU,
+                    UvScaleV = samplingInstruction?.UvScaleV ?? cachedTexture.UvScaleV,
+                    UvOffsetU = samplingInstruction?.UvOffsetU ?? cachedTexture.UvOffsetU,
+                    UvOffsetV = samplingInstruction?.UvOffsetV ?? cachedTexture.UvOffsetV
                 });
             }
         }
@@ -691,6 +683,12 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             {
                 diagnostics.Add($"Shader-derived MATD semantics: {string.Join(", ", matchedProperties)}.");
             }
+        }
+
+        if (materialDecode.SamplingInstructions.Count > 0)
+        {
+            diagnostics.Add(
+                $"Material sampling instructions: {string.Join(", ", materialDecode.SamplingInstructions.Select(static instruction => FormattableString.Invariant($"{instruction.Slot}->UV{instruction.UvChannel} scale=({instruction.UvScaleU:0.###},{instruction.UvScaleV:0.###}) offset=({instruction.UvOffsetU:0.###},{instruction.UvOffsetV:0.###}) [{instruction.Source}]")))}.");
         }
 
         var isTransparent = matd.IsTransparent ||

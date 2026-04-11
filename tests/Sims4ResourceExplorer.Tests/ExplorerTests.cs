@@ -1000,6 +1000,75 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void MaterialDecoder_ProducesSamplingInstructions_ForTextureSlots()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+
+        var key = Activator.CreateInstance(
+            resourceKeyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul],
+            culture: null)!;
+        var diffuseRef = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["diffuse", key, 0x1B9D3AC5u],
+            culture: null)!;
+        var normalRef = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["normal", key, 0x9F5D1C9Bu],
+            culture: null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 2);
+        textureRefs.SetValue(diffuseRef, 0);
+        textureRefs.SetValue(normalRef, 1);
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [1, 0.5f, 0.25f, 0.125f, 0.75f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instructions = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().ToArray();
+
+        Assert.Equal(2, instructions.Length);
+        var diffuse = instructions.Single(instruction => string.Equals((string)instruction.GetType().GetProperty("Slot")!.GetValue(instruction)!, "diffuse", StringComparison.OrdinalIgnoreCase));
+        var normal = instructions.Single(instruction => string.Equals((string)instruction.GetType().GetProperty("Slot")!.GetValue(instruction)!, "normal", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(1, (int)diffuse.GetType().GetProperty("UvChannel")!.GetValue(diffuse)!);
+        Assert.Equal(0.5f, (float)diffuse.GetType().GetProperty("UvScaleU")!.GetValue(diffuse)!, 3);
+        Assert.Equal("diffuse-material-path", (string)diffuse.GetType().GetProperty("Source")!.GetValue(diffuse)!);
+
+        Assert.Equal(0, (int)normal.GetType().GetProperty("UvChannel")!.GetValue(normal)!);
+        Assert.Equal(1f, (float)normal.GetType().GetProperty("UvScaleU")!.GetValue(normal)!, 3);
+        Assert.Equal("default-uv0", (string)normal.GetType().GetProperty("Source")!.GetValue(normal)!);
+    }
+
+    [Fact]
     public async Task CasLogicalAsset_ExportsBundleFromSyntheticFixture()
     {
         var packagePath = Path.Combine(tempRoot, "cas-export.package");

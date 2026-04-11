@@ -11,18 +11,30 @@ internal enum Ts4MaterialFamilyKind
     ColorMap = 6
 }
 
+internal sealed record Ts4MaterialSamplingInstruction(
+    string Slot,
+    int UvChannel,
+    float UvScaleU,
+    float UvScaleV,
+    float UvOffsetU,
+    float UvOffsetV,
+    string Source,
+    bool IsApproximate);
+
 internal sealed record Ts4MaterialDecodeResult(
     string ShaderProfileName,
     string ShaderFamilyName,
     Ts4MaterialFamilyKind FamilyKind,
     string StrategyName,
     Ts4TextureUvMapping DiffuseUvMapping,
+    IReadOnlyList<Ts4MaterialSamplingInstruction> SamplingInstructions,
     bool SuggestsAlphaCutout,
     string? AlphaModeHint,
     IReadOnlyList<string> Notes);
 
 internal sealed record Ts4MaterialDecodeState(
     Ts4TextureUvMapping DiffuseUvMapping,
+    IReadOnlyList<Ts4MaterialSamplingInstruction> SamplingInstructions,
     bool SuggestsAlphaCutout,
     string? AlphaModeHint,
     IReadOnlyList<string> Notes);
@@ -154,6 +166,7 @@ internal static class Ts4MaterialDecoder
             familyKind,
             strategyName,
             mapping,
+            BuildSamplingInstructions(material, mapping),
             suggestsAlphaCutout,
             alphaModeHint,
             notes);
@@ -171,12 +184,13 @@ internal static class Ts4MaterialDecoder
             familyKind,
             strategyName,
             state.DiffuseUvMapping,
+            state.SamplingInstructions,
             state.SuggestsAlphaCutout,
             state.AlphaModeHint,
             state.Notes);
 
     internal static Ts4MaterialDecodeState ToState(this Ts4MaterialDecodeResult result) =>
-        new(result.DiffuseUvMapping, result.SuggestsAlphaCutout, result.AlphaModeHint, result.Notes);
+        new(result.DiffuseUvMapping, result.SamplingInstructions, result.SuggestsAlphaCutout, result.AlphaModeHint, result.Notes);
 
     internal static string NormalizeFamilyName(string profileName)
     {
@@ -296,8 +310,51 @@ internal static class Ts4MaterialDecoder
         return state with
         {
             DiffuseUvMapping = mapping,
+            SamplingInstructions = BuildSamplingInstructions(material, mapping),
             Notes = notes
         };
+    }
+
+    internal static IReadOnlyList<Ts4MaterialSamplingInstruction> BuildSamplingInstructions(MaterialIr material, Ts4TextureUvMapping diffuseMapping)
+    {
+        if (material.TextureReferences.Count == 0)
+        {
+            return [];
+        }
+
+        static bool UsesDiffuseUvTransform(string slot) =>
+            slot.Equals("diffuse", StringComparison.OrdinalIgnoreCase) ||
+            slot.Equals("basecolor", StringComparison.OrdinalIgnoreCase) ||
+            slot.Equals("albedo", StringComparison.OrdinalIgnoreCase) ||
+            slot.Equals("alpha", StringComparison.OrdinalIgnoreCase) ||
+            slot.Equals("opacity", StringComparison.OrdinalIgnoreCase) ||
+            slot.Equals("mask", StringComparison.OrdinalIgnoreCase) ||
+            slot.Equals("overlay", StringComparison.OrdinalIgnoreCase) ||
+            slot.Equals("cutout", StringComparison.OrdinalIgnoreCase);
+
+        var instructions = new List<Ts4MaterialSamplingInstruction>(material.TextureReferences.Count);
+        foreach (var reference in material.TextureReferences)
+        {
+            var usesDiffuse = UsesDiffuseUvTransform(reference.Slot);
+            var mapping = usesDiffuse
+                ? diffuseMapping
+                : new Ts4TextureUvMapping(0, 1f, 1f, 0f, 0f);
+            instructions.Add(new Ts4MaterialSamplingInstruction(
+                reference.Slot,
+                mapping.UvChannel,
+                mapping.UvScaleU,
+                mapping.UvScaleV,
+                mapping.UvOffsetU,
+                mapping.UvOffsetV,
+                usesDiffuse ? "diffuse-material-path" : "default-uv0",
+                IsApproximate: !usesDiffuse));
+        }
+
+        return instructions
+            .GroupBy(static instruction => instruction.Slot, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .OrderBy(static instruction => instruction.Slot, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 }
 
