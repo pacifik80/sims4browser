@@ -274,10 +274,44 @@ internal static class Ts4ShaderSemantics
             }
         }
 
+        if ((name.Contains("UVScaleU", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("UScale", StringComparison.OrdinalIgnoreCase)) &&
+            IsPlausibleUvMagnitude(scalarValue) &&
+            scalarValue != 0f)
+        {
+            updated = current with { UvScaleU = Math.Clamp(MathF.Abs(scalarValue), 0.001f, 1024f) };
+            return true;
+        }
+
+        if ((name.Contains("UVScaleV", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("VScale", StringComparison.OrdinalIgnoreCase)) &&
+            IsPlausibleUvMagnitude(scalarValue) &&
+            scalarValue != 0f)
+        {
+            updated = current with { UvScaleV = Math.Clamp(MathF.Abs(scalarValue), 0.001f, 1024f) };
+            return true;
+        }
+
         if (name.Contains("UVScale", StringComparison.OrdinalIgnoreCase) && IsPlausibleUvMagnitude(scalarValue) && scalarValue != 0f)
         {
             var scale = Math.Clamp(MathF.Abs(scalarValue), 0.001f, 1024f);
             updated = current with { UvScaleU = scale, UvScaleV = scale };
+            return true;
+        }
+
+        if ((name.Contains("UVOffsetU", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("UOffset", StringComparison.OrdinalIgnoreCase)) &&
+            IsPlausibleUvMagnitude(scalarValue, allowNegative: true))
+        {
+            updated = current with { UvOffsetU = scalarValue };
+            return true;
+        }
+
+        if ((name.Contains("UVOffsetV", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("VOffset", StringComparison.OrdinalIgnoreCase)) &&
+            IsPlausibleUvMagnitude(scalarValue, allowNegative: true))
+        {
+            updated = current with { UvOffsetV = scalarValue };
             return true;
         }
 
@@ -304,6 +338,44 @@ internal static class Ts4ShaderSemantics
         }
 
         var name = parameter.Name;
+        if ((name.Contains("AtlasMin", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("MapMin", StringComparison.OrdinalIgnoreCase)) &&
+            values.Length >= 2 &&
+            IsPlausibleUvMagnitude(values[0], allowNegative: true) &&
+            IsPlausibleUvMagnitude(values[1], allowNegative: true))
+        {
+            updated = current with
+            {
+                UvOffsetU = values[0],
+                UvOffsetV = values[1]
+            };
+            return true;
+        }
+
+        if ((name.Contains("AtlasMax", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("MapMax", StringComparison.OrdinalIgnoreCase)) &&
+            values.Length >= 2 &&
+            IsPlausibleUvMagnitude(values[0], allowNegative: true) &&
+            IsPlausibleUvMagnitude(values[1], allowNegative: true) &&
+            values[0] != current.UvOffsetU &&
+            values[1] != current.UvOffsetV)
+        {
+            var scaleU = values[0] - current.UvOffsetU;
+            var scaleV = values[1] - current.UvOffsetV;
+            if (IsPlausibleUvMagnitude(scaleU, allowNegative: true) &&
+                IsPlausibleUvMagnitude(scaleV, allowNegative: true) &&
+                MathF.Abs(scaleU) > 0.0001f &&
+                MathF.Abs(scaleV) > 0.0001f)
+            {
+                updated = current with
+                {
+                    UvScaleU = Math.Clamp(MathF.Abs(scaleU), 0.001f, 1024f),
+                    UvScaleV = Math.Clamp(MathF.Abs(scaleV), 0.001f, 1024f)
+                };
+                return true;
+            }
+        }
+
         if (name.Contains("uvMapping", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("MapAtlas", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("AtlasRect", StringComparison.OrdinalIgnoreCase))

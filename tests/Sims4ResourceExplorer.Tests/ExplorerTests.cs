@@ -446,6 +446,102 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void ShaderSemantics_InterpretsSeparateUvScalarControls()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var scalarCategory = Enum.Parse(shaderCategoryType, "Scalar");
+        var mapping = Activator.CreateInstance(
+            uvMappingType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0, 1f, 1f, 0f, 0f],
+            culture: null)!;
+
+        object Apply(string name, float value, object current)
+        {
+            var parameter = Activator.CreateInstance(
+                shaderParameterType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null,
+                args: [0x10000000u, name, 0x0103C001u, 0x00001004u, scalarCategory],
+                culture: null)!;
+            var args = new object?[] { parameter, value, current, null };
+            var handled = (bool)semanticsType
+                .GetMethod("TryInterpretDiffuseUvMappingScalar", BindingFlags.Public | BindingFlags.Static)!
+                .Invoke(null, args)!;
+            Assert.True(handled);
+            Assert.NotNull(args[3]);
+            return args[3]!;
+        }
+
+        mapping = Apply("DiffuseUVScaleU", 0.25f, mapping);
+        mapping = Apply("DiffuseUVScaleV", 0.5f, mapping);
+        mapping = Apply("DiffuseUVOffsetU", 0.125f, mapping);
+        mapping = Apply("DiffuseUVOffsetV", -0.375f, mapping);
+
+        Assert.Equal(0.25f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(mapping)!);
+        Assert.Equal(0.5f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(mapping)!);
+        Assert.Equal(0.125f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(mapping)!);
+        Assert.Equal(-0.375f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(mapping)!);
+    }
+
+    [Fact]
+    public void ShaderSemantics_InterpretsAtlasMinMaxVectors()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var vectorCategory = Enum.Parse(shaderCategoryType, "Vector2");
+        var atlasMin = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x20000000u, "DiffuseAtlasMin", 0x01324601u, 0x80004000u, vectorCategory],
+            culture: null)!;
+        var atlasMax = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x20000001u, "DiffuseAtlasMax", 0x01324601u, 0x80004000u, vectorCategory],
+            culture: null)!;
+        var mapping = Activator.CreateInstance(
+            uvMappingType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0, 1f, 1f, 0f, 0f],
+            culture: null)!;
+        var vectorMethod = semanticsType.GetMethod(
+            "TryInterpretDiffuseUvMappingVector",
+            BindingFlags.Public | BindingFlags.Static,
+            binder: null,
+            types: [shaderParameterType, typeof(float[]), uvMappingType, uvMappingType.MakeByRefType()],
+            modifiers: null)!;
+
+        var minArgs = new object?[] { atlasMin, new[] { 0.2f, 0.3f }, mapping, null };
+        var minHandled = (bool)vectorMethod.Invoke(null, minArgs)!;
+        Assert.True(minHandled);
+        mapping = minArgs[3]!;
+
+        var maxArgs = new object?[] { atlasMax, new[] { 0.7f, 0.9f }, mapping, null };
+        var maxHandled = (bool)vectorMethod.Invoke(null, maxArgs)!;
+        Assert.True(maxHandled);
+        Assert.NotNull(maxArgs[3]);
+
+        Assert.Equal(0.2f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(maxArgs[3])!, 3);
+        Assert.Equal(0.3f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(maxArgs[3])!, 3);
+        Assert.Equal(0.5f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(maxArgs[3])!, 3);
+        Assert.Equal(0.6f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(maxArgs[3])!, 3);
+    }
+
+    [Fact]
     public void MatdDecoder_ClassifiesPackedVectorPayloadAsPackedUInt32()
     {
         var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
