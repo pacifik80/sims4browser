@@ -37,6 +37,9 @@ internal interface ITs4MaterialDecodeStrategy
 
 internal static class Ts4MaterialDecoder
 {
+    private const uint ColorMapLegacyUvChannelSelectorHash = 0xB95C43EB;
+    private const uint ColorMapLegacyAtlasCropHash = 0xCEBA7E8A;
+
     private static readonly ITs4MaterialDecodeStrategy[] strategies =
     [
         new SeasonalFoliageMaterialDecodeStrategy(),
@@ -249,6 +252,53 @@ internal static class Ts4MaterialDecoder
         profileName.Equals("TextureCompositorOverlay", StringComparison.OrdinalIgnoreCase) ||
         familyName.Equals("BlockPreview", StringComparison.OrdinalIgnoreCase) ||
         profileName.Equals("BlockPreview", StringComparison.OrdinalIgnoreCase);
+
+    internal static Ts4MaterialDecodeState ApplyLegacyColorMapRules(Ts4MaterialDecodeState state, MaterialIr material)
+    {
+        var notes = state.Notes.ToList();
+        var mapping = state.DiffuseUvMapping;
+
+        var uvChannelSelector = material.Properties.FirstOrDefault(static property => property.Hash == ColorMapLegacyUvChannelSelectorHash);
+        if (uvChannelSelector?.ValueRepresentation == MaterialValueRepresentation.Scalar &&
+            uvChannelSelector.FloatValues is { Length: > 0 } selectorValues)
+        {
+            var rounded = (int)MathF.Round(selectorValues[0]);
+            if (rounded is 0 or 1)
+            {
+                mapping = mapping with { UvChannel = rounded };
+                notes.Add($"colorMap legacy UV channel selector applied from 0x{ColorMapLegacyUvChannelSelectorHash:X8} -> UV{rounded}.");
+            }
+        }
+
+        var packedAtlas = material.Properties.FirstOrDefault(static property => property.Hash == ColorMapLegacyAtlasCropHash);
+        if (packedAtlas?.ValueRepresentation == MaterialValueRepresentation.FloatVector &&
+            packedAtlas.FloatValues is { Length: >= 4 } atlasValues &&
+            mapping.UvChannel == 1)
+        {
+            var scaleU = atlasValues[0];
+            var scaleV = atlasValues[1];
+            var offsetV = atlasValues[3];
+            if (scaleU > 0f && scaleU <= 1f &&
+                scaleV > 0f && scaleV <= 1f &&
+                float.IsFinite(offsetV))
+            {
+                mapping = mapping with
+                {
+                    UvScaleU = scaleU,
+                    UvOffsetU = scaleU,
+                    UvScaleV = scaleV,
+                    UvOffsetV = Math.Clamp(offsetV, 0f, 1f)
+                };
+                notes.Add($"colorMap legacy atlas crop applied from 0x{ColorMapLegacyAtlasCropHash:X8}.");
+            }
+        }
+
+        return state with
+        {
+            DiffuseUvMapping = mapping,
+            Notes = notes
+        };
+    }
 }
 
 internal sealed class SeasonalFoliageMaterialDecodeStrategy : ITs4MaterialDecodeStrategy
@@ -313,57 +363,15 @@ internal sealed class ColorMap7MaterialDecodeStrategy : ITs4MaterialDecodeStrate
 
     public Ts4MaterialDecodeResult Decode(string profileName, string familyName, MaterialIr material, ShaderBlockProfile? profile)
     {
-        var state = Ts4MaterialDecoder.DecodeGeneric(profileName, familyName, FamilyKind, Name, material, profile).ToState();
-        var notes = state.Notes.ToList();
-        var mapping = state.DiffuseUvMapping;
-
-        // Legacy colorMap7 handling from the original preview path, now centralized in the
-        // family decoder rather than hardcoded in MATD parse.
-        var uvChannelSelector = material.Properties.FirstOrDefault(static property => property.Hash == 0xB95C43EB);
-        if (uvChannelSelector?.ValueRepresentation == MaterialValueRepresentation.Scalar &&
-            uvChannelSelector.FloatValues is { Length: > 0 } selectorValues)
-        {
-            var rounded = (int)MathF.Round(selectorValues[0]);
-            if (rounded is 0 or 1)
-            {
-                mapping = mapping with { UvChannel = rounded };
-                notes.Add($"colorMap7 legacy UV channel selector applied from 0xB95C43EB -> UV{rounded}.");
-            }
-        }
-
-        var packedAtlas = material.Properties.FirstOrDefault(static property => property.Hash == 0xCEBA7E8A);
-        if (packedAtlas?.ValueRepresentation == MaterialValueRepresentation.FloatVector &&
-            packedAtlas.FloatValues is { Length: >= 4 } atlasValues &&
-            mapping.UvChannel == 1)
-        {
-            var scaleU = atlasValues[0];
-            var scaleV = atlasValues[1];
-            var offsetV = atlasValues[3];
-            if (scaleU > 0f && scaleU <= 1f &&
-                scaleV > 0f && scaleV <= 1f &&
-                float.IsFinite(offsetV))
-            {
-                mapping = mapping with
-                {
-                    UvScaleU = scaleU,
-                    UvOffsetU = scaleU,
-                    UvScaleV = scaleV,
-                    UvOffsetV = Math.Clamp(offsetV, 0f, 1f)
-                };
-                notes.Add("colorMap7 legacy atlas crop applied from 0xCEBA7E8A.");
-            }
-        }
-
+        var state = Ts4MaterialDecoder.ApplyLegacyColorMapRules(
+            Ts4MaterialDecoder.DecodeGeneric(profileName, familyName, FamilyKind, Name, material, profile).ToState(),
+            material);
         return Ts4MaterialDecoder.BuildResult(
             profileName,
             familyName,
             FamilyKind,
             Name,
-            state with
-            {
-                DiffuseUvMapping = mapping,
-                Notes = notes
-            });
+            state);
     }
 }
 
@@ -375,8 +383,13 @@ internal sealed class ColorMapMaterialDecodeStrategy : ITs4MaterialDecodeStrateg
     public bool CanHandle(string familyName, MaterialIr material, ShaderBlockProfile? profile) =>
         Ts4MaterialDecoder.IsColorMapFamily(familyName, profile?.Name ?? familyName);
 
-    public Ts4MaterialDecodeResult Decode(string profileName, string familyName, MaterialIr material, ShaderBlockProfile? profile) =>
-        Ts4MaterialDecoder.DecodeGeneric(profileName, familyName, FamilyKind, Name, material, profile);
+    public Ts4MaterialDecodeResult Decode(string profileName, string familyName, MaterialIr material, ShaderBlockProfile? profile)
+    {
+        var state = Ts4MaterialDecoder.ApplyLegacyColorMapRules(
+            Ts4MaterialDecoder.DecodeGeneric(profileName, familyName, FamilyKind, Name, material, profile).ToState(),
+            material);
+        return Ts4MaterialDecoder.BuildResult(profileName, familyName, FamilyKind, Name, state);
+    }
 }
 
 internal sealed class StandardSurfaceMaterialDecodeStrategy : ITs4MaterialDecodeStrategy

@@ -852,6 +852,58 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void MaterialDecoder_ColorMapFamilyAppliesLegacyUvSelector()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var scalarCategory = Enum.Parse(shaderCategoryType, "Scalar");
+        var scalarRepresentation = Enum.Parse(representationType, "Scalar");
+        var property = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB95C43EBu, "samplerEnvCubeMap", 1u, 1u, 1u, scalarCategory, scalarRepresentation, "scalar=1", new[] { 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(property, 0);
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xCAFEBABEu, "colorMap4", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var mapping = decoded.GetType().GetProperty("DiffuseUvMapping")!.GetValue(decoded)!;
+        var notes = (System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!;
+        var noteText = string.Join(" | ", notes.Cast<object>());
+
+        Assert.Equal(1, (int)uvMappingType.GetProperty("UvChannel")!.GetValue(mapping)!);
+        Assert.Contains("colorMap legacy UV channel selector", noteText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CasLogicalAsset_ExportsBundleFromSyntheticFixture()
     {
         var packagePath = Path.Combine(tempRoot, "cas-export.package");
