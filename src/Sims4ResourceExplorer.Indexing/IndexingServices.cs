@@ -86,6 +86,7 @@ public sealed class SqliteIndexStore : IIndexStore
 
             CREATE INDEX IF NOT EXISTS ix_resources_search ON resources(type_name, full_tgi, package_path, name);
             CREATE INDEX IF NOT EXISTS ix_resources_source ON resources(data_source_id, package_path);
+            CREATE INDEX IF NOT EXISTS ix_resources_package_instance ON resources(package_path, instance_hex, type_name, full_tgi);
 
             CREATE TABLE IF NOT EXISTS assets (
                 id TEXT PRIMARY KEY,
@@ -451,6 +452,24 @@ public sealed class SqliteIndexStore : IIndexStore
             ORDER BY type_name, full_tgi;
             """;
         command.Parameters.AddWithValue("$packagePath", packagePath);
+
+        return await ReadResourcesAsync(command, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name,
+                   compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics
+            FROM resources
+            WHERE package_path = $packagePath AND instance_hex = $instanceHex
+            ORDER BY type_name, full_tgi;
+            """;
+        command.Parameters.AddWithValue("$packagePath", packagePath);
+        command.Parameters.AddWithValue("$instanceHex", fullInstance.ToString("X16"));
 
         return await ReadResourcesAsync(command, cancellationToken);
     }

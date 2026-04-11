@@ -1,15 +1,20 @@
 using System.ComponentModel;
 using System.Numerics;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Runtime.InteropServices.WindowsRuntime;
 using HelixToolkit;
 using HelixToolkit.Maths;
 using HelixToolkit.SharpDX;
 using HelixToolkit.WinUI.SharpDX;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Windowing;
 using Sims4ResourceExplorer.App.ViewModels;
 using Sims4ResourceExplorer.Core;
+using Windows.Graphics.Imaging;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
@@ -21,6 +26,15 @@ public sealed partial class MainWindow : Window
     private readonly Viewport3DX sceneViewport;
     private readonly PerspectiveCamera sceneCamera;
     private readonly DefaultEffectsManager effectsManager = new();
+    private CancellationTokenSource? uvPreviewRenderCancellation;
+    private long previewSurfaceGeneration;
+    private bool isDraggingMainSplitter;
+    private double mainSplitterStartX;
+    private double mainSplitterStartResultsWidth;
+    private double mainSplitterTotalResizableWidth;
+    private bool isDraggingPreviewSplitter;
+    private double previewSplitterStartY;
+    private double previewSplitterStartHeight;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -224,19 +238,55 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void UpdatePreviewSurface()
+    private async void UpdatePreviewSurface()
     {
+        var generation = Interlocked.Increment(ref previewSurfaceGeneration);
+        uvPreviewRenderCancellation?.Cancel();
+        uvPreviewRenderCancellation = null;
+
         if (ViewModel.IsScenePreviewActive && ViewModel.CurrentScene is not null)
         {
+            if (ViewModel.SelectedSceneRenderMode == SceneRenderMode.UvMap)
+            {
+                sceneViewport.Items.Clear();
+                sceneViewport.Visibility = Visibility.Collapsed;
+                PreviewImage.Visibility = Visibility.Collapsed;
+                UvPreviewImage.Visibility = Visibility.Visible;
+                UvPreviewImage.Source = null;
+                var cancellation = new CancellationTokenSource();
+                uvPreviewRenderCancellation = cancellation;
+                try
+                {
+                    var uvPreview = await GenerateUvPreviewAsync(ViewModel.CurrentScene, cancellation.Token);
+                    if (!cancellation.IsCancellationRequested &&
+                        generation == Interlocked.Read(ref previewSurfaceGeneration) &&
+                        ViewModel.IsScenePreviewActive &&
+                        ViewModel.CurrentScene is not null &&
+                        ViewModel.SelectedSceneRenderMode == SceneRenderMode.UvMap)
+                    {
+                        UvPreviewImage.Source = uvPreview;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                }
+
+                return;
+            }
+
             RenderScene(ViewModel.CurrentScene);
             sceneViewport.Visibility = Visibility.Visible;
             PreviewImage.Visibility = Visibility.Collapsed;
+            UvPreviewImage.Visibility = Visibility.Collapsed;
+            UvPreviewImage.Source = null;
             return;
         }
 
         sceneViewport.Items.Clear();
         sceneViewport.Visibility = Visibility.Collapsed;
         PreviewImage.Visibility = ViewModel.IsImagePreviewActive ? Visibility.Visible : Visibility.Collapsed;
+        UvPreviewImage.Visibility = Visibility.Collapsed;
+        UvPreviewImage.Source = null;
     }
 
     private void RenderScene(CanonicalScene scene)
@@ -258,6 +308,9 @@ public sealed partial class MainWindow : Window
         switch (renderMode)
         {
             case SceneRenderMode.Wireframe:
+                sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.White });
+                break;
+            case SceneRenderMode.UvMap:
                 sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.White });
                 break;
             case SceneRenderMode.FlatTexture:
@@ -353,7 +406,7 @@ public sealed partial class MainWindow : Window
             geometry.TextureCoordinates = new Vector2Collection();
             for (var index = 0; index + 1 < textureCoordinates.Count; index += 2)
             {
-                geometry.TextureCoordinates.Add(new Vector2(textureCoordinates[index], 1f - textureCoordinates[index + 1]));
+                geometry.TextureCoordinates.Add(new Vector2(textureCoordinates[index], textureCoordinates[index + 1]));
             }
         }
 
@@ -528,14 +581,10 @@ public sealed partial class MainWindow : Window
         var isFlat = renderMode == SceneRenderMode.FlatTexture;
         var isWireframe = renderMode == SceneRenderMode.Wireframe;
         var isLit = renderMode == SceneRenderMode.LitTexture;
-        var useLowConfidenceTextureFallback =
-            !string.IsNullOrWhiteSpace(material?.Approximation) &&
-            diffuseTexture?.SourceKey?.TypeName is "DSTImage" or "BuyBuildThumbnail" or "BodyPartThumbnail" or "CASPartThumbnail";
         var renderDiffuseMap =
             !isWireframe &&
             !isFlat &&
-            diffuseTexture is not null &&
-            !useLowConfidenceTextureFallback;
+            diffuseTexture is not null;
         var renderEmissiveMap = isFlat && diffuseTexture is not null;
         var renderAlphaMap = opacityTexture is not null;
         var textureModel = diffuseTexture is null
@@ -579,6 +628,312 @@ public sealed partial class MainWindow : Window
         var diffuseTexture = SelectBaseColorTexture(material);
         var opacityTexture = SelectOpacityTexture(material, diffuseTexture);
         return material?.IsTransparent == true || opacityTexture is not null;
+    }
+
+    private async Task<WriteableBitmap> GenerateUvPreviewAsync(CanonicalScene scene, CancellationToken cancellationToken)
+    {
+        var textureEntries = scene.Materials
+            .Select((material, index) => new
+            {
+                MaterialIndex = index,
+                Texture = SelectBaseColorTexture(material)
+            })
+            .Where(entry => entry.Texture is not null)
+            .GroupBy(
+                entry => entry.Texture!.SourceKey is { } key
+                    ? $"{key.Type:X8}:{key.Group:X8}:{key.FullInstance:X16}"
+                    : $"{entry.Texture.FileName}|{Convert.ToHexString(SHA256.HashData(entry.Texture.PngBytes))}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => new
+            {
+                Texture = group.First().Texture!,
+                MaterialIndices = group.Select(entry => entry.MaterialIndex).Distinct().ToArray()
+            })
+            .ToArray();
+
+        if (textureEntries.Length == 0)
+        {
+            return CreateSolidBitmap(512, 512, 0xFF1E1E1E);
+        }
+
+        const int panelPadding = 16;
+        const int panelMaxWidth = 1024;
+        const int panelMaxHeight = 1024;
+        var panels = new List<(CanonicalTexture Texture, int[] MaterialIndices, int SourceWidth, int SourceHeight, int Width, int Height, float Scale, byte[] Pixels)>();
+        foreach (var entry in textureEntries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var decoded = await DecodePngAsync(entry.Texture.PngBytes, cancellationToken);
+            var scale = MathF.Min(1f, MathF.Min(panelMaxWidth / (float)decoded.Width, panelMaxHeight / (float)decoded.Height));
+            var width = Math.Max(1, (int)MathF.Round(decoded.Width * scale));
+            var height = Math.Max(1, (int)MathF.Round(decoded.Height * scale));
+            panels.Add((entry.Texture, entry.MaterialIndices, decoded.Width, decoded.Height, width, height, scale, decoded.Pixels));
+        }
+
+        var canvasWidth = panels.Max(panel => panel.Width) + (panelPadding * 2);
+        var canvasHeight = panels.Sum(panel => panel.Height) + (panelPadding * (panels.Count + 1));
+        var canvas = new byte[canvasWidth * canvasHeight * 4];
+        FillSolid(canvas, canvasWidth, canvasHeight, 0xFF111111);
+
+        var colors = new uint[] { 0xFFFF4FD1, 0xFFFFFF3B, 0xFFFF7F50, 0xFF7CFC00, 0xFFFF69B4, 0xFF87CEFA };
+        var offsetY = panelPadding;
+        foreach (var (_, materialIndices, sourceWidth, sourceHeight, width, height, _, pixels) in panels)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var offsetX = panelPadding;
+            BlitScaledBgra(canvas, canvasWidth, canvasHeight, pixels, sourceWidth, sourceHeight, width, height, offsetX, offsetY);
+
+            var meshes = scene.Meshes
+                .Select((mesh, meshIndex) => new { Mesh = mesh, MeshIndex = meshIndex })
+                .Where(entry => Array.IndexOf(materialIndices, entry.Mesh.MaterialIndex) >= 0)
+                .ToArray();
+            foreach (var meshEntry in meshes)
+            {
+                var coordinates = SelectTextureCoordinates(meshEntry.Mesh, scene, meshEntry.Mesh.MaterialIndex);
+                var color = colors[meshEntry.MeshIndex % colors.Length];
+                DrawUvWireframe(canvas, canvasWidth, canvasHeight, coordinates, meshEntry.Mesh.Indices, offsetX, offsetY, width, height, color);
+            }
+
+            offsetY += height + panelPadding;
+        }
+
+        return await CreateWriteableBitmapAsync(canvasWidth, canvasHeight, canvas, cancellationToken);
+    }
+
+    private static void DrawUvWireframe(byte[] canvas, int canvasWidth, int canvasHeight, IReadOnlyList<float> coordinates, IReadOnlyList<int> indices, int offsetX, int offsetY, int panelWidth, int panelHeight, uint color)
+    {
+        if (coordinates.Count < 4)
+        {
+            return;
+        }
+
+        for (var index = 0; index + 2 < indices.Count; index += 3)
+        {
+            var ia = indices[index];
+            var ib = indices[index + 1];
+            var ic = indices[index + 2];
+            if (!TryGetUvPoint(coordinates, ia, offsetX, offsetY, panelWidth, panelHeight, out var ax, out var ay) ||
+                !TryGetUvPoint(coordinates, ib, offsetX, offsetY, panelWidth, panelHeight, out var bx, out var by) ||
+                !TryGetUvPoint(coordinates, ic, offsetX, offsetY, panelWidth, panelHeight, out var cx, out var cy))
+            {
+                continue;
+            }
+
+            DrawLine(canvas, canvasWidth, canvasHeight, ax, ay, bx, by, color);
+            DrawLine(canvas, canvasWidth, canvasHeight, bx, by, cx, cy, color);
+            DrawLine(canvas, canvasWidth, canvasHeight, cx, cy, ax, ay, color);
+        }
+    }
+
+    private static bool TryGetUvPoint(IReadOnlyList<float> coordinates, int vertexIndex, int offsetX, int offsetY, int panelWidth, int panelHeight, out int x, out int y)
+    {
+        var uvIndex = vertexIndex * 2;
+        if (uvIndex < 0 || uvIndex + 1 >= coordinates.Count)
+        {
+            x = 0;
+            y = 0;
+            return false;
+        }
+
+        var u = Math.Clamp(coordinates[uvIndex], 0f, 1f);
+        var v = Math.Clamp(coordinates[uvIndex + 1], 0f, 1f);
+        x = offsetX + (int)MathF.Round(u * (panelWidth - 1));
+        y = offsetY + (int)MathF.Round(v * (panelHeight - 1));
+        return true;
+    }
+
+    private static void DrawLine(byte[] canvas, int canvasWidth, int canvasHeight, int x0, int y0, int x1, int y1, uint color)
+    {
+        var dx = Math.Abs(x1 - x0);
+        var sx = x0 < x1 ? 1 : -1;
+        var dy = -Math.Abs(y1 - y0);
+        var sy = y0 < y1 ? 1 : -1;
+        var error = dx + dy;
+
+        while (true)
+        {
+            PlotPixel(canvas, canvasWidth, canvasHeight, x0, y0, color);
+            if (x0 == x1 && y0 == y1)
+            {
+                break;
+            }
+
+            var twiceError = 2 * error;
+            if (twiceError >= dy)
+            {
+                error += dy;
+                x0 += sx;
+            }
+            if (twiceError <= dx)
+            {
+                error += dx;
+                y0 += sy;
+            }
+        }
+    }
+
+    private static void PlotPixel(byte[] canvas, int canvasWidth, int canvasHeight, int x, int y, uint color)
+    {
+        if ((uint)x >= canvasWidth || (uint)y >= canvasHeight)
+        {
+            return;
+        }
+
+        var offset = ((y * canvasWidth) + x) * 4;
+        canvas[offset] = (byte)(color & 0xFF);
+        canvas[offset + 1] = (byte)((color >> 8) & 0xFF);
+        canvas[offset + 2] = (byte)((color >> 16) & 0xFF);
+        canvas[offset + 3] = (byte)((color >> 24) & 0xFF);
+    }
+
+    private static void FillSolid(byte[] canvas, int width, int height, uint color)
+    {
+        for (var index = 0; index < width * height; index++)
+        {
+            var offset = index * 4;
+            canvas[offset] = (byte)(color & 0xFF);
+            canvas[offset + 1] = (byte)((color >> 8) & 0xFF);
+            canvas[offset + 2] = (byte)((color >> 16) & 0xFF);
+            canvas[offset + 3] = (byte)((color >> 24) & 0xFF);
+        }
+    }
+
+    private static void BlitScaledBgra(byte[] destination, int destinationWidth, int destinationHeight, byte[] source, int sourceWidth, int sourceHeight, int scaledWidth, int scaledHeight, int offsetX, int offsetY)
+    {
+        for (var y = 0; y < scaledHeight; y++)
+        {
+            for (var x = 0; x < scaledWidth; x++)
+            {
+                var srcX = sourceWidth == scaledWidth ? x : Math.Clamp((int)((x / (float)scaledWidth) * sourceWidth), 0, sourceWidth - 1);
+                var srcY = sourceHeight == scaledHeight ? y : Math.Clamp((int)((y / (float)scaledHeight) * sourceHeight), 0, sourceHeight - 1);
+                var srcOffset = ((srcY * sourceWidth) + srcX) * 4;
+                var dstX = offsetX + x;
+                var dstY = offsetY + y;
+                if ((uint)dstX >= destinationWidth || (uint)dstY >= destinationHeight)
+                {
+                    continue;
+                }
+
+                var dstOffset = ((dstY * destinationWidth) + dstX) * 4;
+                destination[dstOffset] = source[srcOffset];
+                destination[dstOffset + 1] = source[srcOffset + 1];
+                destination[dstOffset + 2] = source[srcOffset + 2];
+                destination[dstOffset + 3] = source[srcOffset + 3];
+            }
+        }
+    }
+
+    private static async Task<(int Width, int Height, byte[] Pixels)> DecodePngAsync(byte[] pngBytes, CancellationToken cancellationToken)
+    {
+        using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+        await stream.WriteAsync(pngBytes.AsBuffer()).AsTask(cancellationToken);
+        stream.Seek(0);
+        var decoder = await BitmapDecoder.CreateAsync(stream).AsTask(cancellationToken);
+        var pixelData = await decoder.GetPixelDataAsync(
+            BitmapPixelFormat.Bgra8,
+            BitmapAlphaMode.Premultiplied,
+            new BitmapTransform(),
+            ExifOrientationMode.IgnoreExifOrientation,
+            ColorManagementMode.DoNotColorManage).AsTask(cancellationToken);
+        return ((int)decoder.PixelWidth, (int)decoder.PixelHeight, pixelData.DetachPixelData());
+    }
+
+    private static async Task<WriteableBitmap> CreateWriteableBitmapAsync(int width, int height, byte[] pixels, CancellationToken cancellationToken)
+    {
+        var bitmap = new WriteableBitmap(width, height);
+        using var stream = bitmap.PixelBuffer.AsStream();
+        await stream.WriteAsync(pixels, cancellationToken);
+        bitmap.Invalidate();
+        return bitmap;
+    }
+
+    private static WriteableBitmap CreateSolidBitmap(int width, int height, uint color)
+    {
+        var pixels = new byte[width * height * 4];
+        FillSolid(pixels, width, height, color);
+        var bitmap = new WriteableBitmap(width, height);
+        using var stream = bitmap.PixelBuffer.AsStream();
+        stream.Write(pixels, 0, pixels.Length);
+        bitmap.Invalidate();
+        return bitmap;
+    }
+
+    private void MainPaneSplitter_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        isDraggingMainSplitter = true;
+        mainSplitterStartX = e.GetCurrentPoint(MainContentGrid).Position.X;
+        mainSplitterStartResultsWidth = ResultsColumn.ActualWidth;
+        mainSplitterTotalResizableWidth = ResultsColumn.ActualWidth + PreviewColumn.ActualWidth;
+        if (sender is UIElement element)
+        {
+            element.CapturePointer(e.Pointer);
+        }
+    }
+
+    private void MainPaneSplitter_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!isDraggingMainSplitter)
+        {
+            return;
+        }
+
+        var positionX = e.GetCurrentPoint(MainContentGrid).Position.X;
+        var delta = positionX - mainSplitterStartX;
+        var previewMinWidth = PreviewColumn.MinWidth > 0 ? PreviewColumn.MinWidth : 520;
+        var resultsMinWidth = ResultsColumn.MinWidth > 0 ? ResultsColumn.MinWidth : 320;
+        var newResultsWidth = Math.Clamp(mainSplitterStartResultsWidth + delta, resultsMinWidth, mainSplitterTotalResizableWidth - previewMinWidth);
+        ResultsColumn.Width = new GridLength(newResultsWidth, GridUnitType.Pixel);
+        PreviewColumn.Width = new GridLength(Math.Max(previewMinWidth, mainSplitterTotalResizableWidth - newResultsWidth), GridUnitType.Pixel);
+    }
+
+    private void MainPaneSplitter_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        isDraggingMainSplitter = false;
+        if (sender is UIElement element)
+        {
+            element.ReleasePointerCapture(e.Pointer);
+        }
+    }
+
+    private void PreviewPaneSplitter_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        isDraggingPreviewSplitter = true;
+        previewSplitterStartY = e.GetCurrentPoint(PreviewPaneGrid).Position.Y;
+        previewSplitterStartHeight = PreviewViewportRow.ActualHeight;
+        if (sender is UIElement element)
+        {
+            element.CapturePointer(e.Pointer);
+        }
+    }
+
+    private void PreviewPaneSplitter_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!isDraggingPreviewSplitter)
+        {
+            return;
+        }
+
+        var positionY = e.GetCurrentPoint(PreviewPaneGrid).Position.Y;
+        var delta = positionY - previewSplitterStartY;
+        var occupiedHeight =
+            PreviewPaneGrid.RowDefinitions[0].ActualHeight +
+            PreviewPaneGrid.RowDefinitions[2].ActualHeight +
+            PreviewPaneGrid.RowDefinitions[3].ActualHeight +
+            PreviewPaneGrid.RowDefinitions[4].ActualHeight;
+        var availableResizableHeight = Math.Max(300, PreviewPaneGrid.ActualHeight - occupiedHeight);
+        var minPreviewHeight = Math.Max(PreviewViewportRow.MinHeight, 180);
+        var minDetailsHeight = 120d;
+        var newPreviewHeight = Math.Clamp(previewSplitterStartHeight + delta, minPreviewHeight, availableResizableHeight - minDetailsHeight);
+        PreviewViewportRow.Height = new GridLength(newPreviewHeight, GridUnitType.Pixel);
+    }
+
+    private void PreviewPaneSplitter_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        isDraggingPreviewSplitter = false;
+        if (sender is UIElement element)
+        {
+            element.ReleasePointerCapture(e.Pointer);
+        }
     }
 
     private static bool TextureSupportsAlpha(CanonicalTexture? texture)

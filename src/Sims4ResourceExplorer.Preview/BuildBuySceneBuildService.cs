@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.Preview;
@@ -7,11 +8,64 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 {
     private readonly IResourceCatalogService resourceCatalogService;
     private readonly IIndexStore indexStore;
+    private readonly ConcurrentDictionary<(string PackagePath, ulong FullInstance), Task<IReadOnlyList<ResourceMetadata>>> packageInstanceResourceCache = new();
+    private readonly ConcurrentDictionary<TextureLookupKey, Task<IReadOnlyList<ResourceMetadata>>> textureResourceByKeyCache = new();
+    private readonly ConcurrentDictionary<ulong, Task<IReadOnlyList<ResourceMetadata>>> textureResourceByInstanceCache = new();
+    private readonly ConcurrentDictionary<(string PackagePath, string FullTgi), Task<byte[]?>> texturePngCache = new();
 
     public BuildBuySceneBuildService(IResourceCatalogService resourceCatalogService, IIndexStore indexStore)
     {
         this.resourceCatalogService = resourceCatalogService;
         this.indexStore = indexStore;
+    }
+
+    private Task<IReadOnlyList<ResourceMetadata>> GetPackageInstanceResourcesAsync(
+        string packagePath,
+        ulong fullInstance,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return packageInstanceResourceCache.GetOrAdd(
+            (packagePath, fullInstance),
+            static (key, store) => store.GetResourcesByInstanceAsync(key.PackagePath, key.FullInstance, CancellationToken.None),
+            indexStore);
+    }
+
+    private Task<IReadOnlyList<ResourceMetadata>> GetTextureResourcesByKeyAsync(
+        ResourceKeyRecord key,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return textureResourceByKeyCache.GetOrAdd(
+            new TextureLookupKey(key.Type, key.Group, key.FullInstance, key.TypeName),
+            static (lookupKey, service) => service.FindTextureResourcesByKeyCoreAsync(lookupKey, CancellationToken.None),
+            this);
+    }
+
+    private Task<IReadOnlyList<ResourceMetadata>> GetTextureResourcesByInstanceAsync(
+        ulong fullInstance,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return textureResourceByInstanceCache.GetOrAdd(
+            fullInstance,
+            static (instance, service) => service.FindTextureResourcesByInstanceCoreAsync(instance, CancellationToken.None),
+            this);
+    }
+
+    private Task<byte[]?> GetTexturePngAsync(
+        string packagePath,
+        ResourceKeyRecord key,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return texturePngCache.GetOrAdd(
+            (packagePath, key.FullTgi),
+            static (cacheKey, state) => state.ResourceCatalogService.GetTexturePngAsync(
+                cacheKey.PackagePath,
+                state.ResourceKey,
+                CancellationToken.None),
+            (ResourceCatalogService: resourceCatalogService, ResourceKey: key));
     }
 
     public async Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken)
@@ -117,6 +171,14 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
+        var embeddedFallback = await TryEmbeddedModelLodFallbackAsync(modelResource, root, diagnostics, cancellationToken).ConfigureAwait(false);
+        if (embeddedFallback.Success)
+        {
+            return embeddedFallback;
+        }
+
+        diagnostics = embeddedFallback.Diagnostics.ToList();
+
         var indexedFallback = await TryIndexedModelLodFallbackAsync(modelResource, diagnostics, cancellationToken).ConfigureAwait(false);
         if (indexedFallback.Success)
         {
@@ -160,7 +222,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             .Where(static message => !string.IsNullOrWhiteSpace(message))
             .ToList();
 
-        var packageResources = await indexStore.GetPackageResourcesAsync(modelResource.PackagePath, cancellationToken).ConfigureAwait(false);
+        var packageResources = await GetPackageInstanceResourcesAsync(modelResource.PackagePath, modelResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
         var indexedCandidates = packageResources
             .Where(resource => resource.Key.TypeName == "ModelLOD" && resource.Key.FullInstance == modelResource.Key.FullInstance)
             .OrderBy(static resource => resource.Key.Group)
@@ -177,6 +239,67 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         foreach (var candidate in indexedCandidates)
         {
             var candidateResult = await BuildModelLodSceneAsync(candidate, modelResource, cancellationToken).ConfigureAwait(false);
+            if (candidateResult.Success)
+            {
+                return new SceneBuildResult(true, candidateResult.Scene, diagnostics.Concat(candidateResult.Diagnostics).ToArray(), candidateResult.Status);
+            }
+
+            diagnostics.AddRange(candidateResult.Diagnostics);
+        }
+
+        return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
+    }
+
+    private async Task<SceneBuildResult> TryEmbeddedModelLodFallbackAsync(
+        ResourceMetadata modelResource,
+        Ts4RcolResource root,
+        IEnumerable<string> existingDiagnostics,
+        CancellationToken cancellationToken)
+    {
+        var diagnostics = existingDiagnostics
+            .Where(static message => !string.IsNullOrWhiteSpace(message))
+            .ToList();
+
+        var embeddedCandidates = root.Chunks
+            .Where(static chunk => chunk.Tag == "MLOD")
+            .OrderBy(static chunk => chunk.SelfReference.ReferenceType != Ts4ReferenceType.Public)
+            .ThenBy(static chunk => chunk.SelfReference.Index)
+            .ToArray();
+
+        if (embeddedCandidates.Length == 0)
+        {
+            diagnostics.Add("No embedded ModelLOD chunks were available in the model root for fallback.");
+            return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
+        }
+
+        diagnostics.Add($"Falling back to {embeddedCandidates.Length} embedded ModelLOD chunk(s) from the model root.");
+        foreach (var candidate in embeddedCandidates)
+        {
+            Ts4MlodChunk mlod;
+            try
+            {
+                mlod = Ts4MlodChunk.Parse(candidate.Data.Span);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+            {
+                diagnostics.Add($"Embedded ModelLOD chunk {candidate.Key.Type:X8}:{candidate.Key.Group:X8}:{candidate.Key.Instance:X16} could not be parsed cleanly: {ex.Message}");
+                continue;
+            }
+
+            var syntheticResource = modelResource with
+            {
+                Key = new ResourceKeyRecord(candidate.Key.Type, candidate.Key.Group, candidate.Key.Instance, "ModelLOD"),
+                PreviewKind = PreviewKind.Scene,
+                Name = modelResource.Name
+            };
+
+            var candidateResult = await BuildParsedModelLodSceneAsync(
+                root,
+                mlod,
+                syntheticResource,
+                modelResource,
+                cancellationToken).ConfigureAwait(false);
+
             if (candidateResult.Success)
             {
                 return new SceneBuildResult(true, candidateResult.Scene, diagnostics.Concat(candidateResult.Diagnostics).ToArray(), candidateResult.Status);
@@ -214,6 +337,16 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} could not be parsed cleanly: {ex.Message}"], SceneBuildStatus.Unsupported);
         }
 
+        return await BuildParsedModelLodSceneAsync(rcol, mlod, modelLodResource, logicalRootResource, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<SceneBuildResult> BuildParsedModelLodSceneAsync(
+        Ts4RcolResource rcol,
+        Ts4MlodChunk mlod,
+        ResourceMetadata modelLodResource,
+        ResourceMetadata logicalRootResource,
+        CancellationToken cancellationToken)
+    {
         var diagnostics = new List<string>();
         var meshes = new List<CanonicalMesh>();
         var materials = new List<CanonicalMaterial>();
@@ -280,14 +413,43 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                         materialInfo.SourceKind));
                 }
 
-                var vertices = vbuf.ReadVertices(vrtf, mesh.StreamOffset, mesh.VertexCount, materialInfo.UvScales);
-                var indices = ibuf.ReadIndices(mesh.StartIndex, mesh.PrimitiveCount * 3, mesh.VertexCount)
+                var meshWindow = Ts4MeshWindow.From(mesh);
+                var vertices = vbuf.ReadVertices(
+                    vrtf,
+                    mesh.StreamOffset,
+                    meshWindow.VertexReadBase,
+                    mesh.VertexCount,
+                    materialInfo.UvScales);
+                var indices = ibuf.ReadIndices(
+                        mesh.StartIndex,
+                        mesh.PrimitiveCount * 3,
+                        meshWindow.IndexNormalizeBase,
+                        mesh.VertexCount)
                     .Select(static value => (int)value)
                     .ToArray();
+                var (validTriangles, invalidTriangles) = CountTriangleValidity(indices, vertices.Count);
+                if (validTriangles == 0)
+                {
+                    diagnostics.Add(
+                        $"Skipped mesh 0x{mesh.Name:X8}: index stream produced no valid triangles for {vertices.Count} vertices.");
+                    continue;
+                }
+
+                if (invalidTriangles > validTriangles)
+                {
+                    diagnostics.Add(
+                        $"Skipped mesh 0x{mesh.Name:X8}: index stream is too unstable ({validTriangles} valid triangle(s), {invalidTriangles} invalid triangle(s)).");
+                    continue;
+                }
 
                 var uvSelection = SelectPreferredUvCoordinates(vertices, mesh.Name, diagnostics);
                 var uv0 = vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray();
                 var uv1 = vertices.SelectMany(static vertex => vertex.Uv1 ?? []).ToArray();
+                if (materialInfo.Textures.Count > 0 && uvSelection.Uvs.Length == 0 && uv0.Length == 0 && uv1.Length == 0)
+                {
+                    diagnostics.Add(
+                        $"Mesh 0x{mesh.Name:X8} resolved texture data, but this LOD exposes no UV coordinates; textured preview is unavailable on this fallback geometry.");
+                }
 
                 meshes.Add(new CanonicalMesh(
                     $"Mesh_{mesh.Name:X8}",
@@ -323,6 +485,33 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         diagnostics.Insert(0, $"Selected LOD root: {modelLodResource.Key.FullTgi}");
         return new SceneBuildResult(true, scene, diagnostics, DetermineSceneBuildStatus(scene));
+    }
+
+    private static (int ValidTriangles, int InvalidTriangles) CountTriangleValidity(IReadOnlyList<int> indices, int vertexCount)
+    {
+        if (indices.Count == 0 || vertexCount <= 0)
+        {
+            return (0, 0);
+        }
+
+        var valid = 0;
+        var invalid = 0;
+        for (var index = 0; index + 2 < indices.Count; index += 3)
+        {
+            var a = indices[index];
+            var b = indices[index + 1];
+            var c = indices[index + 2];
+            if (a < 0 || b < 0 || c < 0 || a >= vertexCount || b >= vertexCount || c >= vertexCount)
+            {
+                invalid++;
+            }
+            else
+            {
+                valid++;
+            }
+        }
+
+        return (valid, invalid);
     }
 
     private async Task<Ts4MaterialInfo> ResolveMaterialAsync(
@@ -395,8 +584,25 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     {
         var diagnostics = new List<string>();
         var textures = new List<CanonicalTexture>();
+        Ts4ShaderProfileRegistry.Instance.TryGetProfile(matd.ShaderNameHash, out var shaderProfile);
+        var materialIr = Ts4ShaderSemantics.BuildMaterialIr(matd);
+        var materialDecode = Ts4MaterialDecoder.Decode(materialIr, shaderProfile);
+        if (shaderProfile is not null)
+        {
+            var matchedPropertyCount = materialIr.Properties.Count(static property => !property.Name.StartsWith("Prop_", StringComparison.Ordinal));
+            diagnostics.Add(
+                $"Shader profile {shaderProfile.Name} matched {matchedPropertyCount}/{materialIr.Properties.Count} MATD propertie(s).");
+        }
+        if (!string.IsNullOrWhiteSpace(materialDecode.ShaderFamilyName))
+        {
+            diagnostics.Add($"Material decode family: {materialDecode.ShaderFamilyName}.");
+        }
+        diagnostics.Add($"Material decode strategy: {materialDecode.StrategyName}.");
+        diagnostics.AddRange(materialDecode.Notes);
+
         foreach (var reference in matd.TextureReferences)
         {
+            var resolvedSlot = Ts4ShaderSemantics.ResolveTextureSlotName(reference, shaderProfile);
             var cacheKey = $"{reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}";
             if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
             {
@@ -408,7 +614,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 cachedTexture = await TryResolveTextureAsync(
                     ownerResource,
                     coreKey,
-                    reference.Slot,
+                    resolvedSlot,
                     textureCache,
                     cancellationToken).ConfigureAwait(false);
 
@@ -417,28 +623,28 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
             if (cachedTexture is null)
             {
-                diagnostics.Add($"Texture decode failed or resource was unavailable for slot {reference.Slot} ({reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}).");
+                diagnostics.Add($"Texture decode failed or resource was unavailable for slot {resolvedSlot} ({reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}).");
             }
             else
             {
                 textures.Add(cachedTexture with
                 {
-                    Slot = reference.Slot,
-                    Semantic = ClassifyTextureSemantic(reference.Slot),
-                    UvChannel = reference.Slot is "diffuse" or "basecolor" or "albedo"
-                        ? matd.DiffuseUvMapping.UvChannel
+                    Slot = resolvedSlot,
+                    Semantic = ClassifyTextureSemantic(resolvedSlot),
+                    UvChannel = resolvedSlot is "diffuse" or "basecolor" or "albedo"
+                        ? materialDecode.DiffuseUvMapping.UvChannel
                         : cachedTexture.UvChannel,
-                    UvScaleU = reference.Slot is "diffuse" or "basecolor" or "albedo"
-                        ? matd.DiffuseUvMapping.UvScaleU
+                    UvScaleU = resolvedSlot is "diffuse" or "basecolor" or "albedo"
+                        ? materialDecode.DiffuseUvMapping.UvScaleU
                         : cachedTexture.UvScaleU,
-                    UvScaleV = reference.Slot is "diffuse" or "basecolor" or "albedo"
-                        ? matd.DiffuseUvMapping.UvScaleV
+                    UvScaleV = resolvedSlot is "diffuse" or "basecolor" or "albedo"
+                        ? materialDecode.DiffuseUvMapping.UvScaleV
                         : cachedTexture.UvScaleV,
-                    UvOffsetU = reference.Slot is "diffuse" or "basecolor" or "albedo"
-                        ? matd.DiffuseUvMapping.UvOffsetU
+                    UvOffsetU = resolvedSlot is "diffuse" or "basecolor" or "albedo"
+                        ? materialDecode.DiffuseUvMapping.UvOffsetU
                         : cachedTexture.UvOffsetU,
-                    UvOffsetV = reference.Slot is "diffuse" or "basecolor" or "albedo"
-                        ? matd.DiffuseUvMapping.UvOffsetV
+                    UvOffsetV = resolvedSlot is "diffuse" or "basecolor" or "albedo"
+                        ? materialDecode.DiffuseUvMapping.UvOffsetV
                         : cachedTexture.UvOffsetV
                 });
             }
@@ -472,7 +678,24 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
-        var isTransparent = matd.IsTransparent || matd.TextureReferences.Any(static texture => texture.Slot is "alpha" or "overlay");
+        if (shaderProfile is not null)
+        {
+            var matchedProperties = materialIr.Properties
+                .Where(static property => !property.Name.StartsWith("Prop_", StringComparison.Ordinal))
+                .Select(static property => $"{property.Name}:{property.Category}/{property.ValueRepresentation}")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static value => value, StringComparer.OrdinalIgnoreCase)
+                .Take(16)
+                .ToArray();
+            if (matchedProperties.Length > 0)
+            {
+                diagnostics.Add($"Shader-derived MATD semantics: {string.Join(", ", matchedProperties)}.");
+            }
+        }
+
+        var isTransparent = matd.IsTransparent ||
+            matd.TextureReferences.Any(static texture => texture.Slot is "alpha" or "overlay") ||
+            materialDecode.SuggestsAlphaCutout;
         var usedFallbackTextureApproximation = textures.Count > 0 && matd.TextureReferences.Count == 0;
         return new Ts4MaterialInfo(
             !string.IsNullOrWhiteSpace(matd.MaterialName) ? matd.MaterialName : $"Material_{matd.MaterialNameHash:X8}",
@@ -481,7 +704,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             textures,
             diagnostics,
             isTransparent,
-            isTransparent ? "alpha-test-or-blend" : "opaque",
+            isTransparent ? materialDecode.AlphaModeHint ?? "alpha-test-or-blend" : "opaque",
             usedFallbackTextureApproximation ? "Maxis shaders are approximated to a portable texture-set export." : null,
             usedFallbackTextureApproximation ? CanonicalMaterialSourceKind.FallbackCandidate : sourceKind);
     }
@@ -491,7 +714,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         Dictionary<string, CanonicalTexture?> textureCache,
         CancellationToken cancellationToken)
     {
-        var packageResources = await indexStore.GetPackageResourcesAsync(ownerResource.PackagePath, cancellationToken).ConfigureAwait(false);
+        var packageResources = await GetPackageInstanceResourcesAsync(ownerResource.PackagePath, ownerResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
         var textureCandidates = packageResources
             .Where(resource => resource.Key.FullInstance == ownerResource.Key.FullInstance && IsTextureType(resource.Key.TypeName))
             .OrderBy(static resource => resource.Key.TypeName == "BuyBuildThumbnail" ? 1 : 0)
@@ -500,7 +723,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         if (textureCandidates.Count == 0)
         {
-            var globalTextureCandidates = await FindTextureResourcesByInstanceAsync(ownerResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
+            var globalTextureCandidates = await GetTextureResourcesByInstanceAsync(ownerResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
             foreach (var candidate in globalTextureCandidates)
             {
                 if (textureCandidates.Any(existing => existing.Key.FullTgi.Equals(candidate.Key.FullTgi, StringComparison.OrdinalIgnoreCase) &&
@@ -568,7 +791,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
-        var matches = await FindTextureResourcesByKeyAsync(key, cancellationToken).ConfigureAwait(false);
+        var matches = await GetTextureResourcesByKeyAsync(key, cancellationToken).ConfigureAwait(false);
         foreach (var match in matches)
         {
             var cacheKey = match.Key.FullTgi;
@@ -640,7 +863,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     {
         try
         {
-            var pngBytes = await resourceCatalogService.GetTexturePngAsync(packagePath, key, cancellationToken).ConfigureAwait(false);
+            var pngBytes = await GetTexturePngAsync(packagePath, key, cancellationToken).ConfigureAwait(false);
             return pngBytes is null
                 ? null
                 : new CanonicalTexture(
@@ -658,16 +881,16 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         }
     }
 
-    private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByKeyAsync(ResourceKeyRecord key, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByKeyCoreAsync(TextureLookupKey lookupKey, CancellationToken cancellationToken)
     {
         var query = new RawResourceBrowserQuery(
             new SourceScope(),
             SearchText: string.Empty,
             Domain: RawResourceDomain.Images,
-            TypeNameText: key.TypeName,
+            TypeNameText: lookupKey.TypeName,
             PackageText: string.Empty,
-            GroupHexText: key.Group.ToString("X8"),
-            InstanceHexText: key.FullInstance.ToString("X16"),
+            GroupHexText: lookupKey.Group.ToString("X8"),
+            InstanceHexText: lookupKey.FullInstance.ToString("X16"),
             PreviewableOnly: false,
             ExportCapableOnly: false,
             CompressedKnownOnly: false,
@@ -678,14 +901,14 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         var results = await indexStore.QueryResourcesAsync(query, cancellationToken).ConfigureAwait(false);
         return results.Items
-            .Where(resource => resource.Key.Type == key.Type &&
-                               resource.Key.Group == key.Group &&
-                               resource.Key.FullInstance == key.FullInstance &&
+            .Where(resource => resource.Key.Type == lookupKey.Type &&
+                               resource.Key.Group == lookupKey.Group &&
+                               resource.Key.FullInstance == lookupKey.FullInstance &&
                                IsTextureType(resource.Key.TypeName))
             .ToArray();
     }
 
-    private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByInstanceAsync(ulong instance, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByInstanceCoreAsync(ulong instance, CancellationToken cancellationToken)
     {
         var query = new RawResourceBrowserQuery(
             new SourceScope(),
@@ -1040,6 +1263,28 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
 public static class PreviewDebugProbe
 {
+    public static IReadOnlyList<ModlEntryDebug> ParseModl(byte[] bytes)
+    {
+        var rcol = Ts4RcolResource.Parse(bytes);
+        var modlChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MODL");
+        if (modlChunk is null)
+        {
+            return Array.Empty<ModlEntryDebug>();
+        }
+
+        var modl = Ts4ModlChunk.Parse(modlChunk.Data.Span);
+        return modl.LodEntries
+            .Select(static entry => new ModlEntryDebug(
+                entry.Reference.Raw,
+                entry.Reference.ReferenceType.ToString(),
+                entry.Reference.Index,
+                entry.Flags,
+                entry.Id,
+                entry.MinZ,
+                entry.MaxZ))
+            .ToArray();
+    }
+
     public static string InspectModelLod(byte[] bytes)
     {
         var lines = new List<string>();
@@ -1065,7 +1310,17 @@ public static class PreviewDebugProbe
             foreach (var mesh in mlod.Meshes)
             {
                 lines.Add(
-                    $"Mesh name=0x{mesh.Name:X8} primitive={mesh.PrimitiveType} flags=0x{mesh.Flags:X} vbuf={mesh.VertexBufferReference.Raw:X8} ibuf={mesh.IndexBufferReference.Raw:X8} vrtf={mesh.VertexFormatReference.Raw:X8} verts={mesh.VertexCount} prims={mesh.PrimitiveCount}");
+                    $"Mesh name=0x{mesh.Name:X8} primitive={mesh.PrimitiveType} flags=0x{mesh.Flags:X} vbuf={mesh.VertexBufferReference.Raw:X8} ibuf={mesh.IndexBufferReference.Raw:X8} vrtf={mesh.VertexFormatReference.Raw:X8} streamOffset={mesh.StreamOffset} startVertex={mesh.StartVertex} startIndex={mesh.StartIndex} minVertexIndex={mesh.MinVertexIndex} verts={mesh.VertexCount} prims={mesh.PrimitiveCount}");
+
+                var ibufChunk = rcol.ResolveChunk(mesh.IndexBufferReference);
+                if (ibufChunk is not null)
+                {
+                    var ibuf = Ts4IbufChunk.Parse(ibufChunk.Data.Span);
+                    foreach (var line in ibuf.InspectCandidates(mesh.StartIndex, mesh.PrimitiveCount * 3, mesh.MinVertexIndex, mesh.VertexCount))
+                    {
+                        lines.Add($"  IBUF {line}");
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -1113,6 +1368,15 @@ public static class PreviewDebugProbe
     }
 }
 
+public readonly record struct ModlEntryDebug(
+    uint ReferenceRaw,
+    string ReferenceType,
+    int ReferenceIndex,
+    uint Flags,
+    uint Id,
+    float MinZ,
+    float MaxZ);
+
 internal sealed record Ts4ModelLodResolution(ResourceMetadata? Resource, IReadOnlyList<string> Diagnostics);
 
 internal readonly record struct Ts4ChunkReference(uint Raw)
@@ -1158,7 +1422,7 @@ internal sealed record Ts4MaterialInfo(
             CanonicalMaterialSourceKind.Unsupported);
 }
 
-internal readonly record struct Ts4TextureReference(string Slot, Ts4ResourceKey Key);
+internal readonly record struct Ts4TextureReference(string Slot, Ts4ResourceKey Key, uint PropertyHash);
 
 internal readonly record struct Ts4TextureUvMapping(
     int UvChannel = 0,
@@ -1175,14 +1439,36 @@ internal readonly record struct Ts4TextureUvMapping(
         Math.Abs(UvOffsetV) < 0.0001f;
 }
 
+internal sealed record Ts4MatdProperty(
+    uint Hash,
+    uint RawType,
+    uint Type,
+    uint Arity,
+    int Offset,
+    ShaderParameterCategory Category,
+    MaterialValueRepresentation ValueRepresentation,
+    string? ValueSummary,
+    float[]? FloatValues,
+    uint[]? PackedUInt32Values,
+    Ts4ResourceKey? ResourceKeyValue);
+
+internal sealed record Ts4MatdDecodedValue(
+    MaterialValueRepresentation Representation,
+    string? Summary,
+    float[]? FloatValues = null,
+    uint[]? PackedUInt32Values = null,
+    Ts4ResourceKey? ResourceKey = null);
+
 internal sealed record Ts4MatdChunk(
     string MaterialName,
     uint MaterialNameHash,
+    uint ShaderNameHash,
     string ShaderName,
     float[] UvScales,
     IReadOnlyList<Ts4TextureReference> TextureReferences,
     bool IsTransparent,
-    Ts4TextureUvMapping DiffuseUvMapping)
+    Ts4TextureUvMapping DiffuseUvMapping,
+    IReadOnlyList<Ts4MatdProperty> Properties)
 {
     public static Ts4MatdChunk Parse(ReadOnlySpan<byte> bytes)
     {
@@ -1194,8 +1480,10 @@ internal sealed record Ts4MatdChunk(
         var materialNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(8, 4));
         var shaderNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4));
         var textureReferences = new List<Ts4TextureReference>();
+        var properties = new List<Ts4MatdProperty>();
         var uvScales = new[] { 1f, 1f, 1f };
         var diffuseUvMapping = new Ts4TextureUvMapping(0, 1f, 1f, 0f, 0f);
+        Ts4ShaderProfileRegistry.Instance.TryGetProfile(shaderNameHash, out var shaderProfile);
 
         var mtrlOffset = bytes.IndexOf("MTRL"u8);
         if (mtrlOffset < 0 || mtrlOffset + 16 > bytes.Length)
@@ -1203,11 +1491,13 @@ internal sealed record Ts4MatdChunk(
             return new Ts4MatdChunk(
                 $"Material_{materialNameHash:X8}",
                 materialNameHash,
+                shaderNameHash,
                 $"Shader_{shaderNameHash:X8}",
                 uvScales,
                 textureReferences,
                 false,
-                diffuseUvMapping);
+                diffuseUvMapping,
+                properties);
         }
 
         var propertyCount = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(mtrlOffset + 12, 4)));
@@ -1219,25 +1509,40 @@ internal sealed record Ts4MatdChunk(
             var normalizedPropertyType = propertyType & 0xFFFF;
             var propertyArity = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 8, 4));
             var propertyOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 12, 4)));
+            var profileParameter = Ts4ShaderSemantics.ResolveParameterProfile(propertyHash, shaderProfile);
+            var propertyCategory = profileParameter?.Category ?? Ts4ShaderSemantics.ClassifyMatdProperty(normalizedPropertyType, propertyArity);
+            var decodedValue = DecodeMatdValue(normalizedPropertyType, propertyArity, propertyOffset, bytes);
+            properties.Add(new Ts4MatdProperty(
+                propertyHash,
+                propertyType,
+                normalizedPropertyType,
+                propertyArity,
+                propertyOffset,
+                propertyCategory,
+                decodedValue.Representation,
+                decodedValue.Summary,
+                decodedValue.FloatValues,
+                decodedValue.PackedUInt32Values,
+                decodedValue.ResourceKey));
             if (propertyOffset < 0 || propertyOffset >= bytes.Length)
             {
                 continue;
             }
 
-            if (TryReadTextureReference(propertyHash, normalizedPropertyType, propertyArity, propertyOffset, bytes, textureReferences))
+            if (TryReadTextureReference(propertyHash, normalizedPropertyType, propertyArity, propertyOffset, bytes, textureReferences, profileParameter, shaderProfile))
             {
                 continue;
             }
 
             if (normalizedPropertyType == 1)
             {
-                TryApplyScalarProperty(shaderNameHash, propertyHash, propertyOffset, bytes, uvScales, ref diffuseUvMapping);
+                TryApplyScalarProperty(shaderNameHash, propertyHash, profileParameter, propertyOffset, bytes, uvScales, ref diffuseUvMapping);
                 continue;
             }
 
-            if (normalizedPropertyType == 4)
+            if (normalizedPropertyType == 4 || (normalizedPropertyType == 1 && propertyArity > 1))
             {
-                TryApplyVectorProperty(shaderNameHash, propertyHash, propertyOffset, propertyArity, bytes, uvScales, ref diffuseUvMapping);
+                TryApplyVectorProperty(shaderNameHash, propertyHash, profileParameter, propertyOffset, propertyArity, bytes, uvScales, ref diffuseUvMapping);
             }
         }
 
@@ -1251,18 +1556,20 @@ internal sealed record Ts4MatdChunk(
                 var normalizedPropertyType = propertyType & 0xFFFF;
                 var propertyArity = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 8, 4));
                 var propertyOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 12, 4)));
+                var profileParameter = Ts4ShaderSemantics.ResolveParameterProfile(propertyHash, shaderProfile);
                 if (propertyOffset < 0 || propertyOffset >= bytes.Length)
                 {
                     continue;
                 }
 
-                TryReadHeuristicTextureReference(propertyHash, normalizedPropertyType, propertyArity, propertyOffset, bytes, textureReferences);
+                TryReadHeuristicTextureReference(propertyHash, normalizedPropertyType, propertyArity, propertyOffset, bytes, textureReferences, profileParameter, shaderProfile);
             }
         }
 
         return new Ts4MatdChunk(
             $"Material_{materialNameHash:X8}",
             materialNameHash,
+            shaderNameHash,
             $"Shader_{shaderNameHash:X8}",
             uvScales,
             textureReferences
@@ -1270,18 +1577,21 @@ internal sealed record Ts4MatdChunk(
                 .Select(static group => group.First())
                 .ToArray(),
             false,
-            diffuseUvMapping);
+            diffuseUvMapping,
+            properties);
     }
 
     private static Ts4MatdChunk CreateFallback(uint materialNameHash) =>
         new(
             $"Material_{materialNameHash:X8}",
             materialNameHash,
+            0,
             "Unsupported",
             [1f, 1f, 1f],
             [],
             false,
-            new Ts4TextureUvMapping(0, 1f, 1f, 0f, 0f));
+            new Ts4TextureUvMapping(0, 1f, 1f, 0f, 0f),
+            []);
 
     public static IReadOnlyList<string> InspectProperties(ReadOnlySpan<byte> bytes)
     {
@@ -1295,6 +1605,11 @@ internal sealed record Ts4MatdChunk(
         var materialNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(8, 4));
         var shaderNameHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4));
         lines.Add($"material=Material_{materialNameHash:X8} shader=Shader_{shaderNameHash:X8}");
+        Ts4ShaderProfileRegistry.Instance.TryGetProfile(shaderNameHash, out var shaderProfile);
+        if (shaderProfile is not null)
+        {
+            lines.Add($"shaderProfile={shaderProfile.Name} params={shaderProfile.Parameters.Count}");
+        }
 
         var mtrlOffset = bytes.IndexOf("MTRL"u8);
         if (mtrlOffset < 0 || mtrlOffset + 16 > bytes.Length)
@@ -1313,7 +1628,10 @@ internal sealed record Ts4MatdChunk(
             var normalizedPropertyType = propertyType & 0xFFFF;
             var propertyArity = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 8, 4));
             var propertyOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 12, 4)));
-            var summary = $"[{i}] hash=0x{propertyHash:X8} type=0x{normalizedPropertyType:X4} arity={propertyArity} offset=0x{propertyOffset:X}";
+            var profileParameter = Ts4ShaderSemantics.ResolveParameterProfile(propertyHash, shaderProfile);
+            var propertyName = profileParameter?.Name ?? $"0x{propertyHash:X8}";
+            var propertyCategory = profileParameter?.Category ?? Ts4ShaderSemantics.ClassifyMatdProperty(normalizedPropertyType, propertyArity);
+            var summary = $"[{i}] hash=0x{propertyHash:X8} name={propertyName} category={propertyCategory} type=0x{normalizedPropertyType:X4} arity={propertyArity} offset=0x{propertyOffset:X}";
             if (propertyOffset < 0 || propertyOffset >= bytes.Length)
             {
                 lines.Add(summary + " invalid-offset");
@@ -1330,38 +1648,75 @@ internal sealed record Ts4MatdChunk(
     {
         try
         {
-            if (normalizedPropertyType == 1 && propertyOffset + 4 <= bytes.Length)
-            {
-                return $" scalar={BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4)).ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}";
-            }
-
-            if (normalizedPropertyType == 4)
-            {
-                var count = checked((int)Math.Max(1u, propertyArity));
-                if (propertyOffset + (count * 4) <= bytes.Length)
-                {
-                    var values = new string[count];
-                    for (var index = 0; index < count; index++)
-                    {
-                        values[index] = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + (index * 4), 4))
-                            .ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
-                    }
-
-                    return $" vector=[{string.Join(", ", values)}]";
-                }
-            }
-
-            if (normalizedPropertyType == 2 && propertyOffset + 16 <= bytes.Length)
-            {
-                return DescribePossibleKey(bytes.Slice(propertyOffset, 16));
-            }
-
-            return string.Empty;
+            var decoded = DecodeMatdValue(normalizedPropertyType, propertyArity, propertyOffset, bytes);
+            return decoded.Summary is null ? string.Empty : $" {decoded.Summary}";
         }
         catch
         {
             return " value=(decode-failed)";
         }
+    }
+
+    private static Ts4MatdDecodedValue DecodeMatdValue(
+        uint normalizedPropertyType,
+        uint propertyArity,
+        int propertyOffset,
+        byte[] bytes) =>
+        DecodeMatdValue(normalizedPropertyType, propertyArity, propertyOffset, bytes.AsSpan());
+
+    private static Ts4MatdDecodedValue DecodeMatdValue(
+        uint normalizedPropertyType,
+        uint propertyArity,
+        int propertyOffset,
+        ReadOnlySpan<byte> bytes)
+    {
+        if (propertyOffset < 0 || propertyOffset >= bytes.Length)
+        {
+            return new Ts4MatdDecodedValue(MaterialValueRepresentation.None, null);
+        }
+
+        if (normalizedPropertyType == 1 && propertyArity == 1 && propertyOffset + 4 <= bytes.Length)
+        {
+            var scalar = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
+            return new Ts4MatdDecodedValue(
+                MaterialValueRepresentation.Scalar,
+                $"scalar={scalar.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}",
+                [scalar]);
+        }
+
+        if (normalizedPropertyType == 2 && propertyOffset + 16 <= bytes.Length)
+        {
+            var keyBytes = bytes.Slice(propertyOffset, 16);
+            var embeddedKey = ReadMatdEmbeddedResourceKey(keyBytes);
+            return new Ts4MatdDecodedValue(
+                MaterialValueRepresentation.ResourceKey,
+                DescribePossibleKey(keyBytes).TrimStart(),
+                ResourceKey: embeddedKey);
+        }
+
+        if (normalizedPropertyType == 4 || (normalizedPropertyType == 1 && propertyArity > 1))
+        {
+            if (TryReadFloatComponents(propertyArity, propertyOffset, bytes, out var floatValues))
+            {
+                var values = floatValues
+                    .Select(static value => value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture))
+                    .ToArray();
+                return new Ts4MatdDecodedValue(
+                    MaterialValueRepresentation.FloatVector,
+                    $"vector=[{string.Join(", ", values)}]",
+                    floatValues);
+            }
+
+            if (TryReadUInt32Components(propertyArity, propertyOffset, bytes, out var rawValues))
+            {
+                return new Ts4MatdDecodedValue(
+                    MaterialValueRepresentation.PackedUInt32,
+                    $"packed32=[{string.Join(", ", rawValues.Select(static value => $"0x{value:X8}"))}]",
+                    PackedUInt32Values: rawValues);
+            }
+        }
+
+        return new Ts4MatdDecodedValue(MaterialValueRepresentation.None, null);
     }
 
     private static string DescribePossibleKey(ReadOnlySpan<byte> keyBytes)
@@ -1391,9 +1746,12 @@ internal sealed record Ts4MatdChunk(
         uint propertyArity,
         int propertyOffset,
         ReadOnlySpan<byte> bytes,
-        List<Ts4TextureReference> textureReferences)
+        List<Ts4TextureReference> textureReferences,
+        ShaderParameterProfile? profileParameter,
+        ShaderBlockProfile? shaderProfile)
     {
-        if (!IsRecognizedTexturePropertyHash(propertyHash))
+        if (!IsRecognizedTexturePropertyHash(propertyHash) &&
+            !Ts4ShaderSemantics.IsLikelyTextureParameter(normalizedPropertyType, propertyArity, profileParameter))
         {
             return false;
         }
@@ -1426,7 +1784,9 @@ internal sealed record Ts4MatdChunk(
                 continue;
             }
 
-            textureReferences.Add(new Ts4TextureReference(GetTextureSlotName(propertyHash, textureReferences.Count), key));
+            var inferredReference = new Ts4TextureReference(GetTextureSlotName(propertyHash, textureReferences.Count), key, propertyHash);
+            var resolvedSlot = Ts4ShaderSemantics.ResolveTextureSlotName(inferredReference, shaderProfile);
+            textureReferences.Add(inferredReference with { Slot = resolvedSlot });
             return true;
         }
 
@@ -1439,7 +1799,9 @@ internal sealed record Ts4MatdChunk(
         uint propertyArity,
         int propertyOffset,
         ReadOnlySpan<byte> bytes,
-        List<Ts4TextureReference> textureReferences)
+        List<Ts4TextureReference> textureReferences,
+        ShaderParameterProfile? profileParameter,
+        ShaderBlockProfile? shaderProfile)
     {
         if (propertyOffset + 16 > bytes.Length)
         {
@@ -1448,7 +1810,10 @@ internal sealed record Ts4MatdChunk(
 
         if (normalizedPropertyType != 2 || propertyArity != 1)
         {
-            return false;
+            if (!Ts4ShaderSemantics.IsLikelyTextureParameter(normalizedPropertyType, propertyArity, profileParameter))
+            {
+                return false;
+            }
         }
 
         var keyBytes = bytes.Slice(propertyOffset, 16);
@@ -1464,7 +1829,9 @@ internal sealed record Ts4MatdChunk(
                 continue;
             }
 
-            textureReferences.Add(new Ts4TextureReference(GetHeuristicTextureSlotName(propertyHash, textureReferences.Count), key));
+            var inferredReference = new Ts4TextureReference(GetHeuristicTextureSlotName(propertyHash, textureReferences.Count), key, propertyHash);
+            var resolvedSlot = Ts4ShaderSemantics.ResolveTextureSlotName(inferredReference, shaderProfile);
+            textureReferences.Add(inferredReference with { Slot = resolvedSlot });
         }
 
         return textureReferences.Count > 0;
@@ -1513,6 +1880,7 @@ internal sealed record Ts4MatdChunk(
     private static void TryApplyScalarProperty(
         uint shaderNameHash,
         uint propertyHash,
+        ShaderParameterProfile? profileParameter,
         int propertyOffset,
         ReadOnlySpan<byte> bytes,
         float[] uvScales,
@@ -1524,25 +1892,21 @@ internal sealed record Ts4MatdChunk(
             return;
         }
 
-        // Narrow, evidence-backed handling:
-        // On EP14 windmill materials (Shader_B9105A6D), B95C43EB behaves like a diffuse
-        // UV-channel selector. Keeping this selector while *not* applying guessed CEBA7E8A
-        // transforms produces a banner that is materially closer to the atlas target than
-        // raw UV0 alone.
-        if (shaderNameHash == 0xB9105A6D && propertyHash == 0xB95C43EB)
+        var scalarValue = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
+        if (Ts4ShaderSemantics.TryInterpretDiffuseUvMappingScalar(profileParameter, scalarValue, diffuseUvMapping, out var genericMapping))
         {
-            var value = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
-            var rounded = (int)MathF.Round(value);
-            if (rounded is 0 or 1)
-            {
-                diffuseUvMapping = diffuseUvMapping with { UvChannel = rounded };
-            }
+            diffuseUvMapping = genericMapping;
+            return;
         }
+
+        _ = shaderNameHash;
+        _ = propertyHash;
     }
 
     private static void TryApplyVectorProperty(
         uint shaderNameHash,
         uint propertyHash,
+        ShaderParameterProfile? profileParameter,
         int propertyOffset,
         uint propertyArity,
         ReadOnlySpan<byte> bytes,
@@ -1556,40 +1920,98 @@ internal sealed record Ts4MatdChunk(
             return;
         }
 
-        // Narrow, asset-backed handling:
-        // On Shader_B9105A6D, once diffuse sampling is explicitly switched to UV1, CEBA7E8A
-        // behaves like a compact atlas crop for the banner material:
-        //   x = horizontal crop width and horizontal origin
-        //   y = vertical crop height
-        //   w = vertical origin
-        // This matches the observed EP14 windmill banner substantially better than treating
-        // the vector as a generic full origin/scale rectangle.
-        if (shaderNameHash == 0xB9105A6D &&
-            propertyHash == 0xCEBA7E8A &&
-            diffuseUvMapping.UvChannel == 1)
+        if (!TryReadFloatComponents(propertyArity, propertyOffset, bytes, out var typedValues))
         {
-            var scaleU = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset, 4));
-            var scaleV = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + 4, 4));
-            var offsetV = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + 12, 4));
-            if (IsPlausibleUvScale(scaleU) && scaleU > 0f &&
-                IsPlausibleUvScale(scaleV) && scaleV > 0f &&
-                float.IsFinite(offsetV))
-            {
-                diffuseUvMapping = diffuseUvMapping with
-                {
-                    UvScaleU = Math.Clamp(scaleU, 0.001f, 1f),
-                    UvOffsetU = scaleU,
-                    UvScaleV = Math.Clamp(scaleV, 0.001f, 1f),
-                    UvOffsetV = Math.Clamp(offsetV, 0f, 1f)
-                };
-            }
+            return;
         }
+
+        var valueCount = typedValues.Length;
+        Span<float> values = valueCount <= 8 ? stackalloc float[valueCount] : new float[valueCount];
+        typedValues.CopyTo(values);
+
+        if (Ts4ShaderSemantics.TryInterpretDiffuseUvMappingVector(profileParameter, values, diffuseUvMapping, out var genericMapping))
+        {
+            diffuseUvMapping = genericMapping;
+            return;
+        }
+
+        _ = shaderNameHash;
+        _ = propertyHash;
     }
 
     private static bool IsPlausibleUvScale(float value) =>
         float.IsFinite(value) &&
         Math.Abs(value) >= 0.001f &&
         Math.Abs(value) <= 1024f;
+
+    private static bool TryReadFloatComponents(
+        uint propertyArity,
+        int propertyOffset,
+        ReadOnlySpan<byte> bytes,
+        out float[] values)
+    {
+        values = [];
+        var count = checked((int)Math.Max(1u, propertyArity));
+        if (propertyOffset < 0 || propertyOffset + (count * 4) > bytes.Length)
+        {
+            return false;
+        }
+
+        var decoded = new float[count];
+        for (var index = 0; index < count; index++)
+        {
+            decoded[index] = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + (index * 4), 4));
+        }
+
+        if (!ArePlausibleFloatComponents(decoded))
+        {
+            return false;
+        }
+
+        values = decoded;
+        return true;
+    }
+
+    private static bool TryReadUInt32Components(
+        uint propertyArity,
+        int propertyOffset,
+        ReadOnlySpan<byte> bytes,
+        out uint[] values)
+    {
+        values = [];
+        var count = checked((int)Math.Max(1u, propertyArity));
+        if (propertyOffset < 0 || propertyOffset + (count * 4) > bytes.Length)
+        {
+            return false;
+        }
+
+        values = new uint[count];
+        for (var index = 0; index < count; index++)
+        {
+            values[index] = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(propertyOffset + (index * 4), 4));
+        }
+
+        return true;
+    }
+
+    private static bool ArePlausibleFloatComponents(ReadOnlySpan<float> values)
+    {
+        var nonZeroCount = 0;
+        foreach (var value in values)
+        {
+            if (!float.IsFinite(value) || MathF.Abs(value) > 65536f)
+            {
+                return false;
+            }
+
+            if (MathF.Abs(value) > 0.0000001f)
+            {
+                nonZeroCount++;
+            }
+        }
+
+        return nonZeroCount > 0 || values.Length > 0;
+    }
 
     private static bool IsImageType(uint type) => type is
         0x00B2D882 or
@@ -1881,7 +2303,11 @@ internal sealed class Ts4VrtfChunk
     public static Ts4VrtfChunk CreateShadowDefault() =>
         new()
         {
-            VertexStride = 16,
+            // Shadow-only Build/Buy MLOD variants commonly omit a linked VRTF chunk and pack
+            // positions as a compact short4-normalized stream (8 bytes per vertex). Using a
+            // 16-byte default stride silently drops every other vertex and makes the IBUF look
+            // wildly invalid, so the fallback path must match the actual packed position size.
+            VertexStride = 8,
             Elements =
             [
                 new Ts4VertexElement(Ts4VertexUsage.Position, 0, 0x07, 0)
@@ -1914,12 +2340,18 @@ internal sealed class Ts4VbufChunk
         return new Ts4VbufChunk(payload, swizzleInfoReference);
     }
 
-    public IReadOnlyList<Ts4DecodedVertex> ReadVertices(Ts4VrtfChunk vrtf, uint streamOffset, int vertexCount, float[] uvScales)
+    public IReadOnlyList<Ts4DecodedVertex> ReadVertices(
+        Ts4VrtfChunk vrtf,
+        uint streamOffset,
+        int baseVertexIndex,
+        int vertexCount,
+        float[] uvScales)
     {
         var results = new List<Ts4DecodedVertex>(vertexCount);
         for (var index = 0; index < vertexCount; index++)
         {
-            var vertexOffset = checked((int)streamOffset + (index * vrtf.VertexStride));
+            var absoluteVertexIndex = checked(baseVertexIndex + index);
+            var vertexOffset = checked((int)streamOffset + (absoluteVertexIndex * vrtf.VertexStride));
             if (vertexOffset < 0 || vertexOffset + vrtf.VertexStride > rawData.Length)
             {
                 break;
@@ -2082,36 +2514,144 @@ internal sealed class Ts4IbufChunk
         return new Ts4IbufChunk(flags, indexSize, payload);
     }
 
-    public IReadOnlyList<uint> ReadIndices(int startIndex, int count, int expectedVertexCount = 0)
+    public IReadOnlyList<uint> ReadIndices(
+        int startIndex,
+        int count,
+        int normalizeBaseIndex = 0,
+        int expectedVertexCount = 0)
     {
         var directStartOffset = startIndex * indexSize;
         var canTryCompactDelta = flags == 0x1 && rawData.Length >= 4;
+        var directWindowOutOfRange = directStartOffset + (count * indexSize) > rawData.Length;
 
-        if (directStartOffset + (count * indexSize) > rawData.Length &&
-            canTryCompactDelta &&
-            TryReadCompactDeltaIndices(startIndex, count, out var compact))
+        var rawResults = new List<uint>(count);
+        if (!directWindowOutOfRange)
         {
-            return compact;
+            for (var offset = directStartOffset; offset + indexSize <= rawData.Length && rawResults.Count < count; offset += indexSize)
+            {
+                rawResults.Add(indexSize == 4
+                    ? BinaryPrimitives.ReadUInt32LittleEndian(rawData.AsSpan(offset, 4))
+                    : BinaryPrimitives.ReadUInt16LittleEndian(rawData.AsSpan(offset, 2)));
+            }
         }
 
-        var results = new List<uint>(count);
-        for (var offset = directStartOffset; offset + indexSize <= rawData.Length && results.Count < count; offset += indexSize)
-        {
-            results.Add(indexSize == 4
-                ? BinaryPrimitives.ReadUInt32LittleEndian(rawData.AsSpan(offset, 4))
-                : BinaryPrimitives.ReadUInt16LittleEndian(rawData.AsSpan(offset, 2)));
-        }
+        var results = NormalizeIndices(rawResults, normalizeBaseIndex);
 
-        if (canTryCompactDelta &&
-            expectedVertexCount > 0 &&
-            LooksImplausible(results, expectedVertexCount) &&
-            TryReadCompactDeltaIndices(startIndex, count, out var compactFallback) &&
-            !LooksImplausible(compactFallback, expectedVertexCount))
+        if (expectedVertexCount > 0)
         {
-            return compactFallback;
+            var candidates = new List<IReadOnlyList<uint>>();
+            if (results.Count > 0)
+            {
+                candidates.Add(results);
+            }
+
+            if (canTryCompactDelta &&
+                TryReadCompactDeltaIndices(startIndex, count, out var compactFallback))
+            {
+                candidates.Add(NormalizeIndices(compactFallback, normalizeBaseIndex));
+                candidates.Add(NormalizeIndices(compactFallback.Select(static value => value & 0xFFFFu).ToArray(), normalizeBaseIndex));
+            }
+
+            if (indexSize == 4 && rawResults.Count > 0)
+            {
+                var low16Fallback = rawResults.Select(static value => value & 0xFFFFu).ToArray();
+                candidates.Add(NormalizeIndices(low16Fallback, normalizeBaseIndex));
+            }
+
+            if (candidates.Count > 0)
+            {
+                return SelectBestIndexCandidate(candidates, expectedVertexCount);
+            }
         }
 
         return results;
+    }
+
+    public IReadOnlyList<string> InspectCandidates(int startIndex, int count, int normalizeBaseIndex, int expectedVertexCount)
+    {
+        var lines = new List<string>();
+        foreach (var (name, indices) in GetIndexCandidates(startIndex, count))
+        {
+            var normalized = NormalizeIndices(indices, normalizeBaseIndex);
+            var invalidIndices = CountInvalidIndices(normalized, expectedVertexCount);
+            var (validTriangles, invalidTriangles) = CountTriangleValidity(normalized, expectedVertexCount);
+            var minIndex = normalized.Count > 0 ? normalized.Min() : 0u;
+            var maxIndex = normalized.Count > 0 ? normalized.Max() : 0u;
+            var sample = string.Join(", ", normalized.Take(12));
+            lines.Add(
+                $"{name}: count={normalized.Count} base={normalizeBaseIndex} min={minIndex} max={maxIndex} validTriangles={validTriangles} invalidTriangles={invalidTriangles} invalidIndices={invalidIndices} sample=[{sample}]");
+        }
+
+        return lines;
+    }
+
+    private static List<uint> NormalizeIndices(IReadOnlyList<uint> indices, int normalizeBaseIndex)
+    {
+        var results = new List<uint>(indices.Count);
+        if (normalizeBaseIndex <= 0)
+        {
+            results.AddRange(indices);
+            return results;
+        }
+
+        foreach (var index in indices)
+        {
+            results.Add(index >= (uint)normalizeBaseIndex
+                ? index - (uint)normalizeBaseIndex
+                : uint.MaxValue);
+        }
+
+        return results;
+    }
+
+    private static IReadOnlyList<uint> SelectBestIndexCandidate(
+        IReadOnlyList<IReadOnlyList<uint>> candidates,
+        int expectedVertexCount)
+    {
+        var bestCandidate = candidates[0];
+        var bestScore = ScoreIndexCandidate(bestCandidate, expectedVertexCount);
+
+        for (var i = 1; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            var score = ScoreIndexCandidate(candidate, expectedVertexCount);
+            if (IsBetterScore(score, bestScore))
+            {
+                bestCandidate = candidate;
+                bestScore = score;
+            }
+        }
+
+        return bestCandidate;
+    }
+
+    private static IndexCandidateScore ScoreIndexCandidate(
+        IReadOnlyList<uint> indices,
+        int expectedVertexCount)
+    {
+        var invalidIndices = CountInvalidIndices(indices, expectedVertexCount);
+        var (validTriangles, invalidTriangles) = CountTriangleValidity(indices, expectedVertexCount);
+        return new IndexCandidateScore(validTriangles, -invalidTriangles, -invalidIndices, indices.Count);
+    }
+
+    private static bool IsBetterScore(IndexCandidateScore candidate, IndexCandidateScore currentBest)
+    {
+        if (candidate.ValidTriangles != currentBest.ValidTriangles)
+        {
+            return candidate.ValidTriangles > currentBest.ValidTriangles;
+        }
+
+        if (candidate.NegativeInvalidTriangles != currentBest.NegativeInvalidTriangles)
+        {
+            return candidate.NegativeInvalidTriangles > currentBest.NegativeInvalidTriangles;
+        }
+
+        if (candidate.NegativeInvalidIndices != currentBest.NegativeInvalidIndices)
+        {
+            return candidate.NegativeInvalidIndices > currentBest.NegativeInvalidIndices;
+        }
+
+        return candidate.IndexCount > currentBest.IndexCount;
     }
 
     private static bool LooksImplausible(IReadOnlyList<uint> indices, int expectedVertexCount)
@@ -2119,6 +2659,17 @@ internal sealed class Ts4IbufChunk
         if (indices.Count == 0 || expectedVertexCount <= 0)
         {
             return false;
+        }
+
+        var invalid = CountInvalidIndices(indices, expectedVertexCount);
+        return invalid > indices.Count / 4;
+    }
+
+    private static int CountInvalidIndices(IReadOnlyList<uint> indices, int expectedVertexCount)
+    {
+        if (indices.Count == 0 || expectedVertexCount <= 0)
+        {
+            return 0;
         }
 
         var invalid = 0;
@@ -2130,7 +2681,36 @@ internal sealed class Ts4IbufChunk
             }
         }
 
-        return invalid > indices.Count / 4;
+        return invalid;
+    }
+
+    private static (int ValidTriangles, int InvalidTriangles) CountTriangleValidity(
+        IReadOnlyList<uint> indices,
+        int expectedVertexCount)
+    {
+        if (indices.Count == 0 || expectedVertexCount <= 0)
+        {
+            return (0, 0);
+        }
+
+        var valid = 0;
+        var invalid = 0;
+        for (var index = 0; index + 2 < indices.Count; index += 3)
+        {
+            var a = indices[index];
+            var b = indices[index + 1];
+            var c = indices[index + 2];
+            if (a >= expectedVertexCount || b >= expectedVertexCount || c >= expectedVertexCount)
+            {
+                invalid++;
+            }
+            else
+            {
+                valid++;
+            }
+        }
+
+        return (valid, invalid);
     }
 
     private bool TryReadCompactDeltaIndices(int startIndex, int count, out IReadOnlyList<uint> indices)
@@ -2160,7 +2740,49 @@ internal sealed class Ts4IbufChunk
         indices = decoded.Skip(startIndex).Take(count).ToArray();
         return true;
     }
+
+    private IReadOnlyList<(string Name, IReadOnlyList<uint> Indices)> GetIndexCandidates(int startIndex, int count)
+    {
+        var candidates = new List<(string Name, IReadOnlyList<uint> Indices)>();
+
+        var directStartOffset = startIndex * indexSize;
+        var direct = new List<uint>(count);
+        for (var offset = directStartOffset; offset + indexSize <= rawData.Length && direct.Count < count; offset += indexSize)
+        {
+            direct.Add(indexSize == 4
+                ? BinaryPrimitives.ReadUInt32LittleEndian(rawData.AsSpan(offset, 4))
+                : BinaryPrimitives.ReadUInt16LittleEndian(rawData.AsSpan(offset, 2)));
+        }
+
+        candidates.Add(($"direct{indexSize * 8}", direct));
+
+        if (flags == 0x1 && rawData.Length >= 4 &&
+            TryReadCompactDeltaIndices(startIndex, count, out var compact))
+        {
+            candidates.Add(("compactDelta", compact));
+            candidates.Add(("compactDeltaLow16", compact.Select(static value => value & 0xFFFFu).ToArray()));
+        }
+
+        if (indexSize == 4)
+        {
+            candidates.Add(("low16", direct.Select(static value => value & 0xFFFFu).ToArray()));
+        }
+
+        return candidates;
+    }
 }
+
+internal readonly record struct IndexCandidateScore(
+    int ValidTriangles,
+    int NegativeInvalidTriangles,
+    int NegativeInvalidIndices,
+    int IndexCount);
+
+internal readonly record struct TextureLookupKey(
+    uint Type,
+    uint Group,
+    ulong FullInstance,
+    string TypeName);
 
 internal sealed class Ts4RcolResource
 {
@@ -2475,6 +3097,18 @@ internal readonly record struct Ts4MlodMesh(
 {
     public bool IsShadowCaster => (Flags & 0x10) != 0;
     public bool IsSkinned => !SkinReference.IsNull || JointCount > 0;
+}
+
+internal readonly record struct Ts4MeshWindow(int VertexReadBase, int IndexNormalizeBase)
+{
+    public static Ts4MeshWindow From(Ts4MlodMesh mesh)
+    {
+        var minVertexIndex = Math.Max(0, mesh.MinVertexIndex);
+        var startVertex = Math.Max(0, mesh.StartVertex);
+        return new Ts4MeshWindow(
+            checked(startVertex + minVertexIndex),
+            minVertexIndex);
+    }
 }
 
 internal enum Ts4PrimitiveType : uint

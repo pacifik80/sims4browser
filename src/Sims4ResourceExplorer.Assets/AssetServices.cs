@@ -1,4 +1,5 @@
 using System.Text;
+using System.Buffers.Binary;
 using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.Assets;
@@ -29,7 +30,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
     {
         return summary.AssetKind switch
         {
-            AssetKind.BuildBuy => BuildBuildBuyGraph(summary, packageResources),
+            AssetKind.BuildBuy => await BuildBuildBuyGraphAsync(summary, packageResources, cancellationToken).ConfigureAwait(false),
             AssetKind.Cas => await BuildCasGraphAsync(summary, packageResources, cancellationToken).ConfigureAwait(false),
             _ => new AssetGraph(summary, [], [$"Unsupported asset kind: {summary.AssetKind}."])
         };
@@ -167,7 +168,10 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         }
     }
 
-    private static AssetGraph BuildBuildBuyGraph(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources)
+    private async Task<AssetGraph> BuildBuildBuyGraphAsync(
+        AssetSummary summary,
+        IReadOnlyList<ResourceMetadata> packageResources,
+        CancellationToken cancellationToken)
     {
         var root = packageResources.FirstOrDefault(resource => resource.Key.FullTgi == summary.RootKey.FullTgi);
         var linked = root is null
@@ -183,6 +187,20 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         {
             diagnostics.Add("The model root resource is not available in the currently loaded package metadata.");
             return new AssetGraph(summary, linked, diagnostics);
+        }
+
+        var embeddedLodLabels = Array.Empty<string>();
+        try
+        {
+            var rootBytes = await resourceCatalogService
+                .GetResourceBytesAsync(root.PackagePath, root.Key, raw: false, cancellationToken)
+                .ConfigureAwait(false);
+            embeddedLodLabels = ParseEmbeddedLodLabels(rootBytes).ToArray();
+        }
+        catch
+        {
+            // Asset graph construction should stay resilient even when the root bytes
+            // use a MODL flavor we do not fully understand yet.
         }
 
         var identityResources = linked.Where(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition").ToArray();
@@ -233,6 +251,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 root,
                 identityResources,
                 modelLods,
+                embeddedLodLabels,
                 materialResources,
                 textures,
                 [],
@@ -241,6 +260,101 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 true,
                 "Static Build/Buy furniture/decor objects with a model root, triangle-list MLOD geometry, no skinning/animation path, and package-local texture candidates."));
     }
+
+    private static IReadOnlyList<string> ParseEmbeddedLodLabels(byte[] bytes)
+    {
+        var modlOffset = FindAscii(bytes, "MODL");
+        if (modlOffset < 0 || modlOffset + 12 > bytes.Length)
+        {
+            return [];
+        }
+
+        var version = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(modlOffset + 4, 4));
+        var lodCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(modlOffset + 8, 4));
+        if (lodCount <= 0 || lodCount > 64)
+        {
+            return [];
+        }
+
+        var cursor = modlOffset + 12;
+        if (version >= 0x300)
+        {
+            cursor += 44;
+        }
+        else if (version >= 258 && version < 0x300)
+        {
+            if (cursor + 28 > bytes.Length)
+            {
+                return [];
+            }
+
+            cursor += 24;
+            var extraBoundsCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(cursor, 4));
+            cursor += 4;
+            var extraBoundsBytes = checked(extraBoundsCount * 24);
+            cursor += extraBoundsBytes + 8;
+        }
+        else
+        {
+            cursor += 24;
+        }
+
+        var labels = new List<string>(lodCount);
+        for (var index = 0; index < lodCount; index++)
+        {
+            if (cursor + 20 > bytes.Length)
+            {
+                break;
+            }
+
+            var rawReference = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(cursor, 4));
+            var lodId = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(cursor + 8, 4));
+            cursor += 20;
+
+            var referenceType = rawReference == 0 ? 0xFFu : rawReference >> 28;
+            if (referenceType == 0)
+            {
+                labels.Add(DescribeBuildBuyLod(lodId));
+            }
+        }
+
+        return labels;
+    }
+
+    private static int FindAscii(byte[] bytes, string tag)
+    {
+        var tagBytes = Encoding.ASCII.GetBytes(tag);
+        for (var index = 0; index <= bytes.Length - tagBytes.Length; index++)
+        {
+            var matched = true;
+            for (var offset = 0; offset < tagBytes.Length; offset++)
+            {
+                if (bytes[index + offset] != tagBytes[offset])
+                {
+                    matched = false;
+                    break;
+                }
+            }
+
+            if (matched)
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string DescribeBuildBuyLod(uint id) => id switch
+    {
+        0x00000000 => "High Detail",
+        0x00000001 => "Medium Detail",
+        0x00000002 => "Low Detail",
+        0x00010000 => "High Detail Shadow",
+        0x00010001 => "Medium Detail Shadow",
+        0x00010002 => "Low Detail Shadow",
+        _ => $"LOD {id:X8}"
+    };
 
     private async Task<AssetGraph> BuildCasGraphAsync(
         AssetSummary summary,

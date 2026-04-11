@@ -82,7 +82,7 @@ public sealed partial class BuildBuySceneBuildService
 
     private async Task<Ts4RigResolution> TryResolveRigAsync(ResourceMetadata geometryResource, CancellationToken cancellationToken)
     {
-        var packageResources = await indexStore.GetPackageResourcesAsync(geometryResource.PackagePath, cancellationToken).ConfigureAwait(false);
+        var packageResources = await GetPackageInstanceResourcesAsync(geometryResource.PackagePath, geometryResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
         var rig = packageResources
             .Where(resource => resource.Key.TypeName == "Rig" && resource.Key.FullInstance == geometryResource.Key.FullInstance)
             .OrderBy(static resource => resource.Key.Group)

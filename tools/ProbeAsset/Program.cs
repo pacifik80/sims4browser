@@ -103,6 +103,8 @@ Console.WriteLine("Root RCOL summary:");
 await DumpRcolChunkSummary(catalog, graph.BuildBuyGraph.ModelResource);
 Console.WriteLine("Root material summary:");
 var rootRawBytes = await catalog.GetResourceBytesAsync(graph.BuildBuyGraph.ModelResource.PackagePath, graph.BuildBuyGraph.ModelResource.Key, raw: false, CancellationToken.None);
+Console.WriteLine("Root model summary:");
+Console.WriteLine(PreviewDebugProbe.InspectModelLod(rootRawBytes));
 Console.WriteLine(PreviewDebugProbe.InspectMaterialChunks(rootRawBytes));
 var modelResult = await sceneBuilder.BuildSceneAsync(graph.BuildBuyGraph.ModelResource, CancellationToken.None);
 WriteSceneResult(modelResult);
@@ -545,7 +547,20 @@ static async Task DumpRcolChunkSummary(LlamaResourceCatalogService catalog, Reso
         offset += 16;
     }
 
-    offset += externalCount * 16;
+    if (externalCount > 0)
+    {
+        Console.WriteLine("External keys:");
+    }
+
+    for (var index = 0; index < externalCount && offset + 16 <= bytes.Length; index++)
+    {
+        var type = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
+        var group = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset + 4, 4));
+        var instance = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset + 8, 8));
+        Console.WriteLine($"  External {index}: {type:X8}:{group:X8}:{instance:X16}");
+        offset += 16;
+    }
+
     for (var index = 0; index < chunkCount && offset + 8 <= bytes.Length; index++)
     {
         var position = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
@@ -690,6 +705,23 @@ static void DumpModl(ReadOnlySpan<byte> bytes)
         var line = bytes.Slice(i, Math.Min(16, dumpLength - i));
         var hex = string.Join(" ", line.ToArray().Select(static b => b.ToString("X2")));
         Console.WriteLine($"    0x{i:X4}: {hex}");
+    }
+
+    try
+    {
+        var modl = PreviewDebugProbe.ParseModl(bytes.ToArray());
+        Console.WriteLine("  MODL parsed entries:");
+        for (var i = 0; i < modl.Count; i++)
+        {
+            var entry = modl[i];
+            Console.WriteLine(
+                $"    [{i}] ref=0x{entry.ReferenceRaw:X8} type={entry.ReferenceType} index={entry.ReferenceIndex} " +
+                $"flags=0x{entry.Flags:X8} id=0x{entry.Id:X8} minZ={entry.MinZ} maxZ={entry.MaxZ}");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  MODL parsed entries: failed ({ex.Message})");
     }
 }
 

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Reflection;
 using System.Runtime.InteropServices.WindowsRuntime;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Xaml;
@@ -471,7 +472,7 @@ public sealed partial class MainViewModel : ObservableObject
         selectedResource = null;
         ResetPreviewState();
 
-        var packageResources = await indexStore.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+        var packageResources = await indexStore.GetResourcesByInstanceAsync(asset.PackagePath, asset.RootKey.FullInstance, CancellationToken.None);
         var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         selectedAssetGraph = graph;
         var assetDetails = AssetDetailsFormatter.BuildAssetDetails(asset, graph, null, null);
@@ -526,7 +527,6 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        sceneRoot = await resourceMetadataEnrichmentService.EnrichAsync(sceneRoot, CancellationToken.None);
         selectedResource = sceneRoot;
         selectedAssetSceneRoot = sceneRoot;
         SetSceneLodOptions(BuildSceneLodOptions(graph, sceneRoot), sceneRoot.Key.FullTgi);
@@ -624,7 +624,7 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        var resource = await resourceMetadataEnrichmentService.EnrichAsync(option.Resource, CancellationToken.None);
+        var resource = option.Resource;
         selectedResource = resource;
         selectedAssetSceneRoot = resource;
 
@@ -1005,11 +1005,10 @@ public sealed partial class MainViewModel : ObservableObject
             return false;
         }
 
-        var enrichedFallback = await resourceMetadataEnrichmentService.EnrichAsync(fallbackPreviewResource, CancellationToken.None);
-        selectedResource = enrichedFallback;
+        selectedResource = fallbackPreviewResource;
         selectedAssetSceneRoot = null;
 
-        var fallbackPreview = await previewService.CreatePreviewAsync(enrichedFallback, CancellationToken.None);
+        var fallbackPreview = await previewService.CreatePreviewAsync(fallbackPreviewResource, CancellationToken.None);
         if (fallbackPreview.Content is UnsupportedPreviewContent)
         {
             return false;
@@ -1023,7 +1022,7 @@ public sealed partial class MainViewModel : ObservableObject
             {primaryReason}
             {string.Join(Environment.NewLine, diagnostics.Where(static diagnostic => !string.IsNullOrWhiteSpace(diagnostic)))}
             """;
-        await ApplyPreviewAsync(enrichedFallback, fallbackPreview, fallbackDetails);
+        await ApplyPreviewAsync(fallbackPreviewResource, fallbackPreview, fallbackDetails);
         return true;
     }
 
@@ -1055,24 +1054,33 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static string AppendSceneMaterialDiagnostics(ScenePreviewContent scene)
     {
+        var buildLine = $"Build: {GetAppBuildLabel()}";
         var materialLines = BuildSceneMaterialDiagnostics(scene.Scene);
         var statusLine = $"Scene Build Status: {scene.Status}";
         if (materialLines.Count == 0)
         {
             if (string.IsNullOrWhiteSpace(scene.Diagnostics))
             {
-                return statusLine;
+                return $"{buildLine}{Environment.NewLine}{statusLine}";
             }
 
-            return $"{statusLine}{Environment.NewLine}{scene.Diagnostics}";
+            return $"{buildLine}{Environment.NewLine}{statusLine}{Environment.NewLine}{scene.Diagnostics}";
         }
 
         if (string.IsNullOrWhiteSpace(scene.Diagnostics))
         {
-            return $"{statusLine}{Environment.NewLine}{string.Join(Environment.NewLine, materialLines)}";
+            return $"{buildLine}{Environment.NewLine}{statusLine}{Environment.NewLine}{string.Join(Environment.NewLine, materialLines)}";
         }
 
-        return $"{statusLine}{Environment.NewLine}{scene.Diagnostics}{Environment.NewLine}{Environment.NewLine}{string.Join(Environment.NewLine, materialLines)}";
+        return $"{buildLine}{Environment.NewLine}{statusLine}{Environment.NewLine}{scene.Diagnostics}{Environment.NewLine}{Environment.NewLine}{string.Join(Environment.NewLine, materialLines)}";
+    }
+
+    private static string GetAppBuildLabel()
+    {
+        var informationalVersion = typeof(MainViewModel).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        return string.IsNullOrWhiteSpace(informationalVersion) ? "build-(unknown)" : informationalVersion;
     }
 
     private static IReadOnlyList<string> BuildSceneMaterialDiagnostics(CanonicalScene? scene)
@@ -1181,6 +1189,12 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 new("Auto (Model root)", graph.BuildBuyGraph.ModelResource)
             };
+
+            foreach (var embeddedLod in graph.BuildBuyGraph.EmbeddedLodLabels
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                options.Add(new SceneLodOption($"{embeddedLod} (embedded in Model root)", graph.BuildBuyGraph.ModelResource));
+            }
 
             foreach (var lod in graph.BuildBuyGraph.ModelLodResources
                          .OrderBy(static resource => resource.Key.Group)
@@ -1646,6 +1660,7 @@ public sealed partial class MainViewModel : ObservableObject
 public enum SceneRenderMode
 {
     Wireframe,
+    UvMap,
     FlatTexture,
     LitTexture
 }

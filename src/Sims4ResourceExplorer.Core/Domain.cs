@@ -454,6 +454,7 @@ public sealed record BuildBuyAssetGraph(
     ResourceMetadata ModelResource,
     IReadOnlyList<ResourceMetadata> IdentityResources,
     IReadOnlyList<ResourceMetadata> ModelLodResources,
+    IReadOnlyList<string> EmbeddedLodLabels,
     IReadOnlyList<ResourceMetadata> MaterialResources,
     IReadOnlyList<ResourceMetadata> TextureResources,
     IReadOnlyList<ResourceKeyRecord> MissingTextureKeys,
@@ -796,6 +797,7 @@ public interface IIndexStore
     Task<AssetFacetOptions> GetAssetFacetOptionsAsync(AssetKind assetKind, CancellationToken cancellationToken);
     Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken);
     Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken);
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);
     Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);

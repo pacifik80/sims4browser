@@ -23,11 +23,12 @@
             <Button Click="Refresh_Click" Content="Apply / Refresh" IsEnabled="{Binding IsNotBusy}" />
         </StackPanel>
 
-        <Grid Grid.Row="1" ColumnSpacing="12">
+        <Grid x:Name="MainContentGrid" Grid.Row="1" ColumnSpacing="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="320" />
-                <ColumnDefinition Width="3*" MinWidth="320" />
-                <ColumnDefinition Width="4*" MinWidth="520" />
+                <ColumnDefinition x:Name="ResultsColumn" Width="3*" MinWidth="320" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition x:Name="PreviewColumn" Width="4*" MinWidth="520" />
             </Grid.ColumnDefinitions>
 
             <ScrollViewer Grid.Column="0">
@@ -99,7 +100,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <Grid Grid.Column="1" RowSpacing="10">
+            <Grid Grid.Column="1" Margin="12,0,12,0" RowSpacing="10">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -193,18 +194,27 @@
                 </StackPanel>
             </Grid>
 
-            <Grid Grid.Column="2" RowSpacing="8">
+            <Border Grid.Column="2"
+                    Background="{ThemeResource AccentFillColorSecondaryBrush}"
+                    Opacity="0.35"
+                    PointerPressed="MainPaneSplitter_PointerPressed"
+                    PointerMoved="MainPaneSplitter_PointerMoved"
+                    PointerReleased="MainPaneSplitter_PointerReleased"
+                    PointerCanceled="MainPaneSplitter_PointerReleased" />
+
+            <Grid x:Name="PreviewPaneGrid" Grid.Column="3" Margin="12,0,0,0" RowSpacing="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
+                    <RowDefinition x:Name="PreviewViewportRow" Height="*" MinHeight="180" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="8" />
                     <RowDefinition Height="140" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" MinHeight="120" />
                 </Grid.RowDefinitions>
 
                 <TextBlock Text="{Binding PreviewSurfaceTitle}" FontSize="16" FontWeight="SemiBold" />
                 <Grid x:Name="PreviewSurface" Grid.Row="1">
+                    <Image x:Name="UvPreviewImage" Stretch="Uniform" Visibility="Collapsed" />
                     <Image x:Name="PreviewImage" Stretch="Uniform" Source="{Binding PreviewImageSource}" />
                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8" Padding="8" Visibility="{Binding DiagnosticsPreviewVisibility}">
                         <TextBox Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
@@ -223,8 +233,15 @@
                         <ComboBox Width="320" Header="LOD" ItemsSource="{Binding AvailableSceneLods}" SelectedItem="{Binding SelectedSceneLod, Mode=TwoWay}" DisplayMemberPath="Label" IsEnabled="{Binding HasSceneLodOptions}" />
                     </StackPanel>
                 </StackPanel>
-                <TextBox Grid.Row="3" Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" Visibility="{Binding SecondaryDiagnosticsVisibility}" />
-                <TextBox Grid.Row="4" Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
+                <Border Grid.Row="3"
+                        Background="{ThemeResource AccentFillColorSecondaryBrush}"
+                        Opacity="0.35"
+                        PointerPressed="PreviewPaneSplitter_PointerPressed"
+                        PointerMoved="PreviewPaneSplitter_PointerMoved"
+                        PointerReleased="PreviewPaneSplitter_PointerReleased"
+                        PointerCanceled="PreviewPaneSplitter_PointerReleased" />
+                <TextBox Grid.Row="4" Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" Visibility="{Binding SecondaryDiagnosticsVisibility}" />
+                <TextBox Grid.Row="5" Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
             </Grid>
         </Grid>
 
