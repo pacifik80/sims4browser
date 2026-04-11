@@ -730,6 +730,128 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void MaterialDecoder_SelectsAlphaCutoutStrategy_ForPhongAlpha()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xDEADBEEFu, "PhongAlpha", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var strategyName = (string)decoded.GetType().GetProperty("StrategyName")!.GetValue(decoded)!;
+        var familyKind = decoded.GetType().GetProperty("FamilyKind")!.GetValue(decoded)!;
+        var suggestsAlpha = (bool)decoded.GetType().GetProperty("SuggestsAlphaCutout")!.GetValue(decoded)!;
+
+        Assert.Equal("AlphaCutoutMaterialDecodeStrategy", strategyName);
+        Assert.Equal(Enum.Parse(familyKindType, "AlphaCutout"), familyKind);
+        Assert.True(suggestsAlpha);
+    }
+
+    [Fact]
+    public void MaterialDecoder_SelectsColorMapStrategy_ForOtherColorMapFamilies()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xCAFEBABEu, "colorMap4", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var strategyName = (string)decoded.GetType().GetProperty("StrategyName")!.GetValue(decoded)!;
+        var familyKind = decoded.GetType().GetProperty("FamilyKind")!.GetValue(decoded)!;
+
+        Assert.Equal("ColorMapMaterialDecodeStrategy", strategyName);
+        Assert.Equal(Enum.Parse(familyKindType, "ColorMap"), familyKind);
+    }
+
+    [Fact]
+    public void MaterialDecoder_SelectsStandardSurfaceStrategy_ForPhongFamily()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xFACEFEEDu, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var strategyName = (string)decoded.GetType().GetProperty("StrategyName")!.GetValue(decoded)!;
+        var familyKind = decoded.GetType().GetProperty("FamilyKind")!.GetValue(decoded)!;
+
+        Assert.Equal("StandardSurfaceMaterialDecodeStrategy", strategyName);
+        Assert.Equal(Enum.Parse(familyKindType, "StandardSurface"), familyKind);
+    }
+
+    [Fact]
     public async Task CasLogicalAsset_ExportsBundleFromSyntheticFixture()
     {
         var packagePath = Path.Combine(tempRoot, "cas-export.package");
