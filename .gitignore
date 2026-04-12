@@ -19,3 +19,9 @@ TestResults/
 *.db-wal
 Thumbs.db
 Desktop.ini
+tmp/
+probe_*.txt
+probe_*.log
+tmp_*.txt
+tmp_*.log
+tmp_*.cs

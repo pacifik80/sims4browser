@@ -9,7 +9,8 @@ internal enum Ts4MaterialFamilyKind
     AlphaCutout = 4,
     StandardSurface = 5,
     ColorMap = 6,
-    Projective = 7
+    Projective = 7,
+    SpecularEnvMap = 8
 }
 
 internal sealed record Ts4MaterialSamplingInstruction(
@@ -69,6 +70,7 @@ internal static class Ts4MaterialDecoder
         new ProjectiveMaterialDecodeStrategy(),
         new AlphaCutoutMaterialDecodeStrategy(),
         new StairRailingsMaterialDecodeStrategy(),
+        new SpecularEnvMapMaterialDecodeStrategy(),
         new ColorMap7MaterialDecodeStrategy(),
         new ColorMapMaterialDecodeStrategy(),
         new StandardSurfaceMaterialDecodeStrategy(),
@@ -382,16 +384,23 @@ internal static class Ts4MaterialDecoder
         };
     }
 
-    internal static Ts4MaterialDecodeState ApplyProjectiveStillApproximation(Ts4MaterialDecodeState state, MaterialIr material)
+    internal static Ts4MaterialDecodeState ApplyProjectiveStillApproximation(
+        Ts4MaterialDecodeState state,
+        MaterialIr material,
+        string profileName,
+        string familyName)
     {
         if (TryBuildProjectiveStillMapping(material, state.DiffuseUvMapping, out var mapping, out var note))
         {
             var notes = state.Notes.ToList();
-            notes.Add(note);
-            return state with
-            {
-                DiffuseUvMapping = mapping,
-                SamplingInstructions = state.SamplingInstructions
+            var staticAtlasWindow = CanTreatProjectiveAtlasWindowAsStatic(material, profileName, familyName);
+            var samplingSource = staticAtlasWindow ? "projective-static-atlas-path" : "projective-still-approximation";
+            var coverageTier = staticAtlasWindow ? Ts4MaterialCoverageTier.StaticReady : Ts4MaterialCoverageTier.Approximate;
+            notes.Add(staticAtlasWindow
+                ? note.Replace("fell back to a still atlas approximation", "resolved to a static atlas window", StringComparison.OrdinalIgnoreCase)
+                : note);
+            var samplingInstructions = state.SamplingInstructions.Count > 0
+                ? state.SamplingInstructions
                     .Select(instruction => instruction with
                     {
                         UvChannel = mapping.UvChannel,
@@ -399,16 +408,86 @@ internal static class Ts4MaterialDecoder
                         UvScaleV = mapping.UvScaleV,
                         UvOffsetU = mapping.UvOffsetU,
                         UvOffsetV = mapping.UvOffsetV,
-                        Source = "projective-still-approximation",
-                        IsApproximate = true
+                        Source = samplingSource,
+                        IsApproximate = !staticAtlasWindow
                     })
-                    .ToArray(),
-                CoverageTier = Ts4MaterialCoverageTier.Approximate,
+                    .ToArray()
+                : new[]
+                {
+                    new Ts4MaterialSamplingInstruction(
+                        "diffuse",
+                        mapping.UvChannel,
+                        mapping.UvScaleU,
+                        mapping.UvScaleV,
+                        mapping.UvOffsetU,
+                        mapping.UvOffsetV,
+                        samplingSource,
+                        !staticAtlasWindow)
+                };
+
+            return state with
+            {
+                DiffuseUvMapping = mapping,
+                SamplingInstructions = samplingInstructions,
+                CoverageTier = coverageTier,
                 Notes = notes
             };
         }
 
         return state;
+    }
+
+    internal static Ts4MaterialDecodeState ApplySparseUvMappingApproximation(Ts4MaterialDecodeState state, MaterialIr material, string notePrefix)
+    {
+        var uvMapping = material.FindProperty("uvMapping");
+        if (uvMapping?.FloatValues is not { Length: >= 4 } values)
+        {
+            return state;
+        }
+
+        var mapping = state.DiffuseUvMapping;
+        var changed = false;
+
+        if (mapping.UvScaleU == 1f &&
+            IsSparseUvScaleValue(values[0]) &&
+            MathF.Abs(values[1]) < 0.0001f)
+        {
+            mapping = mapping with { UvScaleU = values[0] };
+            changed = true;
+        }
+
+        if (mapping.UvScaleV == 1f &&
+            IsSparseUvScaleValue(values[1]) &&
+            MathF.Abs(values[0]) < 0.0001f)
+        {
+            mapping = mapping with { UvScaleV = values[1] };
+            changed = true;
+        }
+
+        if (!changed)
+        {
+            return state;
+        }
+
+        var notes = state.Notes.ToList();
+        notes.Add(FormattableString.Invariant(
+            $"{notePrefix} sparse uvMapping approximation -> UV{mapping.UvChannel} scale=({mapping.UvScaleU:0.###}, {mapping.UvScaleV:0.###}) offset=({mapping.UvOffsetU:0.###}, {mapping.UvOffsetV:0.###})."));
+
+        return state with
+        {
+            DiffuseUvMapping = mapping,
+            SamplingInstructions = state.SamplingInstructions
+                .Select(instruction => instruction with
+                {
+                    UvChannel = mapping.UvChannel,
+                    UvScaleU = mapping.UvScaleU,
+                    UvScaleV = mapping.UvScaleV,
+                    UvOffsetU = mapping.UvOffsetU,
+                    UvOffsetV = mapping.UvOffsetV
+                })
+                .ToArray(),
+            Notes = notes
+        };
     }
 
     internal static float[]? DetermineApproximateBaseColor(MaterialIr material)
@@ -1045,21 +1124,33 @@ internal static class Ts4MaterialDecoder
         updated = current;
         note = string.Empty;
 
-        if (!current.IsIdentity)
-        {
-            return false;
-        }
-
         var uvMapping = material.FindProperty("uvMapping");
         var atlasSampler = material.FindProperty("samplerCASMedatorGridTexture");
         if (atlasSampler?.FloatValues is not { Length: >= 4 } ||
-            uvMapping?.FloatValues is not { Length: >= 4 } uvValues)
+            !TryGetProjectiveUvWindow(uvMapping, out var uvValues))
         {
             return false;
         }
 
         var mapping = current;
         var changed = false;
+
+        if (uvValues is { Length: >= 4 } vectorValues)
+        {
+            if (mapping.UvScaleV == 1f &&
+                IsNormalizedWindowValue(vectorValues[1], requireNonZero: true))
+            {
+                mapping = mapping with { UvScaleV = vectorValues[1] };
+                changed = true;
+            }
+
+            if (mapping.UvOffsetV == 0f &&
+                IsNormalizedWindowOffsetValue(vectorValues[3]))
+            {
+                mapping = mapping with { UvOffsetV = vectorValues[3] };
+                changed = true;
+            }
+        }
 
         if (atlasSampler?.FloatValues is { Length: >= 4 } samplerValues)
         {
@@ -1092,37 +1183,6 @@ internal static class Ts4MaterialDecoder
             }
         }
 
-        if (uvValues is { Length: >= 4 } vectorValues)
-        {
-            if (mapping.UvScaleU == 1f &&
-                IsNormalizedWindowValue(vectorValues[0], requireNonZero: true))
-            {
-                mapping = mapping with { UvScaleU = vectorValues[0] };
-                changed = true;
-            }
-
-            if (mapping.UvScaleV == 1f &&
-                IsNormalizedWindowValue(vectorValues[1], requireNonZero: true))
-            {
-                mapping = mapping with { UvScaleV = vectorValues[1] };
-                changed = true;
-            }
-
-            if (mapping.UvOffsetU == 0f &&
-                IsNormalizedWindowOffsetValue(vectorValues[2]))
-            {
-                mapping = mapping with { UvOffsetU = vectorValues[2] };
-                changed = true;
-            }
-
-            if (mapping.UvOffsetV == 0f &&
-                IsNormalizedWindowOffsetValue(vectorValues[3]))
-            {
-                mapping = mapping with { UvOffsetV = vectorValues[3] };
-                changed = true;
-            }
-        }
-
         if (!changed || mapping.IsIdentity)
         {
             return false;
@@ -1132,6 +1192,31 @@ internal static class Ts4MaterialDecoder
         note = FormattableString.Invariant(
             $"Projective family fell back to a still atlas approximation -> UV{mapping.UvChannel} scale=({mapping.UvScaleU:0.###}, {mapping.UvScaleV:0.###}) offset=({mapping.UvOffsetU:0.###}, {mapping.UvOffsetV:0.###}).");
         return true;
+    }
+
+    private static bool TryGetProjectiveUvWindow(MaterialIrProperty? property, out float[] values)
+    {
+        values = [];
+        if (property is null)
+        {
+            return false;
+        }
+
+        if (property.FloatValues is { Length: >= 4 } floatValues)
+        {
+            values = floatValues;
+            return true;
+        }
+
+        if (property.ValueRepresentation == MaterialValueRepresentation.PackedUInt32 &&
+            TryDecodePackedUvVector(property, out var packedVector, out _) &&
+            packedVector.Length >= 4)
+        {
+            values = packedVector;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool IsNormalizedWindowValue(float value, bool requireNonZero) =>
@@ -1144,6 +1229,38 @@ internal static class Ts4MaterialDecoder
         float.IsFinite(value) &&
         value >= 0f &&
         value < 1f;
+
+    private static bool CanTreatProjectiveAtlasWindowAsStatic(MaterialIr material, string profileName, string familyName)
+    {
+        if (material.Properties.Any(static property => IsStrongProjectiveUvSemantic(property.Name)))
+        {
+            return false;
+        }
+
+        var animatedProperties = material.Properties
+            .Where(static property => IsAnimatedUvSemantic(property.Name))
+            .Select(static property => property.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (animatedProperties.Any(static name => !IsWeakAnimatedSemantic(name)))
+        {
+            return false;
+        }
+
+        if (animatedProperties.Length > 0 &&
+            LooksLikeAnimatedFamilyName(profileName))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsSparseUvScaleValue(float value) =>
+        float.IsFinite(value) &&
+        value > 1f &&
+        value <= 128f;
 
     private static IEnumerable<float[]> EnumerateHalfFloatWindows(uint[] packed, int windowSize)
     {
@@ -1341,7 +1458,7 @@ internal sealed class ProjectiveMaterialDecodeStrategy : ITs4MaterialDecodeStrat
             Name,
             material,
             profile).ToState();
-        state = Ts4MaterialDecoder.ApplyProjectiveStillApproximation(state, material);
+        state = Ts4MaterialDecoder.ApplyProjectiveStillApproximation(state, material, profileName, familyName);
         return Ts4MaterialDecoder.BuildResult(profileName, familyName, FamilyKind, Name, state);
     }
 }
@@ -1356,6 +1473,22 @@ internal sealed class StairRailingsMaterialDecodeStrategy : ITs4MaterialDecodeSt
 
     public Ts4MaterialDecodeResult Decode(string profileName, string familyName, MaterialIr material, ShaderBlockProfile? profile) =>
         Ts4MaterialDecoder.DecodeGeneric(profileName, familyName, FamilyKind, Name, material, profile);
+}
+
+internal sealed class SpecularEnvMapMaterialDecodeStrategy : ITs4MaterialDecodeStrategy
+{
+    public string Name => nameof(SpecularEnvMapMaterialDecodeStrategy);
+    public Ts4MaterialFamilyKind FamilyKind => Ts4MaterialFamilyKind.SpecularEnvMap;
+
+    public bool CanHandle(string familyName, MaterialIr material, ShaderBlockProfile? profile) =>
+        familyName.Equals("SpecularEnvMap", StringComparison.OrdinalIgnoreCase);
+
+    public Ts4MaterialDecodeResult Decode(string profileName, string familyName, MaterialIr material, ShaderBlockProfile? profile)
+    {
+        var state = Ts4MaterialDecoder.DecodeGeneric(profileName, familyName, FamilyKind, Name, material, profile).ToState();
+        state = Ts4MaterialDecoder.ApplySparseUvMappingApproximation(state, material, "SpecularEnvMap");
+        return Ts4MaterialDecoder.BuildResult(profileName, familyName, FamilyKind, Name, state);
+    }
 }
 
 internal sealed class ColorMap7MaterialDecodeStrategy : ITs4MaterialDecodeStrategy

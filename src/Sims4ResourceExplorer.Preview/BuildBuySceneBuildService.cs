@@ -1135,6 +1135,10 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             .ToDictionary(static group => group.Key, static group => group.First());
         var materialDecode = Ts4MaterialDecoder.Decode(materialIr, shaderProfile);
         var effectiveSamplingInstructions = materialDecode.SamplingInstructions.ToList();
+        var authoritativeSlots = matd.TextureReferences
+            .Where(static reference => !reference.IsHeuristic)
+            .Select(reference => Ts4ShaderSemantics.ResolveTextureSlotName(reference, shaderProfile))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (shaderProfile is not null)
         {
             var matchedPropertyCount = materialIr.Properties.Count(static property => !property.Name.StartsWith("Prop_", StringComparison.Ordinal));
@@ -1191,7 +1195,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 }
                 else
                 {
-                    diagnostics.Add($"Ignored unresolved heuristic texture binding for slot {resolvedSlot} ({reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}).");
+                    if (!authoritativeSlots.Contains(resolvedSlot) &&
+                        !textures.Any(texture => texture.Slot.Equals(resolvedSlot, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        diagnostics.Add($"Ignored unresolved heuristic texture binding for slot {resolvedSlot} ({reference.Key.Type:X8}:{reference.Key.Group:X8}:{reference.Key.Instance:X16}).");
+                    }
                 }
             }
             else
@@ -1460,6 +1468,13 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     internal static bool LooksLikeNonVisualHelperMaterial(Ts4MaterialDecodeResult materialDecode, string shaderName)
     {
         if (LooksLikeNonVisualHelperFamily(materialDecode.ShaderFamilyName, shaderName))
+        {
+            return true;
+        }
+
+        if (materialDecode.LayeredColorSlots.Count == 0 &&
+            (materialDecode.ShaderFamilyName.Contains("painting", StringComparison.OrdinalIgnoreCase) ||
+             materialDecode.ShaderFamilyName.Contains("Decal", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }
@@ -2894,7 +2909,7 @@ internal sealed record Ts4MatdChunk(
 
         foreach (var key in ReadPotentialEmbeddedResourceKeys(keyBytes))
         {
-            if (!IsImageType(key.Type) || key.Instance == 0)
+            if (!IsImageType(key.Type) || key.Instance == 0 || !LooksLikePlausibleHeuristicImageKey(key))
             {
                 continue;
             }
@@ -2954,7 +2969,7 @@ internal sealed record Ts4MatdChunk(
         var keyBytes = bytes.Slice(propertyOffset, 16);
         foreach (var key in ReadPotentialEmbeddedResourceKeys(keyBytes))
         {
-            if (!IsImageType(key.Type) || key.Instance == 0)
+            if (!IsImageType(key.Type) || key.Instance == 0 || !LooksLikePlausibleHeuristicImageKey(key))
             {
                 continue;
             }
@@ -2970,6 +2985,7 @@ internal sealed record Ts4MatdChunk(
         }
 
         if (TryReadInstanceOnlyImageResourceKey(keyBytes, out var instanceOnlyKey) &&
+            LooksLikePlausibleHeuristicImageKey(instanceOnlyKey) &&
             !textureReferences.Any(existing => existing.Key.Equals(instanceOnlyKey)))
         {
             var inferredReference = new Ts4TextureReference(GetHeuristicTextureSlotName(propertyHash, textureReferences.Count), instanceOnlyKey, propertyHash, IsHeuristic: true);
@@ -3045,6 +3061,50 @@ internal sealed record Ts4MatdChunk(
 
         key = new Ts4ResourceKey(0x00B2D882u, 0u, instance);
         return true;
+    }
+
+    private static bool LooksLikePlausibleHeuristicImageKey(Ts4ResourceKey key)
+    {
+        var low = (uint)(key.Instance & 0xFFFFFFFF);
+        var high = (uint)(key.Instance >> 32);
+        if (low == 0 || high == 0)
+        {
+            return false;
+        }
+
+        if (low <= 16 || high <= 16)
+        {
+            return false;
+        }
+
+        if (LooksLikeCommonFloatConstantWord(low) || LooksLikeCommonFloatConstantWord(high))
+        {
+            return false;
+        }
+
+        if (LooksLikeSuspiciousFloatPayloadWord(low) && LooksLikeSuspiciousFloatPayloadWord(high))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeCommonFloatConstantWord(uint word) => word is
+        0x3F800000 or // 1.0
+        0x3F000000 or // 0.5
+        0xBF800000 or // -1.0
+        0x3E800000 or // 0.25
+        0x3DCCCCCD or // 0.1
+        0x40000000 or // 2.0
+        0x40400000;   // 3.0
+
+    private static bool LooksLikeSuspiciousFloatPayloadWord(uint word)
+    {
+        var value = BitConverter.UInt32BitsToSingle(word);
+        return float.IsFinite(value) &&
+               MathF.Abs(value) > 0f &&
+               MathF.Abs(value) <= 4f;
     }
 
     private static bool TryReadTrailingTypeResourceKey(ReadOnlySpan<byte> bytes, out Ts4ResourceKey key)

@@ -323,6 +323,30 @@ internal static class Ts4ShaderSemantics
             return true;
         }
 
+        if (profile.Name.Contains("ShaderDayNightParameters", StringComparison.OrdinalIgnoreCase))
+        {
+            slot = reference.Slot.Equals("texture_1", StringComparison.OrdinalIgnoreCase)
+                ? "emissive"
+                : "overlay";
+            return true;
+        }
+
+        if (profile.Name.Contains("UseVertAlpha", StringComparison.OrdinalIgnoreCase))
+        {
+            slot = reference.Slot.Equals("texture_1", StringComparison.OrdinalIgnoreCase)
+                ? "decal"
+                : "overlay";
+            return true;
+        }
+
+        if (profile.Name.Contains("WorldToDepthMapSpaceMatrix", StringComparison.OrdinalIgnoreCase))
+        {
+            slot = reference.Slot.Equals("texture_1", StringComparison.OrdinalIgnoreCase)
+                ? "alpha"
+                : "overlay";
+            return true;
+        }
+
         if (profile.Name.Contains("colorMap", StringComparison.OrdinalIgnoreCase))
         {
             slot = "alpha";
