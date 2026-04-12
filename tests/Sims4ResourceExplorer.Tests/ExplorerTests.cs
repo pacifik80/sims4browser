@@ -348,6 +348,97 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal("diffuse", resolvedSlot);
     }
 
+    [Theory]
+    [InlineData("DetailMap", "detail")]
+    [InlineData("LotPaint", "decal")]
+    [InlineData("DecalCenters2X", "decal")]
+    [InlineData("samplerBlueRampTexture", "overlay")]
+    [InlineData("WallTopBottomShadow", "overlay")]
+    [InlineData("GhostNoiseTexture", "overlay")]
+    [InlineData("samplerCASMedatorGridTexture", "overlay")]
+    [InlineData("samplerEnvCubeMap", "specular")]
+    [InlineData("samplerSnowSharedNormals", "normal")]
+    public void ShaderSemantics_ResolvesExtendedTextureSlotRoles(string parameterName, string expectedSlot)
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var samplerCategory = Enum.Parse(shaderCategoryType, "Sampler");
+        var parameter = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x12345678u, parameterName, 0x0102C601u, 0x00004000u, samplerCategory],
+            culture: null)!;
+        var parameters = Array.CreateInstance(shaderParameterType, 1);
+        parameters.SetValue(parameter, 0);
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x0CB82EB8u, "WorldToDepthMapSpaceMatrix", parameters],
+            culture: null)!;
+        var key = Activator.CreateInstance(
+            resourceKeyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x00B2D882u, 0u, 0x0297B6B3762A64EAul],
+            culture: null)!;
+        var reference = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["texture_0", key, 0x12345678u],
+            culture: null)!;
+
+        var resolvedSlot = (string)semanticsType
+            .GetMethod("ResolveTextureSlotName", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [reference, profile])!;
+
+        Assert.Equal(expectedSlot, resolvedSlot);
+    }
+
+    [Fact]
+    public void ShaderSemantics_UsesGlobalAliasForKnownStateControlHash()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var propertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdProperty");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var valueRepresentationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var property = Activator.CreateInstance(
+            propertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                0x415368B4u,
+                1u,
+                1u,
+                1u,
+                0,
+                Enum.Parse(categoryType, "BoolLike"),
+                Enum.Parse(valueRepresentationType, "PackedUInt32"),
+                "packed32=[0x00000001]",
+                null,
+                new uint[] { 1u },
+                null
+            ],
+            culture: null)!;
+
+        var resolvedName = (string)semanticsType
+            .GetMethod("ResolveMaterialPropertyName", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [property, null])!;
+
+        Assert.Equal("InstancedObjectAura", resolvedName);
+    }
+
     [Fact]
     public void ShaderSemantics_TreatsSamplerProfileParametersAsTextureBindings()
     {
@@ -369,6 +460,185 @@ public sealed class ExplorerTests : IDisposable
             .Invoke(null, [1u, 4u, parameter])!;
 
         Assert.True(result);
+    }
+
+    [Fact]
+    public void ShaderSemantics_DoesNotTreatGenericResourceKeyParameterAsTextureBinding()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var resourceCategory = Enum.Parse(shaderCategoryType, "ResourceKey");
+        var parameter = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x0950E7D4u, "0x0950E7D4", 0x0102C601u, 0x00004000u, resourceCategory],
+            culture: null)!;
+
+        var result = (bool)semanticsType
+            .GetMethod("IsLikelyTextureParameter", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [2u, 1u, parameter])!;
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShaderSemantics_DoesNotTreatUvMappingParameterAsTextureBinding()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var uvCategory = Enum.Parse(shaderCategoryType, "UvMapping");
+        var parameter = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 0x01374601u, 0x80004000u, uvCategory],
+            culture: null)!;
+
+        var result = (bool)semanticsType
+            .GetMethod("IsLikelyTextureParameter", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [1u, 4u, parameter])!;
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShaderSemantics_DoesNotTreatNormalMapTileableControlAsTextureBinding()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var scalarCategory = Enum.Parse(shaderCategoryType, "Scalar");
+        var parameter = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xE77A2B60u, "NormalMapTileable", 0x0103C001u, 0x00001004u, scalarCategory],
+            culture: null)!;
+
+        var result = (bool)semanticsType
+            .GetMethod("IsLikelyTextureParameter", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [1u, 1u, parameter])!;
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShaderSemantics_TreatsWriteDepthMaskExtraTextureSlotAsAlpha()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x58F649EBu, "WriteDepthMask", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x213F2BF8EAE65122ul], null)!;
+        var reference = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["texture_1", key, 0x0950E7D4u],
+            culture: null)!;
+
+        var resolved = (string)semanticsType
+            .GetMethod("ResolveTextureSlotName", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [reference, profile])!;
+
+        Assert.Equal("alpha", resolved);
+    }
+
+    [Theory]
+    [InlineData("colorMap7", "texture_1", "alpha")]
+    [InlineData("DecalMap", "texture_1", "alpha")]
+    [InlineData("DecalMap", "texture_2", "overlay")]
+    public void ShaderSemantics_UsesFamilyFallbackTextureRoles(string profileName, string inputSlot, string expectedSlot)
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var emptyParameters = Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0);
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x11111111u, profileName, emptyParameters],
+            culture: null)!;
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x1ul], null)!;
+        var reference = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [inputSlot, key, 0x12345678u],
+            culture: null)!;
+
+        var resolved = (string)semanticsType
+            .GetMethod("ResolveTextureSlotName", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [reference, profile])!;
+
+        Assert.Equal(expectedSlot, resolved);
+    }
+
+    [Theory]
+    [InlineData("samplerSourceTexture", "diffuse")]
+    [InlineData("samplerDetailNormalMap", "normal")]
+    [InlineData("samplerroutingMap", "alpha")]
+    [InlineData("PremadeLightmap", "overlay")]
+    [InlineData("SunTexture", "emissive")]
+    public void ShaderSemantics_ResolvesExtendedRuntimeTextureRoles(string parameterName, string expectedSlot)
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+
+        var category = Enum.Parse(shaderCategoryType, "Sampler");
+        var parameter = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x12345678u, parameterName, 0u, 0u, category],
+            culture: null)!;
+        var parameterArray = Array.CreateInstance(shaderParameterType, 1);
+        parameterArray.SetValue(parameter, 0);
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x11111111u, "ShaderDayNightParameters", parameterArray],
+            culture: null)!;
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x1ul], null)!;
+        var reference = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["texture_1", key, 0x12345678u],
+            culture: null)!;
+
+        var resolved = (string)semanticsType
+            .GetMethod("ResolveTextureSlotName", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [reference, profile])!;
+
+        Assert.Equal(expectedSlot, resolved);
     }
 
     [Fact]
@@ -595,6 +865,288 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void MatdParser_DoesNotTreatFloatVectorPayloadAsTextureReference()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var bytes = CreateMinimalMatd(
+            materialNameHash: 0x11111111u,
+            shaderNameHash: 0x22222222u,
+            propertyHash: 0x1B9D3AC5u,
+            propertyType: 4u,
+            propertyArity: 4u,
+            values: BitConverter.GetBytes(0.1f)
+                .Concat(BitConverter.GetBytes(0.2f))
+                .Concat(BitConverter.GetBytes(0.3f))
+                .Concat(BitConverter.GetBytes(0.4f))
+                .ToArray());
+
+        var chunk = parse(bytes);
+        var textureReferences = (System.Collections.IEnumerable)matdType.GetProperty("TextureReferences")!.GetValue(chunk)!;
+
+        Assert.Empty(textureReferences.Cast<object>());
+    }
+
+    [Fact]
+    public void MatdParser_SupplementsExplicitTextureReferencesWithHeuristicCandidates()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var bytes = CreateMinimalMatd(
+            0x11111111u,
+            0xB9105A6Du,
+            (0x1B9D3AC5u, 2u, 1u, CreateEmbeddedResourceKeyBytes(0x00B2D882u, 0u, 0x111ul)),
+            (0xB95C43EBu, 1u, 4u, CreatePackedTextureLikePayload(0x00B2D882u, 0u, 0xFFFFFFFFFFFFFFFFul)));
+
+        var chunk = parse(bytes);
+        var textureReferences = ((System.Collections.IEnumerable)matdType.GetProperty("TextureReferences")!.GetValue(chunk)!)
+            .Cast<object>()
+            .ToArray();
+
+        Assert.Equal(2, textureReferences.Length);
+        Assert.Contains(
+            textureReferences,
+            reference => string.Equals(
+                (string)reference.GetType().GetProperty("Slot")!.GetValue(reference)!,
+                "diffuse",
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void MatdParser_ReadsTrailingTypeTextureLayoutAsExplicitTextureReference()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var payload = BitConverter.GetBytes(0u)
+            .Concat(BitConverter.GetBytes(0x5AE9066Bu))
+            .Concat(BitConverter.GetBytes(0xA4D80FB4u))
+            .Concat(BitConverter.GetBytes(0x00B2D882u))
+            .ToArray();
+
+        var bytes = CreateMinimalMatd(
+            0x11111111u,
+            0xB9105A6Du,
+            (0x1B9D3AC5u, 2u, 1u, payload));
+
+        var chunk = parse(bytes);
+        var textureReferences = ((System.Collections.IEnumerable)matdType.GetProperty("TextureReferences")!.GetValue(chunk)!)
+            .Cast<object>()
+            .ToArray();
+
+        var textureReference = Assert.Single(textureReferences);
+        var slot = (string)textureReferenceType.GetProperty("Slot")!.GetValue(textureReference)!;
+        var key = textureReferenceType.GetProperty("Key")!.GetValue(textureReference)!;
+        var keyType = key.GetType();
+        var type = (uint)keyType.GetProperty("Type")!.GetValue(key)!;
+        var group = (uint)keyType.GetProperty("Group")!.GetValue(key)!;
+        var instance = (ulong)keyType.GetProperty("Instance")!.GetValue(key)!;
+
+        Assert.Equal("diffuse", slot);
+        Assert.Equal(0x00B2D882u, type);
+        Assert.Equal(0u, group);
+        Assert.Equal(0xA4D80FB45AE9066Bul, instance);
+    }
+
+    [Fact]
+    public void BuildBuySceneBuildService_MergesSiblingAndGlobalTextureLookupPackages()
+    {
+        var method = typeof(BuildBuySceneBuildService).GetMethod(
+            "MergeCrossPackageTextureLookupPaths",
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
+
+        var packagePath = @"C:\Game\EP04\ClientFullBuild0.package";
+        var siblingCandidates = new[]
+        {
+            packagePath,
+            @"C:\Game\EP04\ClientFullBuild2.package",
+            @"C:\Game\EP04\ClientFullBuild1.package",
+            @"C:\Game\EP04\ClientFullBuild2.package"
+        };
+        var globalCandidates = new[]
+        {
+            @"C:\Game\Data\Client\ClientFullBuild0.package",
+            @"C:\Game\EP04\ClientFullBuild1.package",
+            @"C:\Game\Data\Client\ClientFullBuild1.package"
+        };
+
+        var merged = (IReadOnlyList<string>)method.Invoke(null, [packagePath, siblingCandidates, globalCandidates])!;
+
+        Assert.Equal(
+            [
+                @"C:\Game\EP04\ClientFullBuild2.package",
+                @"C:\Game\EP04\ClientFullBuild1.package",
+                @"C:\Game\Data\Client\ClientFullBuild0.package",
+                @"C:\Game\Data\Client\ClientFullBuild1.package"
+            ],
+            merged);
+    }
+
+    [Fact]
+    public void MatdParser_ReadsImageKeyFromVector4PackedPayload()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var payload = BitConverter.GetBytes(0x000001D0u)
+            .Concat(BitConverter.GetBytes(0xA63BED14u))
+            .Concat(BitConverter.GetBytes(0xDE685457u))
+            .Concat(BitConverter.GetBytes(0x00B2D882u))
+            .ToArray();
+
+        var bytes = CreateMinimalMatd(
+            0x11111111u,
+            0xFC5FC212u,
+            (0x79C44C9Bu, 4u, 4u, payload));
+
+        var chunk = parse(bytes);
+        var textureReferences = ((System.Collections.IEnumerable)matdType.GetProperty("TextureReferences")!.GetValue(chunk)!)
+            .Cast<object>()
+            .ToArray();
+
+        var textureReference = Assert.Single(textureReferences);
+        var slot = (string)textureReferenceType.GetProperty("Slot")!.GetValue(textureReference)!;
+        var key = textureReferenceType.GetProperty("Key")!.GetValue(textureReference)!;
+        var keyType = key.GetType();
+        var type = (uint)keyType.GetProperty("Type")!.GetValue(key)!;
+        var group = (uint)keyType.GetProperty("Group")!.GetValue(key)!;
+        var instance = (ulong)keyType.GetProperty("Instance")!.GetValue(key)!;
+
+        Assert.Equal("diffuse", slot);
+        Assert.Equal(0x00B2D882u, type);
+        Assert.Equal(0u, group);
+        Assert.Equal(0xDE685457A63BED14ul, instance);
+    }
+
+    [Fact]
+    public void MatdParser_ReadsInstanceOnlyImageLayoutAsExplicitTextureReference()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var payload = BitConverter.GetBytes(0x00000004u)
+            .Concat(BitConverter.GetBytes(0x0000020Cu))
+            .Concat(BitConverter.GetBytes(0xA63BED14u))
+            .Concat(BitConverter.GetBytes(0xDE685457u))
+            .ToArray();
+
+        var bytes = CreateMinimalMatd(
+            0x11111111u,
+            0x78805394u,
+            (0x3F89C2EFu, 1u, 4u, payload));
+
+        var chunk = parse(bytes);
+        var textureReferences = ((System.Collections.IEnumerable)matdType.GetProperty("TextureReferences")!.GetValue(chunk)!)
+            .Cast<object>()
+            .ToArray();
+
+        var textureReference = Assert.Single(textureReferences);
+        var slot = (string)textureReferenceType.GetProperty("Slot")!.GetValue(textureReference)!;
+        var key = textureReferenceType.GetProperty("Key")!.GetValue(textureReference)!;
+        var keyType = key.GetType();
+        var type = (uint)keyType.GetProperty("Type")!.GetValue(key)!;
+        var group = (uint)keyType.GetProperty("Group")!.GetValue(key)!;
+        var instance = (ulong)keyType.GetProperty("Instance")!.GetValue(key)!;
+
+        Assert.Equal("specular", slot);
+        Assert.Equal(0x00B2D882u, type);
+        Assert.Equal(0u, group);
+        Assert.Equal(0xDE685457A63BED14ul, instance);
+    }
+
+    [Fact]
+    public void MatdParser_DoesNotTreatSamplerFloatVectorPayloadAsHeuristicTextureReference()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var bytes = CreateMinimalMatd(
+            0x11111111u,
+            0xB9105A6Du,
+            (0x637DAA05u, 1u, 4u, BitConverter.GetBytes(0.25f)
+                .Concat(BitConverter.GetBytes(0.5f))
+                .Concat(BitConverter.GetBytes(0.75f))
+                .Concat(BitConverter.GetBytes(1f))
+                .ToArray()));
+
+        var chunk = parse(bytes);
+        var textureReferences = (System.Collections.IEnumerable)matdType.GetProperty("TextureReferences")!.GetValue(chunk)!;
+
+        Assert.Empty(textureReferences.Cast<object>());
+    }
+
+    [Fact]
+    public void MatdParser_ClassifiesImplausibleScalarPayloadAsPackedUInt32()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var propertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdProperty");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var bytes = CreateMinimalMatd(
+            materialNameHash: 0x11111111u,
+            shaderNameHash: 0x22222222u,
+            (0xC45A5F41u, 1u, 1u, BitConverter.GetBytes(0x637DAA05u))
+        );
+
+        var chunk = parse(bytes);
+        var properties = ((System.Collections.IEnumerable)matdType.GetProperty("Properties")!.GetValue(chunk)!).Cast<object>().ToArray();
+        var property = properties.Single();
+        var valueRepresentation = propertyType.GetProperty("ValueRepresentation")!.GetValue(property);
+
+        Assert.Equal(Enum.Parse(representationType, "PackedUInt32"), valueRepresentation);
+    }
+
+    [Fact]
+    public void MatdParser_ClassifiesFloatLikeType2PayloadAsPackedUInt32()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var matdType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdChunk");
+        var propertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MatdProperty");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+        var parseMethod = matdType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!;
+        var parse = (ParseMatdDelegate)parseMethod.CreateDelegate(typeof(ParseMatdDelegate));
+
+        var payload = BitConverter.GetBytes(0f)
+            .Concat(BitConverter.GetBytes(1f))
+            .Concat(BitConverter.GetBytes(20f))
+            .Concat(BitConverter.GetBytes(unchecked((int)0xC5E6DD87u)))
+            .ToArray();
+
+        var bytes = CreateMinimalMatd(
+            materialNameHash: 0x11111111u,
+            shaderNameHash: 0x22222222u,
+            (0x449A3A67u, 2u, 1u, payload)
+        );
+
+        var chunk = parse(bytes);
+        var properties = ((System.Collections.IEnumerable)matdType.GetProperty("Properties")!.GetValue(chunk)!).Cast<object>().ToArray();
+        var property = properties.Single();
+        var valueRepresentation = propertyType.GetProperty("ValueRepresentation")!.GetValue(property);
+
+        Assert.Equal(Enum.Parse(representationType, "PackedUInt32"), valueRepresentation);
+    }
+
+    [Fact]
     public void MaterialDecoder_NormalizesFamilyAndFlagsPackedUvMapping()
     {
         var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
@@ -694,6 +1246,429 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void MaterialDecoder_ExtractsApproximateBaseColor_FromBaseColorVector()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vector4Category = Enum.Parse(categoryType, "Vector4");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var baseColorProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x100u, "BaseColorTint", 4u, 4u, 4u, vector4Category, floatVectorRepresentation, "vector=[0.2,0.4,0.6,1]", new[] { 0.2f, 0.4f, 0.6f, 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(baseColorProperty, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var approximateBaseColor = ((System.Collections.IEnumerable?)decoded.GetType().GetProperty("ApproximateBaseColor")!.GetValue(decoded))?.Cast<float>().ToArray();
+
+        Assert.NotNull(approximateBaseColor);
+        Assert.Equal([0.2f, 0.4f, 0.6f, 1f], approximateBaseColor!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_PrefersBaseColorTint_OverSpecularColor_ForApproximateBaseColor()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vector4Category = Enum.Parse(categoryType, "Vector4");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var specularColorProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x101u, "SpecularColor", 4u, 4u, 4u, vector4Category, floatVectorRepresentation, "vector=[1,0,0,1]", new[] { 1f, 0f, 0f, 1f }, null, null],
+            culture: null)!;
+        var baseColorProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x102u, "BaseColorTint", 4u, 4u, 4u, vector4Category, floatVectorRepresentation, "vector=[0.25,0.5,0.75,1]", new[] { 0.25f, 0.5f, 0.75f, 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 2);
+        properties.SetValue(specularColorProperty, 0);
+        properties.SetValue(baseColorProperty, 1);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var approximateBaseColor = ((System.Collections.IEnumerable?)decoded.GetType().GetProperty("ApproximateBaseColor")!.GetValue(decoded))?.Cast<float>().ToArray();
+
+        Assert.NotNull(approximateBaseColor);
+        Assert.Equal([0.25f, 0.5f, 0.75f, 1f], approximateBaseColor!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_FallsBackToAnonymousVectorColor_WhenNoNamedColorSemanticExists()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vector4Category = Enum.Parse(categoryType, "Vector4");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var anonymousColorProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x6E56548Au, "0x6E56548A", 4u, 4u, 4u, vector4Category, floatVectorRepresentation, "vector=[0.97,0.83,0.55,0]", new[] { 0.97f, 0.83f, 0.55f, 0f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(anonymousColorProperty, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x0CB82EB8u, "SeasonalFoliage", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var approximateBaseColor = ((System.Collections.IEnumerable?)decoded.GetType().GetProperty("ApproximateBaseColor")!.GetValue(decoded))?.Cast<float>().ToArray();
+
+        Assert.NotNull(approximateBaseColor);
+        Assert.Equal([0.97f, 0.83f, 0.55f, 1f], approximateBaseColor!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_AllowsSlightlyNegativeAlpha_InApproximateColorFallback()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vector4Category = Enum.Parse(categoryType, "Vector4");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var anonymousColorProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x6E56548Au, "0x6E56548A", 4u, 4u, 4u, vector4Category, floatVectorRepresentation, "vector=[0.5,0.5,0.5,-0.003655]", new[] { 0.5f, 0.5f, 0.5f, -0.003655f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(anonymousColorProperty, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xFC5FC212u, "DecalMap", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var approximateBaseColor = ((System.Collections.IEnumerable?)decoded.GetType().GetProperty("ApproximateBaseColor")!.GetValue(decoded))?.Cast<float>().ToArray();
+
+        Assert.NotNull(approximateBaseColor);
+        Assert.Equal([0.5f, 0.5f, 0.5f, 1f], approximateBaseColor!);
+    }
+
+    [Theory]
+    [InlineData("PointLightTemplates", "Shader_Test")]
+    [InlineData("samplerCASPeltEditTexture", "Shader_Test")]
+    [InlineData(null, "Shader_PointLightTemplates")]
+    public void BuildBuySceneBuildService_RecognizesNonVisualHelperFamilies(string? familyName, string shaderName)
+    {
+        var method = typeof(BuildBuySceneBuildService).GetMethod("LooksLikeNonVisualHelperFamily", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        var result = (bool?)method?.Invoke(null, [familyName, shaderName]);
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void BuildBuySceneBuildService_RecognizesUtilityOnlyDecalAsNonVisualHelper()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var decodeResultType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecodeResult");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var samplingInstructionType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialSamplingInstruction");
+
+        var decodeResult = Activator.CreateInstance(
+            decodeResultType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "DecalMap",
+                "DecalMap",
+                Enum.Parse(familyKindType, "Unknown"),
+                "AlphaCutoutMaterialDecodeStrategy",
+                Enum.Parse(coverageTierType, "StaticReady"),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 20f, 1f, 0f, 0f], null)!,
+                Array.CreateInstance(samplingInstructionType, 0),
+                null!,
+                null!,
+                Array.Empty<string>(),
+                new[] { "normal" },
+                true,
+                "alpha-test-or-blend",
+                Array.Empty<string>()
+            ],
+            culture: null)!;
+
+        var method = typeof(BuildBuySceneBuildService).GetMethod("LooksLikeNonVisualHelperMaterial", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        var result = (bool?)method?.Invoke(null, [decodeResult, "Shader_FC5FC212"]);
+        Assert.True(result);
+    }
+
+    [Theory]
+    [InlineData("diffuse", true)]
+    [InlineData("overlay", true)]
+    [InlineData("decal", true)]
+    [InlineData("emissive", true)]
+    [InlineData("detail", true)]
+    [InlineData("dirt", true)]
+    [InlineData("alpha", false)]
+    [InlineData("specular", false)]
+    [InlineData("normal", false)]
+    [InlineData("texture_1", false)]
+    public void BuildBuySceneBuildService_ClassifiesVisualColorTextureSlots(string slot, bool expected)
+    {
+        var method = typeof(BuildBuySceneBuildService).GetMethod("IsVisualColorTextureSlot", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        var result = (bool?)method?.Invoke(null, [slot]);
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void BuildBuySceneBuildService_AddsFallbackBaseColor_WhenOnlyUtilityTexturesExist()
+    {
+        var textures = new[]
+        {
+            new CanonicalTexture(
+                "alpha",
+                "alpha.png",
+                Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="),
+                null,
+                null,
+                CanonicalTextureSemantic.Opacity,
+                CanonicalTextureSourceKind.ExplicitLocal,
+                UvChannel: 0)
+        };
+
+        var method = typeof(BuildBuySceneBuildService).GetMethod("ShouldAddFallbackBaseColor", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        var result = (bool?)method?.Invoke(null, [textures]);
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void BuildBuySceneBuildService_DoesNotBlockFallbackBaseColor_WhenSameTextureIsAlreadyUsedAsAlpha()
+    {
+        var sourceKey = new ResourceKeyRecord(0x00B2D882, 0, 0x00DB8294F40944D4, "DSTImage");
+        var existingTextures = new[]
+        {
+            new CanonicalTexture(
+                "alpha",
+                "alpha.png",
+                Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="),
+                sourceKey,
+                null,
+                CanonicalTextureSemantic.Opacity,
+                CanonicalTextureSourceKind.ExplicitLocal,
+                UvChannel: 0)
+        };
+        var fallbackBaseColor = new CanonicalTexture(
+            "diffuse",
+            "diffuse.png",
+            Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="),
+            sourceKey,
+            null,
+            CanonicalTextureSemantic.BaseColor,
+            CanonicalTextureSourceKind.FallbackSameInstanceLocal,
+            UvChannel: 0);
+
+        var method = typeof(BuildBuySceneBuildService).GetMethod("HasMatchingBaseColorTexture", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        var result = (bool?)method?.Invoke(null, [existingTextures, fallbackBaseColor]);
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void MaterialDecoder_CreateSyntheticSamplingInstruction_UsesDiffusePathForMaterialColorPreview()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+
+        var instruction = decoderType.GetMethod("CreateSyntheticSamplingInstruction", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(
+            null,
+            [material, "material-color", Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!, "SeasonalFoliage", "SeasonalFoliage", Enum.Parse(coverageTierType, "StaticReady")])!;
+
+        var source = (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!;
+        var slot = (string)instruction.GetType().GetProperty("Slot")!.GetValue(instruction)!;
+
+        Assert.Equal("material-color", slot);
+        Assert.Equal("diffuse-material-path", source);
+    }
+
+    [Fact]
+    public void MaterialDecoder_TreatsGenericTextureSlotsAsSharedMaterialUvPath()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+
+        var key = Activator.CreateInstance(
+            resourceKeyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x00B2D882u, 0u, 0xDE685457A63BED14ul],
+            culture: null)!;
+        var textureReference = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["texture_1", key, 0x12345678u],
+            culture: null)!;
+        var references = Array.CreateInstance(textureReferenceType, 1);
+        references.SetValue(textureReference, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                references,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 2f, 2f, 0.25f, 0.5f], null)!
+            ],
+            culture: null)!;
+
+        var instructions = ((System.Collections.IEnumerable)decoderType
+            .GetMethod("BuildSamplingInstructions", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [material, Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 2f, 2f, 0.25f, 0.5f], null)!, "Shader_Test", "Shader_Test", Enum.Parse(coverageTierType, "StaticReady")])!)
+            .Cast<object>()
+            .ToArray();
+
+        var instruction = Assert.Single(instructions);
+        var source = (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!;
+        var scaleU = (float)instruction.GetType().GetProperty("UvScaleU")!.GetValue(instruction)!;
+        var offsetV = (float)instruction.GetType().GetProperty("UvOffsetV")!.GetValue(instruction)!;
+
+        Assert.Equal("diffuse-material-path", source);
+        Assert.Equal(2f, scaleU);
+        Assert.Equal(0.5f, offsetV);
+    }
+
+    [Fact]
     public void MaterialDecoder_SelectsSeasonalFoliageStrategy()
     {
         var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
@@ -731,6 +1706,59 @@ public sealed class ExplorerTests : IDisposable
 
         Assert.Equal("SeasonalFoliageMaterialDecodeStrategy", strategyName);
         Assert.Equal(Enum.Parse(familyKindType, "SeasonalFoliage"), familyKind);
+    }
+
+    [Fact]
+    public void MaterialDecoder_SelectsProjectiveStrategy_ForWorldDepthFamily()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var uvCategory = Enum.Parse(categoryType, "UvMapping");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var uvProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 1u, 4u, 4u, uvCategory, floatVectorRepresentation, "vector=[0,0,20,0.5]", new[] { 0f, 0f, 20f, 0.5f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(uvProperty, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xAC62C597u, "WorldToDepthMapSpaceMatrix", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var strategyName = (string)decoded.GetType().GetProperty("StrategyName")!.GetValue(decoded)!;
+        var familyKind = decoded.GetType().GetProperty("FamilyKind")!.GetValue(decoded)!;
+
+        Assert.Equal("ProjectiveMaterialDecodeStrategy", strategyName);
+        Assert.Equal(Enum.Parse(familyKindType, "Projective"), familyKind);
     }
 
     [Fact]
@@ -1063,9 +2091,76 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(0.5f, (float)diffuse.GetType().GetProperty("UvScaleU")!.GetValue(diffuse)!, 3);
         Assert.Equal("diffuse-material-path", (string)diffuse.GetType().GetProperty("Source")!.GetValue(diffuse)!);
 
-        Assert.Equal(0, (int)normal.GetType().GetProperty("UvChannel")!.GetValue(normal)!);
-        Assert.Equal(1f, (float)normal.GetType().GetProperty("UvScaleU")!.GetValue(normal)!, 3);
-        Assert.Equal("default-uv0", (string)normal.GetType().GetProperty("Source")!.GetValue(normal)!);
+        Assert.Equal(1, (int)normal.GetType().GetProperty("UvChannel")!.GetValue(normal)!);
+        Assert.Equal(0.5f, (float)normal.GetType().GetProperty("UvScaleU")!.GetValue(normal)!, 3);
+        Assert.Equal("diffuse-material-path", (string)normal.GetType().GetProperty("Source")!.GetValue(normal)!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_AppliesOverlayUvRules_FromRampAndPaintSemantics()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var boolLikeCategory = Enum.Parse(shaderCategoryType, "BoolLike");
+        var scalarRepresentation = Enum.Parse(representationType, "Scalar");
+        var overlayUvProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x23F2B29Fu, "PaintUsesUV1", 1u, 1u, 1u, boolLikeCategory, scalarRepresentation, "scalar=1", new[] { 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(overlayUvProperty, 0);
+
+        var key = Activator.CreateInstance(
+            resourceKeyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x00B2D882u, 0u, 0x0297B6B3762A64EAul],
+            culture: null)!;
+        var overlayRef = Activator.CreateInstance(
+            textureReferenceType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["overlay", key, 0x96D804A0u],
+            culture: null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(overlayRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xAC62C597u, "WorldToDepthMapSpaceMatrix", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instructions = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().ToArray();
+        var overlay = instructions.Single(instruction => string.Equals((string)instruction.GetType().GetProperty("Slot")!.GetValue(instruction)!, "overlay", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(1, (int)overlay.GetType().GetProperty("UvChannel")!.GetValue(overlay)!);
     }
 
     [Fact]
@@ -1105,6 +2200,948 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(0.25f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(args[2])!, 3);
         Assert.Equal(1f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(args[2])!, 3);
         Assert.Equal(0.75f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(args[2])!, 3);
+    }
+
+    [Fact]
+    public void MaterialDecoder_DecodesPackedAtlasMinIntoOffsets()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vectorCategory = Enum.Parse(shaderCategoryType, "Vector2");
+        var packedRepresentation = Enum.Parse(representationType, "PackedUInt32");
+        var property = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x20000000u, "DiffuseAtlasMin", 1u, 1u, 2u, vectorCategory, packedRepresentation, "packed32=[...]", null, new uint[] { 0x34CD3266 }, null],
+            culture: null)!;
+        var mapping = Activator.CreateInstance(
+            uvMappingType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0, 1f, 1f, 0f, 0f],
+            culture: null)!;
+        var args = new object?[] { property, mapping, null, null };
+
+        var interpreted = (bool)decoderType
+            .GetMethod("TryInterpretPackedUvProperty", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, args)!;
+
+        Assert.True(interpreted);
+        Assert.NotNull(args[2]);
+        Assert.Contains("DiffuseAtlasMin", (string)args[3]!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0.2f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(args[2])!, 3);
+        Assert.Equal(0.3f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(args[2])!, 3);
+    }
+
+    [Fact]
+    public void ShaderSemantics_InterpretsScaleAndOffsetVectorAsScaleAndOffset()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+        var parameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+
+        var vector4Category = Enum.Parse(categoryType, "Vector4");
+        var parameter = Activator.CreateInstance(
+            parameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x11111111u, "OverlayWorldUVScaleAndOffset", 0u, 0u, vector4Category],
+            culture: null)!;
+        var current = Activator.CreateInstance(
+            uvMappingType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0, 1f, 1f, 0f, 0f],
+            culture: null)!;
+
+        var args = new object?[] { parameter, new[] { 2f, 3f, 0.25f, 0.5f }, current, null };
+        var interpreted = (bool)semanticsType
+            .GetMethod("TryInterpretDiffuseUvMappingVector", BindingFlags.Public | BindingFlags.Static, null, [parameterType, typeof(float[]), uvMappingType, uvMappingType.MakeByRefType()], null)!
+            .Invoke(null, args)!;
+
+        Assert.True(interpreted);
+        Assert.NotNull(args[3]);
+        Assert.Equal(2f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(args[3])!, 3);
+        Assert.Equal(3f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(args[3])!, 3);
+        Assert.Equal(0.25f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(args[3])!, 3);
+        Assert.Equal(0.5f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(args[3])!, 3);
+    }
+
+    [Fact]
+    public void ShaderSemantics_InterpretsGenericAtlasVectorAsScaleAndOffset()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var semanticsType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ShaderSemantics");
+        var parameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+
+        var vector4Category = Enum.Parse(categoryType, "Vector4");
+        var parameter = Activator.CreateInstance(
+            parameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x22222222u, "CASHotSpotAtlas", 0u, 0u, vector4Category],
+            culture: null)!;
+        var current = Activator.CreateInstance(
+            uvMappingType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0, 1f, 1f, 0f, 0f],
+            culture: null)!;
+
+        var args = new object?[] { parameter, new[] { 0.5f, 0.25f, 0.125f, 0.75f }, current, null };
+        var interpreted = (bool)semanticsType
+            .GetMethod("TryInterpretDiffuseUvMappingVector", BindingFlags.Public | BindingFlags.Static, null, [parameterType, typeof(float[]), uvMappingType, uvMappingType.MakeByRefType()], null)!
+            .Invoke(null, args)!;
+
+        Assert.True(interpreted);
+        Assert.NotNull(args[3]);
+        Assert.Equal(0.5f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(args[3])!, 3);
+        Assert.Equal(0.25f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(args[3])!, 3);
+        Assert.Equal(0.125f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(args[3])!, 3);
+        Assert.Equal(0.75f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(args[3])!, 3);
+    }
+
+    [Fact]
+    public void MaterialCoverageAnalyzer_ClassifiesRepresentativeProfiles()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var analyzerType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageAnalyzer");
+        var tierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+
+        var classify = analyzerType.GetMethod("ClassifyProfile", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        var staticReady = classify.Invoke(null, ["Phong", new[] { "uvMapping", "DiffuseUVScaleAndOffset" }])!;
+        var approximate = classify.Invoke(null, ["Phong", new[] { "uvMapping", "OverlayUVScale", "samplerOverlayMap", "samplerDecalMap" }])!;
+        var runtimeDependent = classify.Invoke(null, ["Projected", new[] { "uvMapping", "gPosToUVDest", "UVScrollSpeed" }])!;
+        var animatedApproximate = classify.Invoke(null, ["Animated", new[] { "uvMapping", "UVScrollSpeed", "VideoVTexture" }])!;
+        var worldDepthRuntime = classify.Invoke(null, ["WorldToDepthMapSpaceMatrix", new[] { "uvMapping" }])!;
+
+        Assert.Equal(Enum.Parse(tierType, "StaticReady"), staticReady);
+        Assert.Equal(Enum.Parse(tierType, "Approximate"), approximate);
+        Assert.Equal(Enum.Parse(tierType, "RuntimeDependent"), runtimeDependent);
+        Assert.Equal(Enum.Parse(tierType, "Approximate"), animatedApproximate);
+        Assert.Equal(Enum.Parse(tierType, "RuntimeDependent"), worldDepthRuntime);
+    }
+
+    [Fact]
+    public void MaterialCoverageAnalyzer_ClassifiesMaterialInstancesMorePreciselyThanProfiles()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var analyzerType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageAnalyzer");
+        var tierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+
+        var classify = analyzerType.GetMethod("ClassifyMaterial", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        var staticWorldDepth = classify.Invoke(null, ["WorldToDepthMapSpaceMatrix", new[] { "uvMapping" }])!;
+        var animatedWorldDepth = classify.Invoke(null, ["WorldToDepthMapSpaceMatrix", new[] { "uvMapping", "WaterScrollSpeedLayer1" }])!;
+        var clipSpaceWorldDepth = classify.Invoke(null, ["WorldToDepthMapSpaceMatrix", new[] { "uvMapping", "ClipSpaceOffset" }])!;
+        var runtimeWorldDepth = classify.Invoke(null, ["WorldToDepthMapSpaceMatrix", new[] { "uvMapping", "gPosToUVDest" }])!;
+        var weakAnimatedColorMap = classify.Invoke(null, ["colorMap7", new[] { "uvMapping", "WaterScrollSpeedLayer1" }])!;
+
+        Assert.Equal(Enum.Parse(tierType, "StaticReady"), staticWorldDepth);
+        Assert.Equal(Enum.Parse(tierType, "StaticReady"), animatedWorldDepth);
+        Assert.Equal(Enum.Parse(tierType, "StaticReady"), clipSpaceWorldDepth);
+        Assert.Equal(Enum.Parse(tierType, "RuntimeDependent"), runtimeWorldDepth);
+        Assert.Equal(Enum.Parse(tierType, "StaticReady"), weakAnimatedColorMap);
+
+        var staticSimWings = classify.Invoke(null, ["SimWingsUV", new[] { "uvMapping", "VideoUVScale", "WaterScrollSpeedLayer1", "DetailNormalMapScale", "NormalMapTileable" }])!;
+        Assert.Equal(Enum.Parse(tierType, "StaticReady"), staticSimWings);
+    }
+
+    [Fact]
+    public void MaterialDecoder_ExposesCoverageTier()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var coverageTier = decoded.GetType().GetProperty("CoverageTier")!.GetValue(decoded);
+
+        Assert.Equal(Enum.Parse(coverageTierType, "StaticReady"), coverageTier);
+    }
+
+    [Fact]
+    public void MaterialDecoder_DowngradesWorldDepthFamilyToApproximate_WhenMaterialUsesOnlyAnimatedStaticSubset()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var uvCategory = Enum.Parse(shaderCategoryType, "UvMapping");
+        var boolLikeCategory = Enum.Parse(shaderCategoryType, "BoolLike");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var scalarRepresentation = Enum.Parse(representationType, "Scalar");
+
+        var uvProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 4u, 4u, 4u, uvCategory, floatVectorRepresentation, "vector=[1,1,0,0]", new[] { 1f, 1f, 0f, 0f }, null, null],
+            culture: null)!;
+        var animatedProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x2CE11842u, "WaterScrollSpeedLayer1", 1u, 1u, 1u, boolLikeCategory, scalarRepresentation, "scalar=1", new[] { 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 2);
+        properties.SetValue(uvProperty, 0);
+        properties.SetValue(animatedProperty, 1);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xAC62C597u, "WorldToDepthMapSpaceMatrix", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var coverageTier = decoded.GetType().GetProperty("CoverageTier")!.GetValue(decoded);
+        var notes = string.Join(" | ", ((System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!).Cast<object>());
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+
+        Assert.Equal(Enum.Parse(coverageTierType, "Approximate"), coverageTier);
+        Assert.DoesNotContain("Projective or world-space", notes, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("animated-still-frame", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_TreatsClipSpaceOffsetWithoutStrongProjectiveProps_AsDiffuseMaterialPath()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vector2Category = Enum.Parse(shaderCategoryType, "Vector2");
+        var boolLikeCategory = Enum.Parse(shaderCategoryType, "BoolLike");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var clipSpaceProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xAFC3355Fu, "ClipSpaceOffset", 4u, 4u, 2u, vector2Category, floatVectorRepresentation, "vector=[0.5,0.5]", new[] { 0.5f, 0.5f }, null, null],
+            culture: null)!;
+        var animatedProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x2CE11842u, "WaterScrollSpeedLayer1", 4u, 4u, 2u, boolLikeCategory, floatVectorRepresentation, "vector=[0,0]", new[] { 0f, 0f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 2);
+        properties.SetValue(clipSpaceProperty, 0);
+        properties.SetValue(animatedProperty, 1);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0124E3B8AC7BEE62ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xAC62C597u, "SeasonalFoliage", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+        var notes = string.Join(" | ", ((System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!).Cast<object>());
+
+        Assert.Equal("diffuse-material-path", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.DoesNotContain("Projective or world-space", notes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MaterialDecoder_DoesNotTreatWeakAnimatedControl_AsAnimatedStillFrame_ForStaticColorMap()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+
+        var uvCategory = Enum.Parse(shaderCategoryType, "UvMapping");
+        var boolLikeCategory = Enum.Parse(shaderCategoryType, "BoolLike");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var uvProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 4u, 4u, 4u, uvCategory, floatVectorRepresentation, "vector=[1,0,0,1]", new[] { 1f, 0f, 0f, 1f }, null, null],
+            culture: null)!;
+        var animatedProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x2CE11842u, "WaterScrollSpeedLayer1", 4u, 4u, 2u, boolLikeCategory, floatVectorRepresentation, "vector=[0,0]", new[] { 0f, 0f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 2);
+        properties.SetValue(uvProperty, 0);
+        properties.SetValue(animatedProperty, 1);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x19B7AB077DB8A98Aul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "colorMap7", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var coverageTier = decoded.GetType().GetProperty("CoverageTier")!.GetValue(decoded);
+        var notes = string.Join(" | ", ((System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!).Cast<object>());
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+
+        Assert.Equal(Enum.Parse(coverageTierType, "StaticReady"), coverageTier);
+        Assert.Equal("diffuse-material-path", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.DoesNotContain("Animated UV controls are ignored", notes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MaterialDecoder_CreatesSyntheticSamplingInstruction_ForFallbackTextures()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var tierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var scalarCategory = Enum.Parse(shaderCategoryType, "Scalar");
+        var scalarRepresentation = Enum.Parse(representationType, "Scalar");
+        var animatedProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x2CE11842u, "WaterScrollSpeedLayer1", 1u, 1u, 1u, scalarCategory, scalarRepresentation, "scalar=1", new[] { 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(animatedProperty, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                Array.CreateInstance(textureReferenceType, 0),
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var coverageTier = Enum.Parse(tierType, "Approximate");
+        var mapping = Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!;
+
+        var instruction = decoderType
+            .GetMethod("CreateSyntheticSamplingInstruction", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, [material, "diffuse", mapping, "WorldToDepthMapSpaceMatrix", "WorldToDepthMapSpaceMatrix", coverageTier])!;
+
+        Assert.Equal("animated-still-frame", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.True((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_ProducesSlotSpecificSamplingInstructions()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vector2Category = Enum.Parse(shaderCategoryType, "Vector2");
+        var boolLikeCategory = Enum.Parse(shaderCategoryType, "BoolLike");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var scalarRepresentation = Enum.Parse(representationType, "Scalar");
+        var normalScaleProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x22F8EAC9u, "NormalUVScale", 4u, 4u, 2u, vector2Category, floatVectorRepresentation, "vector=[2, 3]", new[] { 2f, 3f }, null, null],
+            culture: null)!;
+        var overlayUv1Property = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x23F2B29Fu, "DirtOverlayUsesUV1", 1u, 1u, 1u, boolLikeCategory, scalarRepresentation, "scalar=1", new[] { 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 2);
+        properties.SetValue(normalScaleProperty, 0);
+        properties.SetValue(overlayUv1Property, 1);
+
+        var key = Activator.CreateInstance(
+            resourceKeyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul],
+            culture: null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var normalRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["normal", key, 0x9F5D1C9Bu], null)!;
+        var overlayRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["overlay", key, 0x3A9F5D1Cu], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 3);
+        textureRefs.SetValue(diffuseRef, 0);
+        textureRefs.SetValue(normalRef, 1);
+        textureRefs.SetValue(overlayRef, 2);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 0.5f, 0.25f, 0.125f, 0.75f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instructions = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().ToArray();
+
+        var normal = instructions.Single(instruction => string.Equals((string)instruction.GetType().GetProperty("Slot")!.GetValue(instruction)!, "normal", StringComparison.OrdinalIgnoreCase));
+        var overlay = instructions.Single(instruction => string.Equals((string)instruction.GetType().GetProperty("Slot")!.GetValue(instruction)!, "overlay", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(2f, (float)normal.GetType().GetProperty("UvScaleU")!.GetValue(normal)!, 3);
+        Assert.Equal(3f, (float)normal.GetType().GetProperty("UvScaleV")!.GetValue(normal)!, 3);
+        Assert.Equal(1, (int)overlay.GetType().GetProperty("UvChannel")!.GetValue(overlay)!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_ProducesSlotSpecificSamplingInstructions_FromPackedUvPayload()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var uvCategory = Enum.Parse(shaderCategoryType, "UvMapping");
+        var packedRepresentation = Enum.Parse(representationType, "PackedUInt32");
+        var normalPackedProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x30000000u, "NormalUvMapping", 1u, 1u, 4u, uvCategory, packedRepresentation, "packed32=[...]", null, new uint[] { 0x34003800, 0x3A003C00 }, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(normalPackedProperty, 0);
+
+        var key = Activator.CreateInstance(
+            resourceKeyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul],
+            culture: null)!;
+        var normalRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["normal", key, 0x9F5D1C9Bu], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(normalRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instructions = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().ToArray();
+        var normal = instructions.Single();
+
+        Assert.Equal("normal", (string)normal.GetType().GetProperty("Slot")!.GetValue(normal)!);
+        Assert.Equal(0.5f, (float)normal.GetType().GetProperty("UvScaleU")!.GetValue(normal)!, 3);
+        Assert.Equal(0.25f, (float)normal.GetType().GetProperty("UvScaleV")!.GetValue(normal)!, 3);
+        Assert.Equal(1f, (float)normal.GetType().GetProperty("UvOffsetU")!.GetValue(normal)!, 3);
+        Assert.Equal(0.75f, (float)normal.GetType().GetProperty("UvOffsetV")!.GetValue(normal)!, 3);
+    }
+
+    [Fact]
+    public void MaterialDecoder_MarksProjectiveSamplingAsApproximate()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var vector2Category = Enum.Parse(categoryType, "Vector2");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var projectiveProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x33333333u, "gPosToUVDest", 4u, 4u, 2u, vector2Category, floatVectorRepresentation, "vector=[1,1]", new[] { 1f, 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(projectiveProperty, 0);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+
+        Assert.Equal("projective-uv-approximation", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.True((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_MarksAnimatedSamplingAsApproximateStillFrame()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var scalarCategory = Enum.Parse(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory"), "Scalar");
+        var scalarRepresentation = Enum.Parse(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation"), "Scalar");
+
+        var animatedProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x44444444u, "UVScrollSpeed", 1u, 1u, 1u, scalarCategory, scalarRepresentation, "scalar=1", new[] { 1f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(animatedProperty, 0);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+
+        Assert.Equal("animated-still-frame", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.True((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
+    }
+
+    [Fact]
+    public void MaterialDecoder_KeepsWeakProjectiveFamilyWithoutAtlasSignal_OnDiffusePath()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var uvCategory = Enum.Parse(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory"), "UvMapping");
+        var floatVectorRepresentation = Enum.Parse(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation"), "FloatVector");
+
+        var uvProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 1u, 4u, 4u, uvCategory, floatVectorRepresentation, "vector=[0,0,20,0.5]", new[] { 0f, 0f, 20f, 0.5f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(uvProperty, 0);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0124E3B8AC7BEE62ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xAC62C597u, "WorldToDepthMapSpaceMatrix", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+        var notes = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!).Cast<string>().ToArray();
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+        var coverageTier = decoded.GetType().GetProperty("CoverageTier")!.GetValue(decoded);
+
+        Assert.Equal("diffuse-material-path", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.False((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
+        Assert.Equal(Enum.Parse(coverageTierType, "StaticReady"), coverageTier);
+        Assert.DoesNotContain(notes, static note => note.Contains("Projective or world-space UV controls", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void MaterialDecoder_ProjectiveStrategy_UsesStillApproximation_FromUvMappingAndAtlasSampler()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+        var coverageTierType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialCoverageTier");
+
+        var uvCategory = Enum.Parse(categoryType, "UvMapping");
+        var samplerCategory = Enum.Parse(categoryType, "Sampler");
+        var floatVectorRepresentation = Enum.Parse(representationType, "FloatVector");
+        var uvProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 1u, 4u, 4u, uvCategory, floatVectorRepresentation, "vector=[0,0.5,20,0.5]", new[] { 0f, 0.5f, 20f, 0.5f }, null, null],
+            culture: null)!;
+        var atlasProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x637DAA05u, "samplerCASMedatorGridTexture", 1u, 4u, 4u, samplerCategory, floatVectorRepresentation, "vector=[0.5,1,0,0]", new[] { 0.5f, 1f, 0f, 0f }, null, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 2);
+        properties.SetValue(uvProperty, 0);
+        properties.SetValue(atlasProperty, 1);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0124E3B8AC7BEE62ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xAC62C597u, "WorldToDepthMapSpaceMatrix", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+        var notes = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!).Cast<string>().ToArray();
+        var coverageTier = decoded.GetType().GetProperty("CoverageTier")!.GetValue(decoded);
+
+        Assert.Equal("projective-still-approximation", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.True((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
+        Assert.Equal(0.5f, (float)instruction.GetType().GetProperty("UvScaleU")!.GetValue(instruction)!, 3);
+        Assert.Equal(0.5f, (float)instruction.GetType().GetProperty("UvScaleV")!.GetValue(instruction)!, 3);
+        Assert.Equal(0.5f, (float)instruction.GetType().GetProperty("UvOffsetV")!.GetValue(instruction)!, 3);
+        Assert.Equal(Enum.Parse(coverageTierType, "Approximate"), coverageTier);
+        Assert.Contains(notes, static note => note.Contains("still atlas approximation", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void MaterialDecoder_ChoosesExplicitAlphaSourceSlot()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var opacityRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["opacity", key, 0x3A9F5D1Cu], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 2);
+        textureRefs.SetValue(diffuseRef, 0);
+        textureRefs.SetValue(opacityRef, 1);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xB9105A6Du, "PhongAlpha", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var alphaSourceSlot = (string?)decoded.GetType().GetProperty("AlphaSourceSlot")!.GetValue(decoded);
+
+        Assert.Equal("opacity", alphaSourceSlot);
+    }
+
+    [Fact]
+    public void MaterialDecoder_DoesNotTreatOverlayAsAlphaWithoutHints()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0115AAEAD51B0391ul], null)!;
+        var overlayRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["overlay", key, 0x3A9F5D1Cu], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(overlayRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var alphaSourceSlot = (string?)decoded.GetType().GetProperty("AlphaSourceSlot")!.GetValue(decoded);
+
+        Assert.Null(alphaSourceSlot);
+    }
+
+    [Fact]
+    public void MaterialDecoder_LayeredColorSlotsExcludeUtilityMaps()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x0297B6B3762A64EAul], null)!;
+        var overlayRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["overlay", key, 0x1u], null)!;
+        var emissiveRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["emissive", key, 0x2u], null)!;
+        var normalRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["normal", key, 0x3u], null)!;
+        var specularRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["specular", key, 0x4u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 4);
+        textureRefs.SetValue(overlayRef, 0);
+        textureRefs.SetValue(emissiveRef, 1);
+        textureRefs.SetValue(normalRef, 2);
+        textureRefs.SetValue(specularRef, 3);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xB9105A6Du, "Phong", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var layeredSlots = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("LayeredColorSlots")!.GetValue(decoded)!).Cast<string>().ToArray();
+        var utilitySlots = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("UtilityTextureSlots")!.GetValue(decoded)!).Cast<string>().ToArray();
+
+        Assert.Equal(["emissive", "overlay"], layeredSlots);
+        Assert.Equal(["normal", "specular"], utilitySlots);
     }
 
     [Fact]
@@ -1321,6 +3358,8 @@ public sealed class ExplorerTests : IDisposable
                 "PortablePhong",
                 false,
                 "opaque",
+                null,
+                [],
                 "Synthetic test material",
                 [new MaterialTextureEntry("Diffuse", "diffuse.png", sourceResource.Key, sourceResource.PackagePath)])
         };
@@ -1836,6 +3875,70 @@ public sealed class ExplorerTests : IDisposable
 
         writer.Flush();
         return stream.ToArray();
+    }
+
+    private delegate object ParseMatdDelegate(ReadOnlySpan<byte> bytes);
+
+    private static byte[] CreateMinimalMatd(
+        uint materialNameHash,
+        uint shaderNameHash,
+        uint propertyHash,
+        uint propertyType,
+        uint propertyArity,
+        byte[] values)
+        => CreateMinimalMatd(materialNameHash, shaderNameHash, (propertyHash, propertyType, propertyArity, values));
+
+    private static byte[] CreateMinimalMatd(
+        uint materialNameHash,
+        uint shaderNameHash,
+        params (uint PropertyHash, uint PropertyType, uint PropertyArity, byte[] Values)[] properties)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write("MATD"u8.ToArray());
+        writer.Write(0u);
+        writer.Write(materialNameHash);
+        writer.Write(shaderNameHash);
+        writer.Write("MTRL"u8.ToArray());
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write((uint)properties.Length);
+
+        var propertyOffset = 16 + 16 + (properties.Length * 16);
+        foreach (var (propertyHash, propertyType, propertyArity, values) in properties)
+        {
+            writer.Write(propertyHash);
+            writer.Write(propertyType);
+            writer.Write(propertyArity);
+            writer.Write((uint)propertyOffset);
+            propertyOffset += values.Length;
+        }
+
+        foreach (var (_, _, _, values) in properties)
+        {
+            writer.Write(values);
+        }
+
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateEmbeddedResourceKeyBytes(uint type, uint group, ulong instance)
+    {
+        var bytes = new byte[16];
+        BitConverter.GetBytes(instance).CopyTo(bytes, 0);
+        BitConverter.GetBytes(type).CopyTo(bytes, 8);
+        BitConverter.GetBytes(group).CopyTo(bytes, 12);
+        return bytes;
+    }
+
+    private static byte[] CreatePackedTextureLikePayload(uint type, uint group, ulong instance)
+    {
+        var bytes = new byte[16];
+        BitConverter.GetBytes(instance).CopyTo(bytes, 0);
+        BitConverter.GetBytes(type).CopyTo(bytes, 8);
+        BitConverter.GetBytes(group).CopyTo(bytes, 12);
+        return bytes;
     }
 
     private static class TestAssets

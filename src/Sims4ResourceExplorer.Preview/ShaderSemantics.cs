@@ -76,6 +76,11 @@ internal static class Ts4ShaderSemantics
             return match.Name;
         }
 
+        if (Ts4ShaderProfileRegistry.Instance.TryGetGlobalParameterAlias(property.Hash, out var alias))
+        {
+            return alias;
+        }
+
         return $"Prop_{property.Hash:X8}";
     }
 
@@ -172,6 +177,16 @@ internal static class Ts4ShaderSemantics
         var profileParameter = ResolveParameterProfile(reference.PropertyHash, profile);
         if (profileParameter is null)
         {
+            if (TryResolveFamilyFallbackTextureSlot(reference, profile, out var familySlot))
+            {
+                return familySlot;
+            }
+
+            if (ShouldTreatAsWriteDepthMaskAlpha(reference, profile))
+            {
+                return "alpha";
+            }
+
             return reference.Slot;
         }
 
@@ -187,9 +202,34 @@ internal static class Ts4ShaderSemantics
             return "diffuse";
         }
 
+        if (normalized.Contains("sourcetexture"))
+        {
+            return "diffuse";
+        }
+
         if (normalized.Contains("normal"))
         {
             return "normal";
+        }
+
+        if (normalized.Contains("detailnormal"))
+        {
+            return "normal";
+        }
+
+        if (normalized.Contains("rough") || normalized.Contains("gloss") || normalized.Contains("smooth") || normalized.Contains("metal"))
+        {
+            return "specular";
+        }
+
+        if (normalized.Contains("envcube") || normalized.Contains("cubemap"))
+        {
+            return "specular";
+        }
+
+        if (normalized.Contains("reflection"))
+        {
+            return "specular";
         }
 
         if (normalized.Contains("spec"))
@@ -202,7 +242,17 @@ internal static class Ts4ShaderSemantics
             return "alpha";
         }
 
+        if (normalized.Contains("routingmap"))
+        {
+            return "alpha";
+        }
+
         if (normalized.Contains("emission") || normalized.Contains("emissive"))
+        {
+            return "emissive";
+        }
+
+        if (normalized.Contains("suntexture"))
         {
             return "emissive";
         }
@@ -212,8 +262,80 @@ internal static class Ts4ShaderSemantics
             return "overlay";
         }
 
+        if (normalized.Contains("detail"))
+        {
+            return "detail";
+        }
+
+        if (normalized.Contains("decal") || normalized.Contains("lotpaint") || normalized.Contains("mural"))
+        {
+            return "decal";
+        }
+
+        if (normalized.Contains("dirt") || normalized.Contains("grime"))
+        {
+            return "dirt";
+        }
+
+        if (normalized.Contains("ramp") ||
+            normalized.Contains("paint") ||
+            normalized.Contains("variation") ||
+            normalized.Contains("grid") ||
+            normalized.Contains("foliagecolor") ||
+            normalized.Contains("lightmap") ||
+            normalized.Contains("walltopbottomshadow") ||
+            normalized.Contains("ghostnoise"))
+        {
+            return "overlay";
+        }
+
+        if (ShouldTreatAsWriteDepthMaskAlpha(reference, profile))
+        {
+            return "alpha";
+        }
+
+        if (TryResolveFamilyFallbackTextureSlot(reference, profile, out var fallbackSlot))
+        {
+            return fallbackSlot;
+        }
+
         return reference.Slot;
     }
+
+    private static bool TryResolveFamilyFallbackTextureSlot(Ts4TextureReference reference, ShaderBlockProfile? profile, out string slot)
+    {
+        slot = string.Empty;
+        if (profile is null)
+        {
+            return false;
+        }
+
+        if (!reference.Slot.StartsWith("texture_", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (profile.Name.Contains("DecalMap", StringComparison.OrdinalIgnoreCase))
+        {
+            slot = reference.Slot.Equals("texture_1", StringComparison.OrdinalIgnoreCase)
+                ? "alpha"
+                : "overlay";
+            return true;
+        }
+
+        if (profile.Name.Contains("colorMap", StringComparison.OrdinalIgnoreCase))
+        {
+            slot = "alpha";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ShouldTreatAsWriteDepthMaskAlpha(Ts4TextureReference reference, ShaderBlockProfile? profile) =>
+        profile is not null &&
+        profile.Name.Contains("WriteDepthMask", StringComparison.OrdinalIgnoreCase) &&
+        reference.Slot.StartsWith("texture_", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsLikelyTextureParameter(uint normalizedPropertyType, uint propertyArity, ShaderParameterProfile? parameter)
     {
@@ -222,22 +344,52 @@ internal static class Ts4ShaderSemantics
             return false;
         }
 
-        if (parameter.Category == ShaderParameterCategory.Sampler ||
-            parameter.Category == ShaderParameterCategory.ResourceKey)
+        if (parameter.Category == ShaderParameterCategory.Sampler)
         {
             return true;
         }
 
+        if (parameter.Category == ShaderParameterCategory.UvMapping)
+        {
+            return false;
+        }
+
         var name = parameter.Name;
-        if (name.StartsWith("sampler", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("texture", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("map", StringComparison.OrdinalIgnoreCase))
+        if (parameter.Category == ShaderParameterCategory.ResourceKey)
+        {
+            return IsTextureSemanticName(name);
+        }
+
+        if (IsTextureSemanticName(name))
         {
             return normalizedPropertyType is 1 or 2 or 4 && propertyArity >= 1;
         }
 
         return false;
     }
+
+    private static bool IsTextureSemanticName(string name) =>
+        !name.Contains("Scale", StringComparison.OrdinalIgnoreCase) &&
+        !name.Contains("Offset", StringComparison.OrdinalIgnoreCase) &&
+        !name.Contains("Tileable", StringComparison.OrdinalIgnoreCase) &&
+        !name.Contains("Bias", StringComparison.OrdinalIgnoreCase) &&
+        !name.Contains("Strength", StringComparison.OrdinalIgnoreCase) &&
+        !name.Contains("Intensity", StringComparison.OrdinalIgnoreCase) &&
+        (name.StartsWith("sampler", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("texture", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("map", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("diffuse", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("normal", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("spec", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("overlay", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("detail", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("decal", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("emiss", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("alpha", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("opacity", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("mask", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("ramp", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("paint", StringComparison.OrdinalIgnoreCase));
 
     public static bool TryInterpretDiffuseUvMappingScalar(
         ShaderParameterProfile? parameter,
@@ -338,6 +490,26 @@ internal static class Ts4ShaderSemantics
         }
 
         var name = parameter.Name;
+        if ((name.Contains("ScaleAndOffset", StringComparison.OrdinalIgnoreCase) ||
+             name.Contains("ScaleOffset", StringComparison.OrdinalIgnoreCase)) &&
+            values.Length >= 4 &&
+            IsPlausibleUvMagnitude(values[0]) &&
+            IsPlausibleUvMagnitude(values[1]) &&
+            IsPlausibleUvMagnitude(values[2], allowNegative: true) &&
+            IsPlausibleUvMagnitude(values[3], allowNegative: true) &&
+            values[0] != 0f &&
+            values[1] != 0f)
+        {
+            updated = current with
+            {
+                UvScaleU = Math.Clamp(MathF.Abs(values[0]), 0.001f, 1024f),
+                UvScaleV = Math.Clamp(MathF.Abs(values[1]), 0.001f, 1024f),
+                UvOffsetU = values[2],
+                UvOffsetV = values[3]
+            };
+            return true;
+        }
+
         if ((name.Contains("AtlasMin", StringComparison.OrdinalIgnoreCase) ||
              name.Contains("MapMin", StringComparison.OrdinalIgnoreCase)) &&
             values.Length >= 2 &&
@@ -378,7 +550,10 @@ internal static class Ts4ShaderSemantics
 
         if (name.Contains("uvMapping", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("MapAtlas", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("AtlasRect", StringComparison.OrdinalIgnoreCase))
+            name.Contains("AtlasRect", StringComparison.OrdinalIgnoreCase) ||
+            (name.Contains("Atlas", StringComparison.OrdinalIgnoreCase) &&
+             !name.Contains("AtlasMin", StringComparison.OrdinalIgnoreCase) &&
+             !name.Contains("AtlasMax", StringComparison.OrdinalIgnoreCase)))
         {
             if (values.Length >= 4 &&
                 IsPlausibleUvMagnitude(values[0]) &&

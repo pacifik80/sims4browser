@@ -217,6 +217,8 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     null,
                     false,
                     null,
+                    null,
+                    [],
                     "Material/shader chunks are not fully parsed yet. Diffuse preview/export falls back to exact-instance texture candidates.",
                     textures.Select(static texture => new MaterialTextureEntry(
                         texture.Key.TypeName,
@@ -466,6 +468,8 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     null,
                     explicitTextures.Any(static texture => texture.Key.TypeName.Contains("PNG", StringComparison.OrdinalIgnoreCase)),
                     "portable-approximation",
+                    null,
+                    [],
                     "CAS material/shader semantics are approximated to a portable texture bundle. Explicit CASPart texture references are used where available.",
                     explicitTextures.Select(texture => new MaterialTextureEntry(
                         GuessCasTextureSlot(texture.Key.TypeName),

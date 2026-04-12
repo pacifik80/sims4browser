@@ -67,6 +67,11 @@ if (-not $NoBuild -and $lockingProcesses.Count -gt 0) {
 }
 
 if (-not $NoBuild) {
+    if (Test-Path $outputRoot) {
+        Write-Host "Removing previous app output so the next launch is guaranteed to use fresh binaries..." -ForegroundColor Yellow
+        Remove-Item -LiteralPath $outputRoot -Recurse -Force
+    }
+
     $buildArguments = @(
         "build",
         $projectPath,
@@ -81,6 +86,17 @@ if (-not $NoBuild) {
     }
 
     $resolvedExePath = (Resolve-Path $exePath).Path
+
+    $builtFiles = @(
+        (Join-Path $outputRoot "Sims4ResourceExplorer.App.dll"),
+        (Join-Path $outputRoot "Sims4ResourceExplorer.Preview.dll")
+    )
+
+    foreach ($builtFile in $builtFiles) {
+        if (-not (Test-Path $builtFile)) {
+            throw "Expected build artifact not found: $builtFile"
+        }
+    }
 }
 elseif (-not (Test-Path $exePath)) {
     throw "Built executable not found: $exePath`nRun without -NoBuild first."
@@ -88,5 +104,15 @@ elseif (-not (Test-Path $exePath)) {
 
 Write-Host "Starting Sims4 Resource Explorer build $buildNumber ($Configuration, x64)..." -ForegroundColor Cyan
 Write-Host "Executable: $resolvedExePath" -ForegroundColor DarkGray
+try {
+    $appDllPath = Join-Path $outputRoot "Sims4ResourceExplorer.App.dll"
+    $assembly = [System.Reflection.Assembly]::LoadFile((Resolve-Path $appDllPath).Path)
+    $informationalVersion = ($assembly.GetCustomAttributes([System.Reflection.AssemblyInformationalVersionAttribute], $false) | Select-Object -First 1).InformationalVersion
+    if ($informationalVersion) {
+        Write-Host "Build version: $informationalVersion" -ForegroundColor DarkGray
+    }
+}
+catch {
+}
 & $resolvedExePath
 exit $LASTEXITCODE

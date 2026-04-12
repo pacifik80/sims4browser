@@ -68,6 +68,8 @@ public sealed partial class BuildBuySceneBuildService
                 null,
                 false,
                 "portable-approximation",
+                null,
+                [],
                 "CAS materials are exported as a portable approximation of package-local texture candidates.",
                 CanonicalMaterialSourceKind.ApproximateCas)],
             bones,

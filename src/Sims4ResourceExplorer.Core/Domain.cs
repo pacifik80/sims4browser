@@ -364,8 +364,13 @@ public sealed record CanonicalMaterial(
     string? ShaderName = null,
     bool IsTransparent = false,
     string? AlphaMode = null,
+    string? AlphaTextureSlot = null,
+    IReadOnlyList<string>? LayeredTextureSlots = null,
     string? Approximation = null,
-    CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown);
+    CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown,
+    CanonicalColor? ApproximateBaseColor = null);
+
+public sealed record CanonicalColor(float R, float G, float B, float A = 1f);
 
 public sealed record CanonicalTexture(
     string Slot,
@@ -484,6 +489,8 @@ public sealed record MaterialManifestEntry(
     string? ShaderName,
     bool IsTransparent,
     string? AlphaMode,
+    string? AlphaTextureSlot,
+    IReadOnlyList<string>? LayeredTextureSlots,
     string? Approximation,
     IReadOnlyList<MaterialTextureEntry> Textures,
     CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown);

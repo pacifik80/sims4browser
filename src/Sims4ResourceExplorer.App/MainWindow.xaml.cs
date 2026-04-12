@@ -328,7 +328,7 @@ public sealed partial class MainWindow : Window
         {
             var mesh = scene.Meshes[meshIndex];
             var material = CreateMaterial(scene, mesh.MaterialIndex, renderMode);
-            var geometry = CreateGeometry(mesh, scene, mesh.MaterialIndex);
+            var geometry = CreateGeometry(mesh, scene, mesh.MaterialIndex, renderMode);
             if (geometry.Positions is null || geometry.Positions.Count == 0 || geometry.TriangleIndices is null || geometry.TriangleIndices.Count == 0)
             {
                 continue;
@@ -372,7 +372,7 @@ public sealed partial class MainWindow : Window
         sceneCamera.UpDirection = Vector3.UnitY;
     }
 
-    private static MeshGeometry3D CreateGeometry(CanonicalMesh mesh, CanonicalScene scene, int materialIndex)
+    private static MeshGeometry3D CreateGeometry(CanonicalMesh mesh, CanonicalScene scene, int materialIndex, SceneRenderMode renderMode)
     {
         var geometry = new MeshGeometry3D
         {
@@ -400,7 +400,7 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        var textureCoordinates = SelectTextureCoordinates(mesh, scene, materialIndex);
+        var textureCoordinates = SelectTextureCoordinates(mesh, scene, materialIndex, renderMode);
         if (textureCoordinates.Count == vertexCount * 2)
         {
             geometry.TextureCoordinates = new Vector2Collection();
@@ -433,13 +433,13 @@ public sealed partial class MainWindow : Window
         return geometry;
     }
 
-    private static IReadOnlyList<float> SelectTextureCoordinates(CanonicalMesh mesh, CanonicalScene scene, int materialIndex)
+    private static IReadOnlyList<float> SelectTextureCoordinates(CanonicalMesh mesh, CanonicalScene scene, int materialIndex, SceneRenderMode renderMode)
     {
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var diffuseTexture = SelectBaseColorTexture(material);
-        var requestedChannel = diffuseTexture?.UvChannel ?? mesh.PreferredUvChannel;
+        var primaryTexture = SelectPrimaryViewportTexture(material, renderMode);
+        var requestedChannel = primaryTexture?.UvChannel ?? mesh.PreferredUvChannel;
         IReadOnlyList<float> coordinates;
 
         if (requestedChannel == 1 && mesh.Uv1s is { Count: > 0 })
@@ -455,29 +455,30 @@ public sealed partial class MainWindow : Window
             coordinates = mesh.Uvs;
         }
 
-        if (diffuseTexture is null ||
-            (Math.Abs(diffuseTexture.UvScaleU - 1f) < 0.0001f &&
-             Math.Abs(diffuseTexture.UvScaleV - 1f) < 0.0001f &&
-             Math.Abs(diffuseTexture.UvOffsetU) < 0.0001f &&
-             Math.Abs(diffuseTexture.UvOffsetV) < 0.0001f))
-        {
-            return coordinates;
-        }
-
         if (requestedChannel == 1)
         {
             coordinates = NormalizeUvCoordinatesIfLocalSubspace(coordinates);
         }
 
+        if (renderMode != SceneRenderMode.UvMap ||
+            primaryTexture is null ||
+            (Math.Abs(primaryTexture.UvScaleU - 1f) < 0.0001f &&
+             Math.Abs(primaryTexture.UvScaleV - 1f) < 0.0001f &&
+             Math.Abs(primaryTexture.UvOffsetU) < 0.0001f &&
+             Math.Abs(primaryTexture.UvOffsetV) < 0.0001f))
+        {
+            return coordinates;
+        }
+
         var transformed = new float[coordinates.Count];
-        var minU = Math.Min(diffuseTexture.UvOffsetU, diffuseTexture.UvOffsetU + diffuseTexture.UvScaleU);
-        var maxU = Math.Max(diffuseTexture.UvOffsetU, diffuseTexture.UvOffsetU + diffuseTexture.UvScaleU);
-        var minV = Math.Min(diffuseTexture.UvOffsetV, diffuseTexture.UvOffsetV + diffuseTexture.UvScaleV);
-        var maxV = Math.Max(diffuseTexture.UvOffsetV, diffuseTexture.UvOffsetV + diffuseTexture.UvScaleV);
+        var minU = Math.Min(primaryTexture.UvOffsetU, primaryTexture.UvOffsetU + primaryTexture.UvScaleU);
+        var maxU = Math.Max(primaryTexture.UvOffsetU, primaryTexture.UvOffsetU + primaryTexture.UvScaleU);
+        var minV = Math.Min(primaryTexture.UvOffsetV, primaryTexture.UvOffsetV + primaryTexture.UvScaleV);
+        var maxV = Math.Max(primaryTexture.UvOffsetV, primaryTexture.UvOffsetV + primaryTexture.UvScaleV);
         for (var index = 0; index + 1 < coordinates.Count; index += 2)
         {
-            var transformedU = (coordinates[index] * diffuseTexture.UvScaleU) + diffuseTexture.UvOffsetU;
-            var transformedV = (coordinates[index + 1] * diffuseTexture.UvScaleV) + diffuseTexture.UvOffsetV;
+            var transformedU = (coordinates[index] * primaryTexture.UvScaleU) + primaryTexture.UvOffsetU;
+            var transformedV = (coordinates[index + 1] * primaryTexture.UvScaleV) + primaryTexture.UvOffsetV;
 
             // Atlas-cropped TS4 materials can leave UVs slightly outside the selected sub-rect.
             // Clamp them so preview sampling does not bleed into neighboring atlas islands.
@@ -486,6 +487,20 @@ public sealed partial class MainWindow : Window
         }
 
         return transformed;
+    }
+
+    private static CanonicalTexture? SelectPrimaryViewportTexture(CanonicalMaterial? material, SceneRenderMode renderMode)
+    {
+        var textureGroup = SelectViewportTextureGroup(material, renderMode);
+        if (textureGroup.Count == 0)
+        {
+            return null;
+        }
+
+        return textureGroup
+            .OrderByDescending(texture => ScorePrimaryViewportTexture(texture, renderMode))
+            .ThenBy(texture => texture.Slot, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
     }
 
     private static IReadOnlyList<float> NormalizeUvCoordinatesIfLocalSubspace(IReadOnlyList<float> coordinates)
@@ -575,8 +590,24 @@ public sealed partial class MainWindow : Window
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var diffuseTexture = SelectBaseColorTexture(material);
-        var opacityTexture = SelectOpacityTexture(material, diffuseTexture);
+        var textureGroup = SelectViewportTextureGroup(material, renderMode);
+        var diffuseTexture = SelectBaseColorTexture(textureGroup);
+        var layeredColorTexture = SelectLayeredColorTexture(textureGroup);
+        var emissiveTexture = SelectEmissiveTexture(textureGroup, diffuseTexture, layeredColorTexture);
+        var opacityTexture = SelectOpacityTexture(textureGroup, diffuseTexture, material?.AlphaTextureSlot);
+        var normalTexture = SelectNormalTexture(textureGroup);
+        var specularTexture = SelectSpecularTexture(textureGroup);
+        var viewportColorTexture = diffuseTexture ?? layeredColorTexture ?? emissiveTexture;
+        var uvTransform = BuildUvTransform(viewportColorTexture);
+        var approximateBaseColor = BuildApproximateBaseColor(material);
+        var diffuseColor = approximateBaseColor ?? new Color4(0.62f, 0.62f, 0.62f, 1f);
+        var ambientColor = approximateBaseColor is null
+            ? new Color4(0.2f, 0.2f, 0.2f, 1f)
+            : new Color4(
+                Math.Clamp(approximateBaseColor.Value.Red * 0.2f, 0f, 1f),
+                Math.Clamp(approximateBaseColor.Value.Green * 0.2f, 0f, 1f),
+                Math.Clamp(approximateBaseColor.Value.Blue * 0.2f, 0f, 1f),
+                1f);
 
         var isFlat = renderMode == SceneRenderMode.FlatTexture;
         var isWireframe = renderMode == SceneRenderMode.Wireframe;
@@ -584,39 +615,143 @@ public sealed partial class MainWindow : Window
         var renderDiffuseMap =
             !isWireframe &&
             !isFlat &&
-            diffuseTexture is not null;
-        var renderEmissiveMap = isFlat && diffuseTexture is not null;
+            viewportColorTexture is not null;
+        var renderEmissiveMap = (isFlat && viewportColorTexture is not null) || (!isFlat && emissiveTexture is not null);
         var renderAlphaMap = opacityTexture is not null;
-        var textureModel = diffuseTexture is null
+        var textureModel = viewportColorTexture is null
             ? null
-            : new TextureModel(new MemoryStream(diffuseTexture.PngBytes), autoCloseStream: true);
+            : new TextureModel(new MemoryStream(viewportColorTexture.PngBytes), autoCloseStream: true);
+        var emissiveTextureModel = emissiveTexture is null
+            ? null
+            : new TextureModel(new MemoryStream(emissiveTexture.PngBytes), autoCloseStream: true);
         var alphaTextureModel = opacityTexture is null
             ? null
             : new TextureModel(new MemoryStream(opacityTexture.PngBytes), autoCloseStream: true);
+        var normalTextureModel = normalTexture is null
+            ? null
+            : new TextureModel(new MemoryStream(normalTexture.PngBytes), autoCloseStream: true);
+        var specularTextureModel = specularTexture is null
+            ? null
+            : new TextureModel(new MemoryStream(specularTexture.PngBytes), autoCloseStream: true);
+        var usesOverlayAsSecondaryLayer =
+            emissiveTexture is not null &&
+            layeredColorTexture is not null &&
+            ReferenceEquals(emissiveTexture, layeredColorTexture);
 
         return new PhongMaterial
         {
             DiffuseColor = isWireframe
                 ? new Color4(0.95f, 0.95f, 0.95f, 1f)
                 : isLit
-                    ? new Color4(1f, 1f, 1f, 1f)
-                    : new Color4(0f, 0f, 0f, 1f),
+                    ? diffuseColor
+                    : viewportColorTexture is null
+                        ? diffuseColor
+                        : new Color4(0f, 0f, 0f, 1f),
             AmbientColor = isFlat
-                ? new Color4(0f, 0f, 0f, 1f)
+                ? viewportColorTexture is null
+                    ? diffuseColor
+                    : new Color4(0f, 0f, 0f, 1f)
                 : isLit
-                    ? new Color4(0.12f, 0.12f, 0.12f, 1f)
-                    : new Color4(0.2f, 0.2f, 0.2f, 1f),
+                    ? ambientColor
+                    : ambientColor,
             EmissiveColor = isFlat
                 ? new Color4(1f, 1f, 1f, 1f)
-                : new Color4(0f, 0f, 0f, 1f),
+                : usesOverlayAsSecondaryLayer
+                    ? new Color4(0.45f, 0.45f, 0.45f, 1f)
+                    : new Color4(0f, 0f, 0f, 1f),
             SpecularColor = isFlat ? new Color4(0f, 0f, 0f, 1f) : new Color4(0.16f, 0.16f, 0.16f, 1f),
             SpecularShininess = isFlat ? 0f : 24f,
             RenderDiffuseMap = renderDiffuseMap,
             DiffuseMap = renderDiffuseMap ? textureModel : null,
             RenderEmissiveMap = renderEmissiveMap,
-            EmissiveMap = renderEmissiveMap ? textureModel : null,
+            EmissiveMap = isFlat
+                ? (renderEmissiveMap ? textureModel : null)
+                : emissiveTextureModel,
             RenderDiffuseAlphaMap = renderAlphaMap,
-            DiffuseAlphaMap = renderAlphaMap ? alphaTextureModel : null
+            DiffuseAlphaMap = renderAlphaMap ? alphaTextureModel : null,
+            RenderNormalMap = isLit && normalTextureModel is not null,
+            NormalMap = isLit ? normalTextureModel : null,
+            RenderSpecularColorMap = isLit && specularTextureModel is not null,
+            SpecularColorMap = isLit ? specularTextureModel : null,
+            EnableAutoTangent = isLit && normalTextureModel is not null,
+            UVTransform = uvTransform
+        };
+    }
+
+    private static Color4? BuildApproximateBaseColor(CanonicalMaterial? material)
+    {
+        if (material?.ApproximateBaseColor is not { } color)
+        {
+            return null;
+        }
+
+        return new Color4(
+            Math.Clamp(color.R, 0f, 1f),
+            Math.Clamp(color.G, 0f, 1f),
+            Math.Clamp(color.B, 0f, 1f),
+            Math.Clamp(color.A, 0f, 1f));
+    }
+
+    private static UVTransform BuildUvTransform(CanonicalTexture? texture)
+    {
+        if (texture is null)
+        {
+            return new UVTransform(0f);
+        }
+
+        return new UVTransform(
+            rotation: 0f,
+            scalingX: texture.UvScaleU,
+            scalingY: texture.UvScaleV,
+            translationX: texture.UvOffsetU,
+            translationY: texture.UvOffsetV);
+    }
+
+    private static IReadOnlyList<CanonicalTexture> SelectViewportTextureGroup(CanonicalMaterial? material, SceneRenderMode renderMode)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return [];
+        }
+
+        return material.Textures
+            .GroupBy(BuildTextureSamplingKey, StringComparer.Ordinal)
+            .OrderByDescending(group => ScoreTextureGroup(group, renderMode))
+            .ThenByDescending(group => group.Count())
+            .Select(group => group
+                .OrderByDescending(texture => ScorePrimaryViewportTexture(texture, renderMode))
+                .ThenBy(texture => texture.Slot, StringComparer.OrdinalIgnoreCase)
+                .ToArray())
+            .FirstOrDefault() ?? [];
+    }
+
+    private static string BuildTextureSamplingKey(CanonicalTexture texture) =>
+        FormattableString.Invariant($"{texture.UvChannel}|{texture.UvScaleU:0.####}|{texture.UvScaleV:0.####}|{texture.UvOffsetU:0.####}|{texture.UvOffsetV:0.####}");
+
+    private static int ScoreTextureGroup(IGrouping<string, CanonicalTexture> group, SceneRenderMode renderMode) =>
+        group.Sum(texture => ScorePrimaryViewportTexture(texture, renderMode)) + group.Count();
+
+    private static int ScorePrimaryViewportTexture(CanonicalTexture texture, SceneRenderMode renderMode)
+    {
+        var slot = texture.Slot;
+        return texture.Semantic switch
+        {
+            CanonicalTextureSemantic.BaseColor => renderMode == SceneRenderMode.Wireframe ? 0 : 100,
+            CanonicalTextureSemantic.Overlay => 80,
+            CanonicalTextureSemantic.Emissive => renderMode == SceneRenderMode.FlatTexture ? 75 : 65,
+            CanonicalTextureSemantic.Normal => renderMode == SceneRenderMode.LitTexture ? 35 : 5,
+            CanonicalTextureSemantic.Specular => renderMode == SceneRenderMode.LitTexture ? 30 : 5,
+            CanonicalTextureSemantic.Gloss => renderMode == SceneRenderMode.LitTexture ? 25 : 4,
+            CanonicalTextureSemantic.Opacity => 20,
+            _ when slot.Contains("detail", StringComparison.OrdinalIgnoreCase) => 78,
+            _ when slot.Contains("decal", StringComparison.OrdinalIgnoreCase) => 76,
+            _ when slot.Contains("dirt", StringComparison.OrdinalIgnoreCase) => 72,
+            _ when slot.Contains("grime", StringComparison.OrdinalIgnoreCase) => 72,
+            _ when slot.Contains("emiss", StringComparison.OrdinalIgnoreCase) => 64,
+            _ when slot.Contains("overlay", StringComparison.OrdinalIgnoreCase) => 79,
+            _ when slot.Contains("normal", StringComparison.OrdinalIgnoreCase) => renderMode == SceneRenderMode.LitTexture ? 34 : 4,
+            _ when slot.Contains("spec", StringComparison.OrdinalIgnoreCase) => renderMode == SceneRenderMode.LitTexture ? 29 : 4,
+            _ => 1
         };
     }
 
@@ -636,7 +771,7 @@ public sealed partial class MainWindow : Window
             .Select((material, index) => new
             {
                 MaterialIndex = index,
-                Texture = SelectBaseColorTexture(material)
+                Texture = SelectPrimaryViewportTexture(material, SceneRenderMode.UvMap)
             })
             .Where(entry => entry.Texture is not null)
             .GroupBy(
@@ -689,7 +824,7 @@ public sealed partial class MainWindow : Window
                 .ToArray();
             foreach (var meshEntry in meshes)
             {
-                var coordinates = SelectTextureCoordinates(meshEntry.Mesh, scene, meshEntry.Mesh.MaterialIndex);
+                var coordinates = SelectTextureCoordinates(meshEntry.Mesh, scene, meshEntry.Mesh.MaterialIndex, SceneRenderMode.UvMap);
                 var color = colors[meshEntry.MeshIndex % colors.Length];
                 DrawUvWireframe(canvas, canvasWidth, canvasHeight, coordinates, meshEntry.Mesh.Indices, offsetX, offsetY, width, height, color);
             }
@@ -1012,6 +1147,17 @@ public sealed partial class MainWindow : Window
             ?? material.Textures.FirstOrDefault();
     }
 
+    private static CanonicalTexture? SelectBaseColorTexture(IReadOnlyList<CanonicalTexture> textures)
+    {
+        if (textures.Count == 0)
+        {
+            return null;
+        }
+
+        var scope = new CanonicalMaterial("Scoped", textures);
+        return SelectBaseColorTexture(scope);
+    }
+
     private static CanonicalTexture? SelectOpacityTexture(CanonicalMaterial? material, CanonicalTexture? baseColorTexture)
     {
         if (material is null || material.Textures.Count == 0)
@@ -1019,13 +1165,156 @@ public sealed partial class MainWindow : Window
             return TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null;
         }
 
+        if (!string.IsNullOrWhiteSpace(material.AlphaTextureSlot))
+        {
+            var explicitAlpha = material.Textures.FirstOrDefault(texture =>
+                texture.Slot.Equals(material.AlphaTextureSlot, StringComparison.OrdinalIgnoreCase));
+            if (explicitAlpha is not null)
+            {
+                return explicitAlpha;
+            }
+        }
+
         return material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.Opacity)
             ?? material.Textures.FirstOrDefault(texture =>
                 texture.Slot.Contains("alpha", StringComparison.OrdinalIgnoreCase) ||
                 texture.Slot.Contains("opacity", StringComparison.OrdinalIgnoreCase) ||
                 texture.Slot.Contains("mask", StringComparison.OrdinalIgnoreCase) ||
-                texture.Slot.Contains("overlay", StringComparison.OrdinalIgnoreCase))
+                texture.Slot.Contains("cutout", StringComparison.OrdinalIgnoreCase))
             ?? (TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null);
+    }
+
+    private static CanonicalTexture? SelectOpacityTexture(IReadOnlyList<CanonicalTexture> textures, CanonicalTexture? baseColorTexture, string? explicitAlphaSlot)
+    {
+        if (textures.Count == 0)
+        {
+            return TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null;
+        }
+
+        var scope = new CanonicalMaterial("Scoped", textures, AlphaTextureSlot: explicitAlphaSlot);
+        return SelectOpacityTexture(scope, baseColorTexture);
+    }
+
+    private static CanonicalTexture? SelectEmissiveTexture(CanonicalMaterial? material, CanonicalTexture? baseColorTexture, CanonicalTexture? layeredColorTexture)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return null;
+        }
+
+        return material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.Emissive)
+            ?? material.Textures.FirstOrDefault(texture =>
+                texture.Slot.Contains("emiss", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("glow", StringComparison.OrdinalIgnoreCase))
+            ?? (material.LayeredTextureSlots?.Any(slot => slot.Equals("emissive", StringComparison.OrdinalIgnoreCase)) == true
+                ? baseColorTexture
+                : null)
+            ?? (layeredColorTexture is not null &&
+                !string.Equals(material.AlphaTextureSlot, layeredColorTexture.Slot, StringComparison.OrdinalIgnoreCase)
+                ? layeredColorTexture
+                : null);
+    }
+
+    private static CanonicalTexture? SelectEmissiveTexture(IReadOnlyList<CanonicalTexture> textures, CanonicalTexture? baseColorTexture, CanonicalTexture? layeredColorTexture)
+    {
+        if (textures.Count == 0)
+        {
+            return null;
+        }
+
+        var scope = new CanonicalMaterial("Scoped", textures);
+        return SelectEmissiveTexture(scope, baseColorTexture, layeredColorTexture);
+    }
+
+    private static CanonicalTexture? SelectNormalTexture(CanonicalMaterial? material)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return null;
+        }
+
+        return material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.Normal)
+            ?? material.Textures.FirstOrDefault(texture =>
+                texture.Slot.Contains("normal", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("bump", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static CanonicalTexture? SelectNormalTexture(IReadOnlyList<CanonicalTexture> textures)
+    {
+        if (textures.Count == 0)
+        {
+            return null;
+        }
+
+        var scope = new CanonicalMaterial("Scoped", textures);
+        return SelectNormalTexture(scope);
+    }
+
+    private static CanonicalTexture? SelectSpecularTexture(CanonicalMaterial? material)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return null;
+        }
+
+        return material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.Specular)
+            ?? material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.Gloss)
+            ?? material.Textures.FirstOrDefault(texture =>
+                texture.Slot.Contains("spec", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("gloss", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("rough", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("smooth", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static CanonicalTexture? SelectSpecularTexture(IReadOnlyList<CanonicalTexture> textures)
+    {
+        if (textures.Count == 0)
+        {
+            return null;
+        }
+
+        var scope = new CanonicalMaterial("Scoped", textures);
+        return SelectSpecularTexture(scope);
+    }
+
+    private static CanonicalTexture? SelectLayeredColorTexture(CanonicalMaterial? material)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return null;
+        }
+
+        if (material.LayeredTextureSlots is { Count: > 0 })
+        {
+            foreach (var preferredSlot in material.LayeredTextureSlots)
+            {
+                var explicitSlotMatch = material.Textures.FirstOrDefault(texture =>
+                    texture.Slot.Equals(preferredSlot, StringComparison.OrdinalIgnoreCase));
+                if (explicitSlotMatch is not null)
+                {
+                    return explicitSlotMatch;
+                }
+            }
+        }
+
+        return material.Textures.FirstOrDefault(texture => texture.Semantic == CanonicalTextureSemantic.Overlay)
+            ?? material.Textures.FirstOrDefault(texture =>
+                texture.Slot.Contains("overlay", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("detail", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("decal", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("dirt", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("grime", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static CanonicalTexture? SelectLayeredColorTexture(IReadOnlyList<CanonicalTexture> textures)
+    {
+        if (textures.Count == 0)
+        {
+            return null;
+        }
+
+        var scope = new CanonicalMaterial("Scoped", textures);
+        return SelectLayeredColorTexture(scope);
     }
 
 }

@@ -6,16 +6,25 @@ internal sealed class Ts4ShaderProfileRegistry
 {
     private static readonly Lazy<Ts4ShaderProfileRegistry> lazyInstance = new(Create);
     private readonly Dictionary<uint, ShaderBlockProfile> profiles;
+    private readonly Dictionary<uint, string> globalParameterAliases;
 
-    private Ts4ShaderProfileRegistry(Dictionary<uint, ShaderBlockProfile> profiles)
+    private Ts4ShaderProfileRegistry(
+        Dictionary<uint, ShaderBlockProfile> profiles,
+        Dictionary<uint, string>? globalParameterAliases = null)
     {
         this.profiles = profiles;
+        this.globalParameterAliases = globalParameterAliases ?? [];
     }
 
     public static Ts4ShaderProfileRegistry Instance => lazyInstance.Value;
 
     public bool TryGetProfile(uint shaderHash, out ShaderBlockProfile profile) =>
         profiles.TryGetValue(shaderHash, out profile!);
+
+    public bool TryGetGlobalParameterAlias(uint propertyHash, out string alias) =>
+        globalParameterAliases.TryGetValue(propertyHash, out alias!);
+
+    internal static string? ResolveProfilePath() => TryFindProfilePath();
 
     private static Ts4ShaderProfileRegistry Create()
     {
@@ -31,6 +40,7 @@ internal sealed class Ts4ShaderProfileRegistry
             var json = File.ReadAllText(path);
             var document = JsonDocument.Parse(json);
             var profiles = new Dictionary<uint, ShaderBlockProfile>();
+            var parameterNames = new Dictionary<uint, HashSet<string>>();
             foreach (var property in document.RootElement.EnumerateObject())
             {
                 if (!TryParseHex(property.Name, out var shaderHash))
@@ -62,6 +72,13 @@ internal sealed class Ts4ShaderProfileRegistry
                                 }
 
                                 parameters.TryAdd(parameter.Hash, parameter);
+                                if (!parameterNames.TryGetValue(parameter.Hash, out var names))
+                                {
+                                    names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                    parameterNames[parameter.Hash] = names;
+                                }
+
+                                names.Add(parameter.Name);
                             }
                         }
                     }
@@ -70,8 +87,15 @@ internal sealed class Ts4ShaderProfileRegistry
                 profiles[shaderHash] = new ShaderBlockProfile(shaderHash, nameGuess, parameters.Values.OrderBy(static item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray());
             }
 
-            TryWriteRegistryTrace($"Loaded {profiles.Count} shader profile(s) from {path}");
-            return new Ts4ShaderProfileRegistry(profiles);
+            var aliases = parameterNames
+                .Where(static entry => entry.Value.Count == 1)
+                .ToDictionary(
+                    static entry => entry.Key,
+                    static entry => entry.Value.First(),
+                    EqualityComparer<uint>.Default);
+
+            TryWriteRegistryTrace($"Loaded {profiles.Count} shader profile(s) and {aliases.Count} global parameter alias(es) from {path}");
+            return new Ts4ShaderProfileRegistry(profiles, aliases);
         }
         catch (Exception ex)
         {

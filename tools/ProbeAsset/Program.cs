@@ -5,6 +5,7 @@ using Sims4ResourceExplorer.Packages;
 using Sims4ResourceExplorer.Preview;
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Text.Json;
 
 if (args.Length > 0 && string.Equals(args[0], "--find-root", StringComparison.OrdinalIgnoreCase))
 {
@@ -18,6 +19,46 @@ if (args.Length > 0 && string.Equals(args[0], "--find-resource", StringCompariso
     var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
     var resourceTgiToFind = args.Length > 2 ? args[2] : "00B2D882:00000000:02B59E39A0F574BE";
     return await FindResourceAsync(searchRoot, resourceTgiToFind);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--batch-coverage", StringComparison.OrdinalIgnoreCase))
+{
+    var inputPath = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_batch.txt");
+    return await RunBatchCoverageAsync(inputPath);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--batch-coverage-summary", StringComparison.OrdinalIgnoreCase))
+{
+    var inputPath = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_batch.txt");
+    var summaryPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_batch_summary.json");
+    var maxEntries = args.Length > 3 && int.TryParse(args[3], out var parsedMaxEntries) ? parsedMaxEntries : 0;
+    var timeoutSeconds = args.Length > 4 && int.TryParse(args[4], out var parsedTimeoutSeconds) ? parsedTimeoutSeconds : 120;
+    return await RunBatchCoverageSummaryAsync(inputPath, summaryPath, maxEntries, timeoutSeconds);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--probe-json", StringComparison.OrdinalIgnoreCase))
+{
+    var probePackagePath = args.Length > 1 ? args[1] : string.Empty;
+    var probeRootTgi = args.Length > 2 ? args[2] : string.Empty;
+    return await RunProbeJsonAsync(probePackagePath, probeRootTgi);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--sample-buildbuy", StringComparison.OrdinalIgnoreCase))
+{
+    var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var maxPackages = args.Length > 2 && int.TryParse(args[2], out var parsedMaxPackages) ? parsedMaxPackages : 8;
+    var assetsPerPackage = args.Length > 3 && int.TryParse(args[3], out var parsedAssetsPerPackage) ? parsedAssetsPerPackage : 5;
+    var outputPath = args.Length > 4 ? args[4] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_sample_batch.txt");
+    return await SampleBuildBuyRootsAsync(searchRoot, maxPackages, assetsPerPackage, outputPath);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--find-complex-buildbuy", StringComparison.OrdinalIgnoreCase))
+{
+    var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var maxPackages = args.Length > 2 && int.TryParse(args[2], out var parsedMaxPackages) ? parsedMaxPackages : 12;
+    var assetsPerPackage = args.Length > 3 && int.TryParse(args[3], out var parsedAssetsPerPackage) ? parsedAssetsPerPackage : 6;
+    var maxMatches = args.Length > 4 && int.TryParse(args[4], out var parsedMaxMatches) ? parsedMaxMatches : 10;
+    return await FindComplexBuildBuyAsync(searchRoot, maxPackages, assetsPerPackage, maxMatches);
 }
 
 var packagePath = args.Length > 0 ? args[0] : @"C:\GAMES\The Sims 4\EP10\ClientFullBuild0.package";
@@ -102,7 +143,8 @@ Console.WriteLine("== Scene From Model Root ==");
 Console.WriteLine("Root RCOL summary:");
 await DumpRcolChunkSummary(catalog, graph.BuildBuyGraph.ModelResource);
 Console.WriteLine("Root material summary:");
-var rootRawBytes = await catalog.GetResourceBytesAsync(graph.BuildBuyGraph.ModelResource.PackagePath, graph.BuildBuyGraph.ModelResource.Key, raw: false, CancellationToken.None);
+var resolvedRootResource = await ResolveCompanionResourceAsync(catalog, graph.BuildBuyGraph.ModelResource);
+var rootRawBytes = await catalog.GetResourceBytesAsync(resolvedRootResource.PackagePath, resolvedRootResource.Key, raw: false, CancellationToken.None);
 Console.WriteLine("Root model summary:");
 Console.WriteLine(PreviewDebugProbe.InspectModelLod(rootRawBytes));
 Console.WriteLine(PreviewDebugProbe.InspectMaterialChunks(rootRawBytes));
@@ -116,7 +158,8 @@ foreach (var lod in graph.BuildBuyGraph.ModelLodResources)
     Console.WriteLine($"-- {lod.Key.FullTgi}");
     DumpRcolChunkSummary(catalog, lod).GetAwaiter().GetResult();
     Console.WriteLine("  Preview assembly parse:");
-    var rawBytes = await catalog.GetResourceBytesAsync(lod.PackagePath, lod.Key, raw: false, CancellationToken.None);
+    var resolvedLod = await ResolveCompanionResourceAsync(catalog, lod);
+    var rawBytes = await catalog.GetResourceBytesAsync(resolvedLod.PackagePath, resolvedLod.Key, raw: false, CancellationToken.None);
     Console.WriteLine(PreviewDebugProbe.InspectModelLod(rawBytes));
     Console.WriteLine("  Material summary:");
     Console.WriteLine(PreviewDebugProbe.InspectMaterialChunks(rawBytes));
@@ -255,6 +298,836 @@ static async Task<int> FindResourceAsync(string searchRoot, string fullTgi)
     Console.WriteLine("No matching resource found.");
     return 3;
 }
+
+static async Task<int> RunBatchCoverageAsync(string inputPath)
+{
+    if (!File.Exists(inputPath))
+    {
+        Console.Error.WriteLine($"Batch input not found: {inputPath}");
+        return 1;
+    }
+
+    var entries = File.ReadAllLines(inputPath)
+        .Select(static line => line.Trim())
+        .Where(static line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#'))
+        .Select(ParseBatchEntry)
+        .ToArray();
+
+    if (entries.Length == 0)
+    {
+        Console.Error.WriteLine("Batch input did not contain any probe entries.");
+        return 2;
+    }
+
+    var sceneStatusCounts = new Dictionary<SceneBuildStatus, int>();
+    var materialCoverageCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var materialSamplingSourceCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var materialVisualPayloadCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var materialFamilyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var materialPayloadByFamilyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var materialStrategyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var assetCoverage = new List<BatchCoverageRow>();
+
+    foreach (var entry in entries)
+    {
+        Console.WriteLine($"== {entry.RootTgi} ==");
+        var result = await ProbeSingleAssetAsync(entry.PackagePath, entry.RootTgi, verbose: false);
+        Console.WriteLine($"Package: {entry.PackagePath}");
+        Console.WriteLine($"Asset: {result.DisplayName ?? "(missing)"}");
+        Console.WriteLine($"Found: {result.Found}");
+        Console.WriteLine($"Scene Success: {result.SceneResult?.Success}");
+        Console.WriteLine($"Scene Status: {result.SceneResult?.Status}");
+
+        if (!result.Found || result.SceneResult is null)
+        {
+            Console.WriteLine();
+            continue;
+        }
+
+        Increment(sceneStatusCounts, result.SceneResult.Status);
+        var coverage = ParseMaterialCoverage(result.SceneResult.Diagnostics);
+        if (coverage.Count == 0 && result.SceneResult.Scene is not null)
+        {
+            coverage["Unknown"] = result.SceneResult.Scene.Materials.Count;
+        }
+
+        foreach (var pair in coverage)
+        {
+            Add(materialCoverageCounts, pair.Key, pair.Value);
+        }
+
+        var samplingSources = ParseMaterialSamplingSources(result.SceneResult.Diagnostics);
+        foreach (var pair in samplingSources)
+        {
+            Add(materialSamplingSourceCounts, pair.Key, pair.Value);
+        }
+
+        var visualPayloads = ParseMaterialVisualPayloads(result.SceneResult.Diagnostics);
+        foreach (var pair in visualPayloads)
+        {
+            Add(materialVisualPayloadCounts, pair.Key, pair.Value);
+        }
+
+        var families = ParseNamedCountLine(result.SceneResult.Diagnostics, "Material families:");
+        foreach (var pair in families)
+        {
+            Add(materialFamilyCounts, pair.Key, pair.Value);
+        }
+
+        AddPayloadByFamily(materialPayloadByFamilyCounts, families, visualPayloads);
+
+        var strategies = ParseNamedCountLine(result.SceneResult.Diagnostics, "Material decode strategies:");
+        foreach (var pair in strategies)
+        {
+            Add(materialStrategyCounts, pair.Key, pair.Value);
+        }
+
+        assetCoverage.Add(new BatchCoverageRow(
+            entry.PackagePath,
+            entry.RootTgi,
+            result.DisplayName ?? entry.RootTgi,
+            result.SceneResult.Status.ToString(),
+            coverage,
+            samplingSources,
+            visualPayloads,
+            families,
+            strategies));
+
+        Console.WriteLine($"Material Coverage: {FormatCoverageMap(coverage)}");
+        Console.WriteLine($"Material Sampling Sources: {FormatCoverageMap(samplingSources)}");
+        Console.WriteLine($"Material Visual Payloads: {FormatCoverageMap(visualPayloads)}");
+        Console.WriteLine($"Material Families: {FormatCoverageMap(families)}");
+        Console.WriteLine($"Material Decode Strategies: {FormatCoverageMap(strategies)}");
+        Console.WriteLine();
+    }
+
+    Console.WriteLine("== Batch Summary ==");
+    Console.WriteLine($"Entries: {entries.Length}");
+    Console.WriteLine($"Resolved scenes: {assetCoverage.Count}");
+    Console.WriteLine($"Scene statuses: {string.Join(", ", sceneStatusCounts.OrderBy(static pair => pair.Key).Select(static pair => $"{pair.Key}={pair.Value}"))}");
+    Console.WriteLine($"Material coverage totals: {FormatCoverageMap(materialCoverageCounts)}");
+    Console.WriteLine($"Material sampling source totals: {FormatCoverageMap(materialSamplingSourceCounts)}");
+    Console.WriteLine($"Material visual payload totals: {FormatCoverageMap(materialVisualPayloadCounts)}");
+    Console.WriteLine($"Material family totals: {FormatCoverageMap(materialFamilyCounts)}");
+    Console.WriteLine($"Material payload-by-family totals: {FormatCoverageMap(materialPayloadByFamilyCounts)}");
+    Console.WriteLine($"Material decode strategy totals: {FormatCoverageMap(materialStrategyCounts)}");
+    Console.WriteLine("Per-asset coverage:");
+    foreach (var row in assetCoverage.OrderBy(static item => item.PackagePath, StringComparer.OrdinalIgnoreCase).ThenBy(static item => item.RootTgi, StringComparer.OrdinalIgnoreCase))
+    {
+        Console.WriteLine($"  {Path.GetFileName(row.PackagePath)} | {row.RootTgi} | {row.SceneStatus} | coverage={FormatCoverageMap(row.MaterialCoverage)} | sampling={FormatCoverageMap(row.MaterialSamplingSources)} | payload={FormatCoverageMap(row.MaterialVisualPayloads)} | families={FormatCoverageMap(row.MaterialFamilies)} | strategies={FormatCoverageMap(row.MaterialStrategies)}");
+    }
+
+    return 0;
+}
+
+static async Task<int> RunBatchCoverageSummaryAsync(string inputPath, string summaryPath, int maxEntries, int timeoutSeconds)
+{
+    if (!File.Exists(inputPath))
+    {
+        Console.Error.WriteLine($"Batch input not found: {inputPath}");
+        return 1;
+    }
+
+    var entries = File.ReadAllLines(inputPath)
+        .Select(static line => line.Trim())
+        .Where(static line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#'))
+        .Select(ParseBatchEntry)
+        .ToArray();
+
+    if (entries.Length == 0)
+    {
+        Console.Error.WriteLine("Batch input did not contain any probe entries.");
+        return 2;
+    }
+
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(summaryPath))!);
+
+    var summary = LoadExistingSummary(summaryPath) ?? new BatchCoverageSummary(
+        inputPath,
+        entries.Length,
+        0,
+        0,
+        0,
+        0,
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+        DateTimeOffset.UtcNow,
+        null,
+        null);
+
+    if (!string.Equals(summary.InputPath, inputPath, StringComparison.OrdinalIgnoreCase) || summary.TotalEntries != entries.Length)
+    {
+        summary = new BatchCoverageSummary(
+            inputPath,
+            entries.Length,
+            0,
+            0,
+            0,
+            0,
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            DateTimeOffset.UtcNow,
+            null,
+            null);
+    }
+
+    maxEntries = maxEntries <= 0 ? entries.Length : Math.Min(entries.Length, maxEntries);
+    var processedThisRun = 0;
+    var elapsedBeforeRun = summary.Elapsed ?? TimeSpan.Zero;
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var perEntryTimeout = timeoutSeconds <= 0 ? TimeSpan.FromSeconds(120) : TimeSpan.FromSeconds(timeoutSeconds);
+    for (var index = summary.ProcessedEntries; index < maxEntries; index++)
+    {
+        var entry = entries[index];
+        summary = summary with { ProcessedEntries = index + 1 };
+        var rowResult = await ProbeSingleAssetOutOfProcessAsync(entry.PackagePath, entry.RootTgi, perEntryTimeout);
+        if (rowResult.TimedOut)
+        {
+            summary = summary with { TimedOutEntries = summary.TimedOutEntries + 1 };
+            Add(summary.SceneStatuses, "TimedOut", 1);
+        }
+        else if (rowResult.Row is null)
+        {
+            summary = summary with { FailedEntries = summary.FailedEntries + 1 };
+            Add(summary.SceneStatuses, "Failed", 1);
+        }
+        else
+        {
+            var row = rowResult.Row;
+            summary = summary with { ResolvedScenes = summary.ResolvedScenes + 1 };
+            Add(summary.SceneStatuses, row.SceneStatus, 1);
+
+            foreach (var pair in row.MaterialCoverage)
+            {
+                Add(summary.MaterialCoverage, pair.Key, pair.Value);
+            }
+
+            foreach (var pair in row.MaterialSamplingSources)
+            {
+                Add(summary.MaterialSamplingSources, pair.Key, pair.Value);
+            }
+
+            foreach (var pair in row.MaterialVisualPayloads)
+            {
+                Add(summary.MaterialVisualPayloads, pair.Key, pair.Value);
+            }
+
+            foreach (var pair in row.MaterialFamilies)
+            {
+                Add(summary.MaterialFamilies, pair.Key, pair.Value);
+            }
+
+            AddPayloadByFamily(summary.MaterialPayloadByFamily, row.MaterialFamilies, row.MaterialVisualPayloads);
+
+            foreach (var pair in row.MaterialStrategies)
+            {
+                Add(summary.MaterialStrategies, pair.Key, pair.Value);
+            }
+        }
+
+        processedThisRun++;
+        if (processedThisRun % 10 == 0 || rowResult.TimedOut || rowResult.Row is null || summary.ProcessedEntries == maxEntries)
+        {
+            summary = UpdateSummaryTiming(summary, elapsedBeforeRun, stopwatch.Elapsed);
+            SaveSummary(summaryPath, summary);
+            Console.WriteLine(
+                $"Processed {summary.ProcessedEntries}/{summary.TotalEntries} | resolved={summary.ResolvedScenes} | timedOut={summary.TimedOutEntries} | failed={summary.FailedEntries} | " +
+                $"elapsed={summary.Elapsed:hh\\:mm\\:ss} | eta={(summary.EstimatedRemaining ?? TimeSpan.Zero):hh\\:mm\\:ss}");
+        }
+    }
+
+    summary = UpdateSummaryTiming(summary, elapsedBeforeRun, stopwatch.Elapsed);
+    SaveSummary(summaryPath, summary);
+
+    Console.WriteLine();
+    Console.WriteLine($"Summary written to {summaryPath}");
+    Console.WriteLine($"Processed entries: {summary.ProcessedEntries}/{summary.TotalEntries}");
+    Console.WriteLine($"Resolved scenes: {summary.ResolvedScenes}");
+    Console.WriteLine($"Timed out entries: {summary.TimedOutEntries}");
+    Console.WriteLine($"Failed entries: {summary.FailedEntries}");
+    Console.WriteLine($"Scene statuses: {FormatCoverageMap(summary.SceneStatuses)}");
+    Console.WriteLine($"Material coverage: {FormatCoverageMap(summary.MaterialCoverage)}");
+    Console.WriteLine($"Material sampling sources: {FormatCoverageMap(summary.MaterialSamplingSources)}");
+    Console.WriteLine($"Material visual payloads: {FormatCoverageMap(summary.MaterialVisualPayloads)}");
+    Console.WriteLine($"Material families: {FormatCoverageMap(summary.MaterialFamilies)}");
+    Console.WriteLine($"Material payload-by-family: {FormatCoverageMap(summary.MaterialPayloadByFamily)}");
+    Console.WriteLine($"Material decode strategies: {FormatCoverageMap(summary.MaterialStrategies)}");
+    Console.WriteLine($"Elapsed: {summary.Elapsed:hh\\:mm\\:ss}");
+    if (summary.EstimatedRemaining is not null)
+    {
+        Console.WriteLine($"Estimated remaining: {summary.EstimatedRemaining.Value:hh\\:mm\\:ss}");
+    }
+
+    return 0;
+}
+
+static async Task<int> RunProbeJsonAsync(string packagePath, string rootTgi)
+{
+    if (string.IsNullOrWhiteSpace(packagePath) || string.IsNullOrWhiteSpace(rootTgi))
+    {
+        Console.Error.WriteLine("Usage: --probe-json <packagePath> <rootTgi>");
+        return 1;
+    }
+
+    var result = await ProbeSingleAssetAsync(packagePath, rootTgi, verbose: false);
+    if (!result.Found || result.SceneResult is null)
+    {
+        Console.WriteLine(JsonSerializer.Serialize<object?>(null));
+        return 0;
+    }
+
+    var row = CreateBatchCoverageRow(result);
+    Console.WriteLine(JsonSerializer.Serialize(row));
+    return 0;
+}
+
+static async Task<ProbeProcessResult> ProbeSingleAssetOutOfProcessAsync(string packagePath, string rootTgi, TimeSpan timeout)
+{
+    var processPath = Environment.ProcessPath;
+    if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
+    {
+        throw new InvalidOperationException("Could not resolve the current ProbeAsset executable path.");
+    }
+
+    using var process = new System.Diagnostics.Process
+    {
+        StartInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = processPath,
+            Arguments = $"--probe-json {QuoteArg(packagePath)} {QuoteArg(rootTgi)}",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = Environment.CurrentDirectory
+        }
+    };
+
+    process.Start();
+    using var cts = new CancellationTokenSource(timeout);
+    try
+    {
+        await process.WaitForExitAsync(cts.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+        }
+
+        return new ProbeProcessResult(null, TimedOut: true);
+    }
+
+    var stdout = await process.StandardOutput.ReadToEndAsync();
+    var stderr = await process.StandardError.ReadToEndAsync();
+    if (process.ExitCode != 0)
+    {
+        if (!string.IsNullOrWhiteSpace(stderr))
+        {
+            Console.WriteLine($"Probe failed for {rootTgi}: {stderr.Trim()}");
+        }
+
+        return new ProbeProcessResult(null, TimedOut: false);
+    }
+
+    var json = stdout
+        .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+        .LastOrDefault(static line => line.TrimStart().StartsWith("{", StringComparison.Ordinal) || string.Equals(line.Trim(), "null", StringComparison.OrdinalIgnoreCase));
+
+    if (string.IsNullOrWhiteSpace(json) || string.Equals(json.Trim(), "null", StringComparison.OrdinalIgnoreCase))
+    {
+        return new ProbeProcessResult(null, TimedOut: false);
+    }
+
+    var row = JsonSerializer.Deserialize<BatchCoverageRow>(json);
+    return new ProbeProcessResult(row, TimedOut: false);
+}
+
+static BatchCoverageRow CreateBatchCoverageRow(ProbeAssetResult result)
+{
+    var sceneResult = result.SceneResult!;
+    var coverage = ParseMaterialCoverage(sceneResult.Diagnostics);
+    if (coverage.Count == 0 && sceneResult.Scene is not null)
+    {
+        coverage["Unknown"] = sceneResult.Scene.Materials.Count;
+    }
+
+    return new BatchCoverageRow(
+        result.PackagePath,
+        result.RootTgi,
+        result.DisplayName ?? "(unknown)",
+        sceneResult.Status.ToString(),
+        coverage,
+        ParseMaterialSamplingSources(sceneResult.Diagnostics),
+        ParseMaterialVisualPayloads(sceneResult.Diagnostics),
+        ParseNamedCountLine(sceneResult.Diagnostics, "Material families:"),
+        ParseNamedCountLine(sceneResult.Diagnostics, "Material decode strategies:"));
+}
+
+static string QuoteArg(string value) => "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+
+static BatchCoverageSummary UpdateSummaryTiming(BatchCoverageSummary summary, TimeSpan elapsedBeforeRun, TimeSpan elapsedThisRun)
+{
+    var totalElapsed = elapsedBeforeRun + elapsedThisRun;
+    TimeSpan? eta = null;
+    if (summary.ProcessedEntries > 0 && summary.ProcessedEntries < summary.TotalEntries)
+    {
+        var secondsPerEntry = totalElapsed.TotalSeconds / summary.ProcessedEntries;
+        eta = TimeSpan.FromSeconds(secondsPerEntry * (summary.TotalEntries - summary.ProcessedEntries));
+    }
+
+    return summary with
+    {
+        Elapsed = totalElapsed,
+        LastUpdatedUtc = DateTimeOffset.UtcNow,
+        EstimatedRemaining = eta
+    };
+}
+
+static BatchCoverageSummary? LoadExistingSummary(string summaryPath)
+{
+    if (!File.Exists(summaryPath))
+    {
+        return null;
+    }
+
+    try
+    {
+        return JsonSerializer.Deserialize<BatchCoverageSummary>(File.ReadAllText(summaryPath));
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static void SaveSummary(string summaryPath, BatchCoverageSummary summary)
+{
+    var json = JsonSerializer.Serialize(summary, new JsonSerializerOptions
+    {
+        WriteIndented = true
+    });
+    File.WriteAllText(summaryPath, json);
+}
+
+static async Task<int> SampleBuildBuyRootsAsync(string searchRoot, int maxPackages, int assetsPerPackage, string outputPath)
+{
+    if (!Directory.Exists(searchRoot))
+    {
+        Console.Error.WriteLine($"Directory not found: {searchRoot}");
+        return 1;
+    }
+
+    maxPackages = Math.Max(1, maxPackages);
+    assetsPerPackage = Math.Max(1, assetsPerPackage);
+
+    var packagePaths = Directory
+        .EnumerateFiles(searchRoot, "*.package", SearchOption.AllDirectories)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (packagePaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No package files found under: {searchRoot}");
+        return 2;
+    }
+
+    packagePaths = SelectRepresentativePackagePaths(searchRoot, packagePaths, maxPackages);
+
+    var source = new DataSourceDefinition(
+        Guid.Parse("44444444-4444-4444-4444-444444444444"),
+        "ProbeSample",
+        searchRoot,
+        SourceKind.Game);
+
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+    var lines = new List<string>();
+
+    for (var index = 0; index < packagePaths.Length; index++)
+    {
+        var packagePath = packagePaths[index];
+        Console.WriteLine($"[{index + 1}/{packagePaths.Length}] {packagePath}");
+        try
+        {
+            var scan = await catalog.ScanPackageAsync(source, packagePath, progress: null, CancellationToken.None);
+            var assets = graphBuilder.BuildAssetSummaries(scan)
+                .Where(static asset => asset.AssetKind == AssetKind.BuildBuy)
+                .OrderByDescending(static asset => asset.CapabilitySnapshot.HasTextureReferences)
+                .ThenByDescending(static asset => asset.CapabilitySnapshot.HasExactGeometryCandidate)
+                .ThenBy(static asset => asset.RootKey.FullTgi, StringComparer.OrdinalIgnoreCase)
+                .Take(assetsPerPackage)
+                .ToArray();
+
+            Console.WriteLine($"  Selected: {assets.Length}");
+            foreach (var asset in assets)
+            {
+                var line = $"{packagePath}|{asset.RootKey.FullTgi}";
+                lines.Add(line);
+                Console.WriteLine($"    {asset.RootKey.FullTgi} | {asset.DisplayName}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Scan failed: {ex.Message}");
+        }
+    }
+
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+    File.WriteAllLines(outputPath, lines, System.Text.Encoding.UTF8);
+    Console.WriteLine();
+    Console.WriteLine($"Wrote {lines.Count} sampled Build/Buy roots to {outputPath}");
+    return 0;
+}
+
+static async Task<int> FindComplexBuildBuyAsync(string searchRoot, int maxPackages, int assetsPerPackage, int maxMatches)
+{
+    if (!Directory.Exists(searchRoot))
+    {
+        Console.Error.WriteLine($"Directory not found: {searchRoot}");
+        return 1;
+    }
+
+    maxPackages = Math.Max(1, maxPackages);
+    assetsPerPackage = Math.Max(1, assetsPerPackage);
+    maxMatches = Math.Max(1, maxMatches);
+
+    var packagePaths = Directory
+        .EnumerateFiles(searchRoot, "*.package", SearchOption.AllDirectories)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (packagePaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No package files found under: {searchRoot}");
+        return 2;
+    }
+
+    packagePaths = SelectRepresentativePackagePaths(searchRoot, packagePaths, maxPackages);
+
+    var source = new DataSourceDefinition(
+        Guid.Parse("55555555-5555-5555-5555-555555555555"),
+        "ProbeComplex",
+        searchRoot,
+        SourceKind.Game);
+
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+    var matches = new List<(string PackagePath, string RootTgi, string SceneStatus, Dictionary<string, int> Coverage, Dictionary<string, int> SamplingSources, Dictionary<string, int> VisualPayloads)>();
+
+    for (var index = 0; index < packagePaths.Length && matches.Count < maxMatches; index++)
+    {
+        var packagePath = packagePaths[index];
+        Console.WriteLine($"[{index + 1}/{packagePaths.Length}] {packagePath}");
+
+        PackageScanResult scan;
+        try
+        {
+            scan = await catalog.ScanPackageAsync(source, packagePath, progress: null, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Scan failed: {ex.Message}");
+            continue;
+        }
+
+        var assets = graphBuilder.BuildAssetSummaries(scan)
+            .Where(static asset => asset.AssetKind == AssetKind.BuildBuy)
+            .OrderByDescending(static asset => asset.CapabilitySnapshot.HasTextureReferences)
+            .ThenByDescending(static asset => asset.CapabilitySnapshot.HasExactGeometryCandidate)
+            .ThenByDescending(static asset => asset.CapabilitySnapshot.HasSceneRoot)
+            .ThenBy(static asset => asset.RootKey.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Take(assetsPerPackage)
+            .ToArray();
+
+        foreach (var asset in assets)
+        {
+            if (matches.Count >= maxMatches)
+            {
+                break;
+            }
+
+            var probe = await ProbeSingleAssetAsync(packagePath, asset.RootKey.FullTgi, verbose: false);
+            if (!probe.Found || probe.SceneResult is null)
+            {
+                continue;
+            }
+
+            var coverage = ParseMaterialCoverage(probe.SceneResult.Diagnostics);
+            var samplingSources = ParseMaterialSamplingSources(probe.SceneResult.Diagnostics);
+            var visualPayloads = ParseMaterialVisualPayloads(probe.SceneResult.Diagnostics);
+            var isComplex = coverage.Keys.Any(static key => !string.Equals(key, "StaticReady", StringComparison.OrdinalIgnoreCase))
+                || samplingSources.Keys.Any(static key =>
+                    !string.Equals(key, "diffuse-material-path", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(key, "default-uv0", StringComparison.OrdinalIgnoreCase))
+                || visualPayloads.Keys.Any(static key => !string.Equals(key, "textured", StringComparison.OrdinalIgnoreCase));
+
+            if (!isComplex)
+            {
+                continue;
+            }
+
+            matches.Add((packagePath, asset.RootKey.FullTgi, probe.SceneResult.Status.ToString(), coverage, samplingSources, visualPayloads));
+            Console.WriteLine($"  Complex match: {asset.RootKey.FullTgi} | {probe.SceneResult.Status} | coverage={FormatCoverageMap(coverage)} | sampling={FormatCoverageMap(samplingSources)} | payload={FormatCoverageMap(visualPayloads)}");
+        }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("== Complex Build/Buy Matches ==");
+    if (matches.Count == 0)
+    {
+        Console.WriteLine("No non-static material matches found in the scanned sample.");
+        return 0;
+    }
+
+    foreach (var match in matches)
+    {
+        Console.WriteLine($"{match.PackagePath}|{match.RootTgi} | {match.SceneStatus} | coverage={FormatCoverageMap(match.Coverage)} | sampling={FormatCoverageMap(match.SamplingSources)} | payload={FormatCoverageMap(match.VisualPayloads)}");
+    }
+
+    return 0;
+}
+
+static string[] SelectRepresentativePackagePaths(string searchRoot, string[] packagePaths, int maxPackages)
+{
+    if (packagePaths.Length <= maxPackages)
+    {
+        return packagePaths;
+    }
+
+    var grouped = packagePaths
+        .GroupBy(path => GetPackageBucket(searchRoot, path), StringComparer.OrdinalIgnoreCase)
+        .Select(group => new Queue<string>(group
+            .OrderBy(static path => GetPackagePriority(path))
+            .ThenBy(static path => path, StringComparer.OrdinalIgnoreCase)))
+        .OrderBy(static queue => GetBucketPriority(queue.Peek()))
+        .ThenBy(queue => GetPackageBucket(searchRoot, queue.Peek()), StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    var selected = new List<string>(capacity: maxPackages);
+    while (selected.Count < maxPackages)
+    {
+        var addedAny = false;
+        foreach (var queue in grouped)
+        {
+            if (queue.Count == 0)
+            {
+                continue;
+            }
+
+            selected.Add(queue.Dequeue());
+            addedAny = true;
+            if (selected.Count >= maxPackages)
+            {
+                break;
+            }
+        }
+
+        if (!addedAny)
+        {
+            break;
+        }
+    }
+
+    return selected.ToArray();
+}
+
+static string GetPackageBucket(string searchRoot, string packagePath)
+{
+    var relativePath = Path.GetRelativePath(searchRoot, packagePath);
+    var parts = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    return parts.Length > 1 ? parts[0] : "(root)";
+}
+
+static int GetBucketPriority(string packagePath)
+{
+    var fileName = Path.GetFileName(packagePath);
+    var directory = Path.GetFileName(Path.GetDirectoryName(packagePath));
+    return directory switch
+    {
+        "Data" => 0,
+        "Delta" => 1,
+        _ when directory is not null && directory.StartsWith("EP", StringComparison.OrdinalIgnoreCase) => 2,
+        _ when directory is not null && directory.StartsWith("GP", StringComparison.OrdinalIgnoreCase) => 3,
+        _ when directory is not null && directory.StartsWith("SP", StringComparison.OrdinalIgnoreCase) => 4,
+        _ when directory is not null && directory.StartsWith("FP", StringComparison.OrdinalIgnoreCase) => 5,
+        _ => fileName.Contains("FullBuild0", StringComparison.OrdinalIgnoreCase) ? 6 : 7
+    };
+}
+
+static int GetPackagePriority(string packagePath)
+{
+    var fileName = Path.GetFileName(packagePath);
+    if (fileName.Equals("ClientFullBuild0.package", StringComparison.OrdinalIgnoreCase))
+    {
+        return 0;
+    }
+
+    if (fileName.Equals("ClientDeltaBuild0.package", StringComparison.OrdinalIgnoreCase))
+    {
+        return 1;
+    }
+
+    if (fileName.Contains("FullBuild0", StringComparison.OrdinalIgnoreCase))
+    {
+        return 2;
+    }
+
+    if (fileName.Contains("DeltaBuild0", StringComparison.OrdinalIgnoreCase))
+    {
+        return 3;
+    }
+
+    if (fileName.Contains("Build0", StringComparison.OrdinalIgnoreCase))
+    {
+        return 4;
+    }
+
+    if (fileName.Contains("FullBuild", StringComparison.OrdinalIgnoreCase))
+    {
+        return 5;
+    }
+
+    if (fileName.Contains("DeltaBuild", StringComparison.OrdinalIgnoreCase))
+    {
+        return 6;
+    }
+
+    return 7;
+}
+
+static BatchInputEntry ParseBatchEntry(string line)
+{
+    var separators = new[] { '|', ';', '\t' };
+    var parts = line.Split(separators, 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length != 2)
+    {
+        throw new InvalidDataException($"Invalid batch line: {line}");
+    }
+
+    return new BatchInputEntry(parts[0], parts[1]);
+}
+
+static async Task<ProbeAssetResult> ProbeSingleAssetAsync(string packagePath, string rootTgi, bool verbose)
+{
+    if (!File.Exists(packagePath))
+    {
+        return new ProbeAssetResult(packagePath, rootTgi, null, false, null);
+    }
+
+    var rootDirectory = Path.Combine(AppContext.BaseDirectory, "probe-cache");
+    var cache = new ProbeCacheService(rootDirectory);
+    cache.EnsureCreated();
+
+    var store = new SqliteIndexStore(cache);
+    await store.InitializeAsync(CancellationToken.None);
+
+    var source = new DataSourceDefinition(
+        Guid.Parse("11111111-1111-1111-1111-111111111111"),
+        "ProbeSource",
+        Path.GetDirectoryName(packagePath) ?? packagePath,
+        SourceKind.Game);
+
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+    var sceneBuilder = new BuildBuySceneBuildService(catalog, store);
+
+    if (verbose)
+    {
+        Console.WriteLine($"Scanning package: {packagePath}");
+    }
+
+    var scan = await catalog.ScanPackageAsync(source, packagePath, progress: null, CancellationToken.None);
+    var assets = graphBuilder.BuildAssetSummaries(scan);
+    await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
+
+    var asset = assets.FirstOrDefault(candidate =>
+        candidate.AssetKind == AssetKind.BuildBuy &&
+        string.Equals(candidate.RootKey.FullTgi, rootTgi, StringComparison.OrdinalIgnoreCase));
+
+    if (asset is null)
+    {
+        return new ProbeAssetResult(packagePath, rootTgi, null, false, null);
+    }
+
+    var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+    var graph = await graphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
+    var sceneResult = graph.BuildBuyGraph is null
+        ? null
+        : await sceneBuilder.BuildSceneAsync(graph.BuildBuyGraph.ModelResource, CancellationToken.None);
+
+    return new ProbeAssetResult(packagePath, rootTgi, asset.DisplayName, true, sceneResult);
+}
+
+static Dictionary<string, int> ParseMaterialCoverage(IReadOnlyList<string> diagnostics)
+    => ParseNamedCountLine(diagnostics, "Material coverage:");
+
+static Dictionary<string, int> ParseMaterialSamplingSources(IReadOnlyList<string> diagnostics)
+    => ParseNamedCountLine(diagnostics, "Material sampling sources:");
+
+static Dictionary<string, int> ParseMaterialVisualPayloads(IReadOnlyList<string> diagnostics)
+    => ParseNamedCountLine(diagnostics, "Material visual payloads:");
+
+static Dictionary<string, int> ParseNamedCountLine(IReadOnlyList<string> diagnostics, string prefix)
+{
+    var line = diagnostics.FirstOrDefault(item => item.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    if (string.IsNullOrWhiteSpace(line))
+    {
+        return result;
+    }
+
+    var payload = line[prefix.Length..].Trim().TrimEnd('.');
+    foreach (var token in payload.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+    {
+        var pair = token.Split('=', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (pair.Length == 2 && int.TryParse(pair[1], out var value))
+        {
+            result[pair[0]] = value;
+        }
+    }
+
+    return result;
+}
+
+static void Increment(Dictionary<SceneBuildStatus, int> counts, SceneBuildStatus status) =>
+    counts[status] = counts.TryGetValue(status, out var current) ? current + 1 : 1;
+
+static void Add(Dictionary<string, int> counts, string key, int value) =>
+    counts[key] = counts.TryGetValue(key, out var current) ? current + value : value;
+
+static void AddPayloadByFamily(
+    Dictionary<string, int> counts,
+    IReadOnlyDictionary<string, int> families,
+    IReadOnlyDictionary<string, int> payloads)
+{
+    foreach (var family in families)
+    {
+        foreach (var payload in payloads)
+        {
+            Add(counts, $"{family.Key}/{payload.Key}", Math.Min(family.Value, payload.Value));
+        }
+    }
+}
+
+static string FormatCoverageMap(IReadOnlyDictionary<string, int> coverage) =>
+    coverage.Count == 0
+        ? "(none)"
+        : string.Join(", ", coverage.OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(static pair => $"{pair.Key}={pair.Value}"));
 
 static bool TryParseTgi(string fullTgi, out ResourceKeyRecord key)
 {
@@ -522,7 +1395,13 @@ static string DescribePng(byte[] pngBytes)
 
 static async Task DumpRcolChunkSummary(LlamaResourceCatalogService catalog, ResourceMetadata resource)
 {
-    var bytes = await catalog.GetResourceBytesAsync(resource.PackagePath, resource.Key, raw: false, CancellationToken.None);
+    var resolved = await ResolveCompanionResourceAsync(catalog, resource);
+    if (!resolved.PackagePath.Equals(resource.PackagePath, StringComparison.OrdinalIgnoreCase))
+    {
+        Console.WriteLine($"Resolved from companion: {resolved.PackagePath}");
+    }
+
+    var bytes = await catalog.GetResourceBytesAsync(resolved.PackagePath, resolved.Key, raw: false, CancellationToken.None);
     Console.WriteLine($"Bytes: {bytes.Length}");
 
     if (bytes.Length < 20)
@@ -604,6 +1483,48 @@ static async Task DumpRcolChunkSummary(LlamaResourceCatalogService catalog, Reso
         }
 
         offset += 8;
+    }
+}
+
+static async Task<ResourceMetadata> ResolveCompanionResourceAsync(LlamaResourceCatalogService catalog, ResourceMetadata resource)
+{
+    var bytes = await catalog.GetResourceBytesAsync(resource.PackagePath, resource.Key, raw: false, CancellationToken.None);
+    if (bytes.Length > 0)
+    {
+        return resource;
+    }
+
+    foreach (var companionPackagePath in EnumerateCompanionPackagePaths(resource.PackagePath))
+    {
+        var companionBytes = await catalog.GetResourceBytesAsync(companionPackagePath, resource.Key, raw: false, CancellationToken.None);
+        if (companionBytes.Length > 0)
+        {
+            return resource with { PackagePath = companionPackagePath };
+        }
+    }
+
+    return resource;
+}
+
+static IEnumerable<string> EnumerateCompanionPackagePaths(string packagePath)
+{
+    if (string.IsNullOrWhiteSpace(packagePath))
+    {
+        yield break;
+    }
+
+    var deltaMarker = $"{Path.DirectorySeparatorChar}Delta{Path.DirectorySeparatorChar}";
+    if (packagePath.IndexOf(deltaMarker, StringComparison.OrdinalIgnoreCase) < 0)
+    {
+        yield break;
+    }
+
+    var fullPath = packagePath.Replace(deltaMarker, $"{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
+    fullPath = fullPath.Replace("ClientDeltaBuild", "ClientFullBuild", StringComparison.OrdinalIgnoreCase);
+    fullPath = fullPath.Replace("SimulationDeltaBuild", "SimulationFullBuild", StringComparison.OrdinalIgnoreCase);
+    if (!fullPath.Equals(packagePath, StringComparison.OrdinalIgnoreCase) && File.Exists(fullPath))
+    {
+        yield return fullPath;
     }
 }
 
@@ -975,3 +1896,43 @@ file sealed class ProbeCacheService(string root) : ICacheService
         Directory.CreateDirectory(ExportRoot);
     }
 }
+
+file sealed record BatchInputEntry(string PackagePath, string RootTgi);
+
+file sealed record BatchCoverageRow(
+    string PackagePath,
+    string RootTgi,
+    string DisplayName,
+    string SceneStatus,
+    IReadOnlyDictionary<string, int> MaterialCoverage,
+    IReadOnlyDictionary<string, int> MaterialSamplingSources,
+    IReadOnlyDictionary<string, int> MaterialVisualPayloads,
+    IReadOnlyDictionary<string, int> MaterialFamilies,
+    IReadOnlyDictionary<string, int> MaterialStrategies);
+
+file sealed record ProbeAssetResult(
+    string PackagePath,
+    string RootTgi,
+    string? DisplayName,
+    bool Found,
+    SceneBuildResult? SceneResult);
+
+file sealed record BatchCoverageSummary(
+    string InputPath,
+    int TotalEntries,
+    int ProcessedEntries,
+    int ResolvedScenes,
+    int TimedOutEntries,
+    int FailedEntries,
+    Dictionary<string, int> SceneStatuses,
+    Dictionary<string, int> MaterialCoverage,
+    Dictionary<string, int> MaterialSamplingSources,
+    Dictionary<string, int> MaterialVisualPayloads,
+    Dictionary<string, int> MaterialFamilies,
+    Dictionary<string, int> MaterialPayloadByFamily,
+    Dictionary<string, int> MaterialStrategies,
+    DateTimeOffset LastUpdatedUtc,
+    TimeSpan? Elapsed,
+    TimeSpan? EstimatedRemaining);
+
+file sealed record ProbeProcessResult(BatchCoverageRow? Row, bool TimedOut);

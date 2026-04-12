@@ -1617,6 +1617,8 @@ public sealed partial class MainViewModel : ObservableObject
                 material.ShaderName,
                 material.IsTransparent,
                 material.AlphaMode,
+                material.AlphaTextureSlot,
+                material.LayeredTextureSlots,
                 material.Approximation,
                 material.Textures.Select(static texture => new MaterialTextureEntry(
                     texture.Slot,
