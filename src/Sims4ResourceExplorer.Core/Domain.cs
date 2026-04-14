@@ -54,7 +54,12 @@ public sealed record ResourceMetadata(
     bool IsPreviewable,
     bool IsExportCapable,
     string AssetLinkageSummary,
-    string Diagnostics)
+    string Diagnostics,
+    string? Description = null,
+    uint? CatalogSignal0020 = null,
+    uint? CatalogSignal002C = null,
+    uint? CatalogSignal0030 = null,
+    uint? CatalogSignal0034 = null)
 {
     public bool HasKnownCompression => IsCompressed.HasValue;
     public bool IsLinkedToAsset => !string.IsNullOrWhiteSpace(AssetLinkageSummary);
@@ -118,7 +123,11 @@ public sealed record AssetFacetOptions(
     IReadOnlyList<string> RootTypeNames,
     IReadOnlyList<string> IdentityTypes,
     IReadOnlyList<string> PrimaryGeometryTypes,
-    IReadOnlyList<string> ThumbnailTypeNames);
+    IReadOnlyList<string> ThumbnailTypeNames,
+    IReadOnlyList<string>? CatalogSignal0020Values = null,
+    IReadOnlyList<string>? CatalogSignal002CValues = null,
+    IReadOnlyList<string>? CatalogSignal0030Values = null,
+    IReadOnlyList<string>? CatalogSignal0034Values = null);
 
 public sealed record AssetSummary(
     Guid Id,
@@ -139,7 +148,12 @@ public sealed record AssetSummary(
     string? ThumbnailTypeName = null,
     string? PrimaryGeometryType = null,
     string? IdentityType = null,
-    string? CategoryNormalized = null)
+    string? CategoryNormalized = null,
+    string? Description = null,
+    uint? CatalogSignal0020 = null,
+    uint? CatalogSignal002C = null,
+    uint? CatalogSignal0030 = null,
+    uint? CatalogSignal0034 = null)
 {
     public bool HasThumbnail => !string.IsNullOrWhiteSpace(ThumbnailTgi);
     public bool HasVariants => VariantCount > 1;
@@ -184,18 +198,18 @@ public sealed record IndexingRunOptions(
     public static IndexingRunOptions CreateDefault() =>
         new(
             MaxPackageConcurrency: GetDefaultWorkerCount(),
-            PackageQueueCapacity: Math.Clamp(GetDefaultWorkerCount() * 2, 2, 32),
-            SqliteBatchSize: 200,
+            PackageQueueCapacity: Math.Clamp(GetDefaultWorkerCount() * 4, 4, 256),
+            SqliteBatchSize: 20000,
             ProgressUpdateInterval: TimeSpan.FromMilliseconds(400),
             HeartbeatInterval: TimeSpan.FromSeconds(5));
 
-    public static int GetMachineWorkerLimit() => Math.Max(1, Environment.ProcessorCount);
+    public static int GetMachineWorkerLimit() => Math.Max(1, Environment.ProcessorCount * 2);
 
     public static int ClampWorkerCount(int requested) =>
         Math.Clamp(requested, 1, GetMachineWorkerLimit());
 
     public static int GetDefaultWorkerCount() =>
-        Math.Clamp(Environment.ProcessorCount / 2, 1, GetMachineWorkerLimit());
+        Math.Clamp(Environment.ProcessorCount, 1, GetMachineWorkerLimit());
 
     public IndexingRunOptions WithWorkerCount(int requestedWorkerCount)
     {
@@ -203,7 +217,7 @@ public sealed record IndexingRunOptions(
         return this with
         {
             MaxPackageConcurrency = workerCount,
-            PackageQueueCapacity = Math.Clamp(workerCount * 2, 2, 32)
+            PackageQueueCapacity = Math.Clamp(workerCount * 4, 4, 256)
         };
     }
 }
@@ -262,6 +276,7 @@ public sealed record PackageFailureInfo(string PackagePath, string Reason);
 
 public sealed record PackageRunSummary(
     string PackagePath,
+    long FileSize,
     int ResourceCount,
     TimeSpan Elapsed,
     bool Skipped,
@@ -275,12 +290,26 @@ public sealed record IndexingRunSummary(
     int PackagesProcessed,
     int PackagesSkipped,
     int PackagesFailed,
+    long PackageBytesDiscovered,
+    long PackageBytesProcessed,
     int ResourcesProcessed,
     double AverageThroughput,
     IReadOnlyList<PackageRunSummary> SlowestPackages,
     IReadOnlyList<PackageFailureInfo> Failures,
     IReadOnlyList<string> PhaseBreakdown,
     IReadOnlyList<string> MuchSlowerThanAverage);
+
+public sealed record IndexWriteMetrics(
+    TimeSpan DropIndexesElapsed,
+    TimeSpan DeletePackageRowsElapsed,
+    TimeSpan InsertResourcesElapsed,
+    TimeSpan InsertAssetsElapsed,
+    TimeSpan FtsElapsed,
+    TimeSpan RebuildIndexesElapsed,
+    TimeSpan CommitElapsed,
+    int ResourceRowCount,
+    int AssetRowCount,
+    int PackageCount);
 
 public sealed record IndexingProgress(
     string Stage,
@@ -289,11 +318,21 @@ public sealed record IndexingProgress(
     int PackagesCompleted,
     int PackagesSkipped,
     int PackagesFailed,
+    long PackageBytesProcessed,
+    long PackageBytesTotal,
+    long CompletedPackageBytesProcessed,
     int ResourcesProcessed,
     int CompletedResourcesProcessed,
     string Message,
     int ActiveWorkerCount = 0,
+    int WaitingWorkerCount = 0,
+    int IdleWorkerCount = 0,
+    int FailedWorkerCount = 0,
     int PendingPackageCount = 0,
+    int PendingPersistCount = 0,
+    int ActiveWriterBatchCount = 0,
+    bool WriterBusy = false,
+    double WriterBusyPercent = 0,
     int ConfiguredWorkerCount = 0,
     bool DiscoveryCompleted = false,
     TimeSpan Elapsed = default,
@@ -384,7 +423,8 @@ public sealed record CanonicalTexture(
     float UvScaleU = 1f,
     float UvScaleV = 1f,
     float UvOffsetU = 0f,
-    float UvOffsetV = 0f);
+    float UvOffsetV = 0f,
+    bool IsApproximateUvTransform = false);
 
 public enum CanonicalMaterialSourceKind
 {
@@ -441,6 +481,9 @@ public sealed record SceneBuildResult(
     CanonicalScene? Scene,
     IReadOnlyList<string> Diagnostics,
     SceneBuildStatus Status = SceneBuildStatus.Unsupported);
+
+public sealed record PreviewBuildProgress(string Status, double? Fraction = null);
+public sealed record ResourceReadProgress(string Status, double? Fraction = null);
 
 public sealed record AudioDecodeResult(bool Success, byte[]? WavBytes, string Diagnostics);
 
@@ -742,9 +785,9 @@ public interface IResourceCatalogService
 {
     Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken);
     Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken);
-    Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken);
+    Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null);
     Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken);
-    Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken);
+    Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null);
 }
 
 public interface IAssetGraphBuilder
@@ -755,7 +798,7 @@ public interface IAssetGraphBuilder
 
 public interface IPreviewService
 {
-    Task<PreviewResult> CreatePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken);
+    Task<PreviewResult> CreatePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
 }
 
 public interface ITextureDecodeService
@@ -765,7 +808,7 @@ public interface ITextureDecodeService
 
 public interface ISceneBuildService
 {
-    Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken);
+    Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
 }
 
 public interface IFbxExportService
@@ -807,6 +850,7 @@ public interface IIndexStore
     Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken);
     Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken);
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken);
     Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
 }
 
@@ -815,6 +859,11 @@ public interface IIndexWriteSession : IAsyncDisposable
     Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
     Task ReplacePackagesAsync(IReadOnlyList<(PackageScanResult PackageScan, IReadOnlyList<AssetSummary> Assets)> batch, CancellationToken cancellationToken);
     Task FinalizeAsync(CancellationToken cancellationToken);
+}
+
+public interface IIndexWriteSessionMetricsProvider
+{
+    IndexWriteMetrics? ConsumeLastMetrics();
 }
 
 public interface IResourceMetadataEnrichmentService

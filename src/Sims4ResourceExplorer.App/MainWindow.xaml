@@ -23,12 +23,12 @@
             <Button Click="Refresh_Click" Content="Apply / Refresh" IsEnabled="{Binding IsNotBusy}" />
         </StackPanel>
 
-        <Grid x:Name="MainContentGrid" Grid.Row="1" ColumnSpacing="0">
+        <Grid x:Name="MainContentGrid" Grid.Row="1" ColumnSpacing="0" SizeChanged="MainContentGrid_SizeChanged">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="320" />
-                <ColumnDefinition x:Name="ResultsColumn" Width="3*" MinWidth="320" />
+                <ColumnDefinition x:Name="ResultsColumn" Width="4*" MinWidth="360" />
                 <ColumnDefinition Width="8" />
-                <ColumnDefinition x:Name="PreviewColumn" Width="4*" MinWidth="520" />
+                <ColumnDefinition x:Name="PreviewColumn" Width="3*" MinWidth="460" />
             </Grid.ColumnDefinitions>
 
             <ScrollViewer Grid.Column="0">
@@ -66,6 +66,10 @@
                         <AutoSuggestBox Header="Identity type" PlaceholderText="All" Text="{Binding AssetIdentityTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetIdentityTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="IdentityType" />
                         <AutoSuggestBox Header="Geometry type" PlaceholderText="All" Text="{Binding AssetPrimaryGeometryTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetPrimaryGeometryTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="GeometryType" />
                         <AutoSuggestBox Header="Thumbnail type" PlaceholderText="All" Text="{Binding AssetThumbnailTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetThumbnailTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="ThumbnailType" />
+                        <AutoSuggestBox Header="Catalog signal 0020" PlaceholderText="All" Text="{Binding AssetCatalogSignal0020Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0020Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0020" />
+                        <AutoSuggestBox Header="Catalog signal 002C" PlaceholderText="All" Text="{Binding AssetCatalogSignal002CText, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal002CValues}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal002C" />
+                        <AutoSuggestBox Header="Catalog signal 0030" PlaceholderText="All" Text="{Binding AssetCatalogSignal0030Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0030Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0030" />
+                        <AutoSuggestBox Header="Catalog signal 0034" PlaceholderText="All" Text="{Binding AssetCatalogSignal0034Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0034Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0034" />
                         <TextBox Header="Package path contains" Text="{Binding AssetPackageText, Mode=TwoWay}" />
                         <TextBox Header="Package file / folder" PlaceholderText="EP01\\ClientFullBuild0.package" Text="{Binding AssetPackageRelativeText, Mode=TwoWay}" />
                         <CheckBox Content="Has thumbnail" IsChecked="{Binding AssetHasThumbnailOnly, Mode=TwoWay}" />
@@ -207,9 +211,8 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition x:Name="PreviewViewportRow" Height="*" MinHeight="180" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="8" />
-                    <RowDefinition Height="140" />
-                    <RowDefinition Height="*" MinHeight="120" />
+                    <RowDefinition Height="12" />
+                    <RowDefinition x:Name="PreviewDiagnosticsRow" Height="*" MinHeight="120" />
                 </Grid.RowDefinitions>
 
                 <TextBlock Text="{Binding PreviewSurfaceTitle}" FontSize="16" FontWeight="SemiBold" />
@@ -221,7 +224,23 @@
                     </Border>
                 </Grid>
                 <StackPanel Grid.Row="2" Spacing="8">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding EffectivePreviewLoadStatus}" Opacity="0.8" TextWrapping="NoWrap" VerticalAlignment="Center" />
+                        <ProgressBar Grid.Column="1"
+                                     Maximum="{Binding PreviewLoadProgressMaximum}"
+                                     Value="{Binding PreviewLoadProgressValue}"
+                                     IsIndeterminate="{Binding PreviewLoadProgressIndeterminate}"
+                                     Foreground="{Binding PreviewLoadBrush}"
+                                     VerticalAlignment="Center" />
+                    </Grid>
                     <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Click="CopyPreviewImage_Click" ToolTipService.ToolTip="Copy preview image" MinWidth="32" Padding="8,4">
+                            <SymbolIcon Symbol="Copy" />
+                        </Button>
                         <Button Click="ExportRaw_Click" Content="Raw Export" />
                         <Button Click="ExportAsset_Click" Content="Export Asset" IsEnabled="{Binding CanExportSelectedAsset}" />
                         <Button x:Name="ResetViewButton" Click="ResetView_Click" Content="Reset View" IsEnabled="{Binding CanResetView}" />
@@ -230,18 +249,48 @@
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <ComboBox Width="160" Header="Render" ItemsSource="{Binding SceneRenderModes}" SelectedItem="{Binding SelectedSceneRenderMode, Mode=TwoWay}" />
+                        <ComboBox Width="180" Header="Slot" ItemsSource="{Binding AvailableSceneTextureSlots}" SelectedItem="{Binding SelectedSceneTextureSlot, Mode=TwoWay}" IsEnabled="{Binding HasSceneTextureSlotOptions}" />
                         <ComboBox Width="320" Header="LOD" ItemsSource="{Binding AvailableSceneLods}" SelectedItem="{Binding SelectedSceneLod, Mode=TwoWay}" DisplayMemberPath="Label" IsEnabled="{Binding HasSceneLodOptions}" />
                     </StackPanel>
                 </StackPanel>
-                <Border Grid.Row="3"
-                        Background="{ThemeResource AccentFillColorSecondaryBrush}"
-                        Opacity="0.35"
-                        PointerPressed="PreviewPaneSplitter_PointerPressed"
-                        PointerMoved="PreviewPaneSplitter_PointerMoved"
-                        PointerReleased="PreviewPaneSplitter_PointerReleased"
-                        PointerCanceled="PreviewPaneSplitter_PointerReleased" />
-                <TextBox Grid.Row="4" Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" Visibility="{Binding SecondaryDiagnosticsVisibility}" />
-                <TextBox Grid.Row="5" Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
+                <Grid Grid.Row="3"
+                      Canvas.ZIndex="10"
+                      Background="Transparent"
+                      MinHeight="12"
+                      PointerPressed="PreviewPaneSplitter_PointerPressed"
+                      PointerMoved="PreviewPaneSplitter_PointerMoved"
+                      PointerReleased="PreviewPaneSplitter_PointerReleased"
+                      PointerCanceled="PreviewPaneSplitter_PointerReleased">
+                    <Border Height="4"
+                            VerticalAlignment="Center"
+                            Background="{ThemeResource AccentFillColorSecondaryBrush}"
+                            Opacity="0.35"
+                            IsHitTestVisible="False" />
+                </Grid>
+                <Grid Grid.Row="4" Visibility="{Binding DiagnosticsTabsVisibility}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid ColumnSpacing="8" Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Diagnostics" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Click="CopyDiagnostics_Click" ToolTipService.ToolTip="Copy current tab" MinWidth="32" Padding="8,4">
+                            <SymbolIcon Symbol="Copy" />
+                        </Button>
+                    </Grid>
+                    <TabView Grid.Row="1" SelectedIndex="{Binding SelectedPreviewDiagnosticsTabIndex, Mode=TwoWay}" IsAddTabButtonVisible="False" CanReorderTabs="False">
+                        <TabViewItem Header="Preview" IsClosable="False">
+                            <TextBox Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
+                        </TabViewItem>
+                        <TabViewItem Header="Details" IsClosable="False">
+                            <TextBox Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
+                        </TabViewItem>
+                    </TabView>
+                </Grid>
             </Grid>
         </Grid>
 

@@ -106,7 +106,11 @@ public sealed record AssetBrowserQuery(
     string RootTypeText = "",
     string IdentityTypeText = "",
     string PrimaryGeometryTypeText = "",
-    string ThumbnailTypeText = "");
+    string ThumbnailTypeText = "",
+    string CatalogSignal0020Text = "",
+    string CatalogSignal002CText = "",
+    string CatalogSignal0030Text = "",
+    string CatalogSignal0034Text = "");
 
 public sealed record RawResourceBrowserQuery(
     SourceScope SourceScope,
@@ -145,6 +149,10 @@ public sealed class AssetBrowserState
     public string IdentityTypeText { get; set; } = string.Empty;
     public string PrimaryGeometryTypeText { get; set; } = string.Empty;
     public string ThumbnailTypeText { get; set; } = string.Empty;
+    public string CatalogSignal0020Text { get; set; } = string.Empty;
+    public string CatalogSignal002CText { get; set; } = string.Empty;
+    public string CatalogSignal0030Text { get; set; } = string.Empty;
+    public string CatalogSignal0034Text { get; set; } = string.Empty;
     public string PackageText { get; set; } = string.Empty;
     public string PackageRelativeText { get; set; } = string.Empty;
     public bool HasThumbnailOnly { get; set; }
@@ -190,7 +198,11 @@ public sealed class AssetBrowserState
             NormalizeFacetValue(RootTypeText),
             NormalizeFacetValue(IdentityTypeText),
             NormalizeFacetValue(PrimaryGeometryTypeText),
-            NormalizeFacetValue(ThumbnailTypeText));
+            NormalizeFacetValue(ThumbnailTypeText),
+            NormalizeFacetValue(CatalogSignal0020Text),
+            NormalizeFacetValue(CatalogSignal002CText),
+            NormalizeFacetValue(CatalogSignal0030Text),
+            NormalizeFacetValue(CatalogSignal0034Text));
 
     public IReadOnlyList<FilterChip> BuildFilterChips(SourceScope sourceScope)
     {
@@ -230,6 +242,26 @@ public sealed class AssetBrowserState
         if (!string.IsNullOrWhiteSpace(ThumbnailTypeText))
         {
             chips.Add(new FilterChip("thumbnailType", $"Thumbnail type: {ThumbnailTypeText.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(CatalogSignal0020Text))
+        {
+            chips.Add(new FilterChip("catalogSignal0020", $"Catalog signal 0020: {CatalogSignal0020Text.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(CatalogSignal002CText))
+        {
+            chips.Add(new FilterChip("catalogSignal002c", $"Catalog signal 002C: {CatalogSignal002CText.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(CatalogSignal0030Text))
+        {
+            chips.Add(new FilterChip("catalogSignal0030", $"Catalog signal 0030: {CatalogSignal0030Text.Trim()}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(CatalogSignal0034Text))
+        {
+            chips.Add(new FilterChip("catalogSignal0034", $"Catalog signal 0034: {CatalogSignal0034Text.Trim()}"));
         }
 
         if (!string.IsNullOrWhiteSpace(PackageText))
@@ -337,6 +369,18 @@ public sealed class AssetBrowserState
                 break;
             case "thumbnailType":
                 ThumbnailTypeText = string.Empty;
+                break;
+            case "catalogSignal0020":
+                CatalogSignal0020Text = string.Empty;
+                break;
+            case "catalogSignal002c":
+                CatalogSignal002CText = string.Empty;
+                break;
+            case "catalogSignal0030":
+                CatalogSignal0030Text = string.Empty;
+                break;
+            case "catalogSignal0034":
+                CatalogSignal0034Text = string.Empty;
                 break;
             case "package":
                 PackageText = string.Empty;

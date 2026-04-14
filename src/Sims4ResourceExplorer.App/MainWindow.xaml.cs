@@ -14,7 +14,9 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Windowing;
 using Sims4ResourceExplorer.App.ViewModels;
 using Sims4ResourceExplorer.Core;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics.Imaging;
+using Windows.Storage.Streams;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
@@ -26,6 +28,18 @@ public sealed partial class MainWindow : Window
     private readonly Viewport3DX sceneViewport;
     private readonly PerspectiveCamera sceneCamera;
     private readonly DefaultEffectsManager effectsManager = new();
+    private readonly ShadowMap3D sceneShadowMap = new()
+    {
+        Resolution = new Windows.Foundation.Size(4096, 4096),
+        Bias = 0.0008,
+        Intensity = 0.3,
+        Distance = 240,
+        OrthoWidth = 240,
+        NearFieldDistance = 0.01,
+        FarFieldDistance = 480,
+        AutoCoverCompleteScene = true,
+        IsSceneDynamic = true
+    };
     private CancellationTokenSource? uvPreviewRenderCancellation;
     private long previewSurfaceGeneration;
     private bool isDraggingMainSplitter;
@@ -59,6 +73,7 @@ public sealed partial class MainWindow : Window
             EffectsManager = effectsManager,
             ShowCoordinateSystem = true,
             ShowViewCube = true,
+            IsShadowMappingEnabled = true,
             Visibility = Visibility.Collapsed
         };
         PreviewSurface.Children.Insert(0, sceneViewport);
@@ -133,6 +148,43 @@ public sealed partial class MainWindow : Window
     private async void PlayAudio_Click(object sender, RoutedEventArgs e) => await ViewModel.PlayAudioAsync();
     private async void StopAudio_Click(object sender, RoutedEventArgs e) => await ViewModel.StopAudioAsync();
     private void ResetView_Click(object sender, RoutedEventArgs e) => ResetSceneCamera(ViewModel.CurrentScene);
+    private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        var text = ViewModel.SelectedPreviewDiagnosticsTabIndex == 0
+            ? ViewModel.PreviewText
+            : ViewModel.DetailsText;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        var package = new DataPackage();
+        package.SetText(text);
+        Clipboard.SetContent(package);
+        ViewModel.StatusMessage = "Copied current diagnostics tab to clipboard.";
+    }
+
+    private async void CopyPreviewImage_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var streamReference = await CapturePreviewSurfaceAsync();
+            if (streamReference is null)
+            {
+                ViewModel.StatusMessage = "Preview image is not ready to copy yet.";
+                return;
+            }
+
+            var package = new DataPackage();
+            package.SetBitmap(streamReference);
+            Clipboard.SetContent(package);
+            ViewModel.StatusMessage = "Copied current preview image to clipboard.";
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusMessage = $"Failed to copy preview image: {ex.Message}";
+        }
+    }
     private void AssetFacetSuggestBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
         UpdateAssetFacetSuggestions(sender, userInputOnly: args.Reason == AutoSuggestionBoxTextChangeReason.UserInput);
@@ -164,6 +216,10 @@ public sealed partial class MainWindow : Window
             "IdentityType" => ViewModel.AssetIdentityTypes,
             "GeometryType" => ViewModel.AssetPrimaryGeometryTypes,
             "ThumbnailType" => ViewModel.AssetThumbnailTypes,
+            "CatalogSignal0020" => ViewModel.AssetCatalogSignal0020Values,
+            "CatalogSignal002C" => ViewModel.AssetCatalogSignal002CValues,
+            "CatalogSignal0030" => ViewModel.AssetCatalogSignal0030Values,
+            "CatalogSignal0034" => ViewModel.AssetCatalogSignal0034Values,
             _ => Enumerable.Empty<string>()
         };
 
@@ -193,6 +249,33 @@ public sealed partial class MainWindow : Window
 
         var folder = await picker.PickSingleFolderAsync();
         return folder?.Path;
+    }
+
+    private void MainContentGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (ResultsColumn.Width.GridUnitType != GridUnitType.Pixel &&
+            PreviewColumn.Width.GridUnitType != GridUnitType.Pixel)
+        {
+            return;
+        }
+
+        var resultsMinWidth = ResultsColumn.MinWidth > 0 ? ResultsColumn.MinWidth : 360;
+        var previewMinWidth = PreviewColumn.MinWidth > 0 ? PreviewColumn.MinWidth : 460;
+        var availableWidth = Math.Max(resultsMinWidth + previewMinWidth, MainContentGrid.ActualWidth - MainContentGrid.ColumnDefinitions[2].ActualWidth);
+        var targetResizableWidth = Math.Max(resultsMinWidth + previewMinWidth, availableWidth);
+        var currentResultsWidth = ResultsColumn.ActualWidth;
+        var currentPreviewWidth = PreviewColumn.ActualWidth;
+        var currentTotalWidth = currentResultsWidth + currentPreviewWidth;
+        if (currentTotalWidth <= 0)
+        {
+            return;
+        }
+
+        var resultsRatio = currentResultsWidth / currentTotalWidth;
+        var newResultsWidth = Math.Clamp(targetResizableWidth * resultsRatio, resultsMinWidth, targetResizableWidth - previewMinWidth);
+        var newPreviewWidth = Math.Max(previewMinWidth, targetResizableWidth - newResultsWidth);
+        ResultsColumn.Width = new GridLength(newResultsWidth, GridUnitType.Pixel);
+        PreviewColumn.Width = new GridLength(newPreviewWidth, GridUnitType.Pixel);
     }
 
     private void TryApplyWindowIcon()
@@ -227,12 +310,43 @@ public sealed partial class MainWindow : Window
         return $"{AppTitleBase} ({informationalVersion})";
     }
 
+    private async Task<RandomAccessStreamReference?> CapturePreviewSurfaceAsync()
+    {
+        if (PreviewSurface.ActualWidth <= 1 || PreviewSurface.ActualHeight <= 1)
+        {
+            return null;
+        }
+
+        var renderBitmap = new RenderTargetBitmap();
+        await renderBitmap.RenderAsync(PreviewSurface);
+        var pixels = await renderBitmap.GetPixelsAsync();
+        if (renderBitmap.PixelWidth <= 0 || renderBitmap.PixelHeight <= 0 || pixels.Length == 0)
+        {
+            return null;
+        }
+
+        var stream = new InMemoryRandomAccessStream();
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(
+            BitmapPixelFormat.Bgra8,
+            BitmapAlphaMode.Premultiplied,
+            (uint)renderBitmap.PixelWidth,
+            (uint)renderBitmap.PixelHeight,
+            96,
+            96,
+            pixels.ToArray());
+        await encoder.FlushAsync();
+        stream.Seek(0);
+        return RandomAccessStreamReference.CreateFromStream(stream);
+    }
+
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.CurrentScene) ||
             e.PropertyName == nameof(MainViewModel.PreviewImageSource) ||
             e.PropertyName == nameof(MainViewModel.PreviewSurfaceMode) ||
-            e.PropertyName == nameof(MainViewModel.SelectedSceneRenderMode))
+            e.PropertyName == nameof(MainViewModel.SelectedSceneRenderMode) ||
+            e.PropertyName == nameof(MainViewModel.SelectedSceneTextureSlot))
         {
             UpdatePreviewSurface();
         }
@@ -246,7 +360,7 @@ public sealed partial class MainWindow : Window
 
         if (ViewModel.IsScenePreviewActive && ViewModel.CurrentScene is not null)
         {
-            if (ViewModel.SelectedSceneRenderMode == SceneRenderMode.UvMap)
+            if (ViewModel.SelectedSceneRenderMode is SceneRenderMode.RawUv or SceneRenderMode.MaterialUv)
             {
                 sceneViewport.Items.Clear();
                 sceneViewport.Visibility = Visibility.Collapsed;
@@ -262,7 +376,7 @@ public sealed partial class MainWindow : Window
                         generation == Interlocked.Read(ref previewSurfaceGeneration) &&
                         ViewModel.IsScenePreviewActive &&
                         ViewModel.CurrentScene is not null &&
-                        ViewModel.SelectedSceneRenderMode == SceneRenderMode.UvMap)
+                        ViewModel.SelectedSceneRenderMode is SceneRenderMode.RawUv or SceneRenderMode.MaterialUv)
                     {
                         UvPreviewImage.Source = uvPreview;
                     }
@@ -310,25 +424,40 @@ public sealed partial class MainWindow : Window
             case SceneRenderMode.Wireframe:
                 sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.White });
                 break;
-            case SceneRenderMode.UvMap:
+            case SceneRenderMode.RawUv:
+            case SceneRenderMode.MaterialUv:
                 sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.White });
                 break;
             case SceneRenderMode.FlatTexture:
                 sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.Black });
                 break;
             default:
-                sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.DarkGray });
-                sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(-0.55f, -1f, -0.35f), Color = Microsoft.UI.Colors.White });
-                sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(0.65f, -0.2f, 0.45f), Color = Microsoft.UI.Colors.LightGray });
-                sceneViewport.Items.Add(new DirectionalLight3D { Direction = new Vector3(0.1f, 0.5f, -1f), Color = Microsoft.UI.Colors.Gray });
+                sceneViewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.ColorHelper.FromArgb(255, 156, 166, 180) });
+                sceneViewport.Items.Add(new DirectionalLight3D
+                {
+                    Direction = Vector3.Normalize(new Vector3(-0.36f, -0.92f, -0.22f)),
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 238)
+                });
+                sceneViewport.Items.Add(new DirectionalLight3D
+                {
+                    Direction = Vector3.Normalize(new Vector3(0.78f, -0.28f, 0.42f)),
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 222, 230, 238)
+                });
+                sceneViewport.Items.Add(new DirectionalLight3D
+                {
+                    Direction = Vector3.Normalize(new Vector3(0.12f, 0.58f, -0.9f)),
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 150, 158, 170)
+                });
+                sceneViewport.Items.Add(sceneShadowMap);
                 break;
         }
 
         for (var meshIndex = 0; meshIndex < scene.Meshes.Count; meshIndex++)
         {
             var mesh = scene.Meshes[meshIndex];
-            var material = CreateMaterial(scene, mesh.MaterialIndex, renderMode);
-            var geometry = CreateGeometry(mesh, scene, mesh.MaterialIndex, renderMode);
+            var selectedSlot = GetSelectedSceneTextureSlot();
+            var material = CreateMaterial(scene, mesh.MaterialIndex, renderMode, selectedSlot);
+            var geometry = CreateGeometry(mesh, scene, mesh.MaterialIndex, renderMode, selectedSlot);
             if (geometry.Positions is null || geometry.Positions.Count == 0 || geometry.TriangleIndices is null || geometry.TriangleIndices.Count == 0)
             {
                 continue;
@@ -338,7 +467,7 @@ public sealed partial class MainWindow : Window
             {
                 Geometry = geometry,
                 Material = material,
-                IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex),
+                IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex, selectedSlot),
                 CullMode = SharpDX.Direct3D11.CullMode.None,
                 RenderWireframe = renderMode == SceneRenderMode.Wireframe,
                 WireframeColor = Microsoft.UI.Colors.Yellow
@@ -372,7 +501,12 @@ public sealed partial class MainWindow : Window
         sceneCamera.UpDirection = Vector3.UnitY;
     }
 
-    private static MeshGeometry3D CreateGeometry(CanonicalMesh mesh, CanonicalScene scene, int materialIndex, SceneRenderMode renderMode)
+    private string? GetSelectedSceneTextureSlot() =>
+        string.Equals(ViewModel.SelectedSceneTextureSlot, "All", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : ViewModel.SelectedSceneTextureSlot;
+
+    private static MeshGeometry3D CreateGeometry(CanonicalMesh mesh, CanonicalScene scene, int materialIndex, SceneRenderMode renderMode, string? selectedSlot)
     {
         var geometry = new MeshGeometry3D
         {
@@ -400,7 +534,7 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        var textureCoordinates = SelectTextureCoordinates(mesh, scene, materialIndex, renderMode);
+        var textureCoordinates = SelectTextureCoordinates(mesh, scene, materialIndex, renderMode, selectedSlot);
         if (textureCoordinates.Count == vertexCount * 2)
         {
             geometry.TextureCoordinates = new Vector2Collection();
@@ -433,13 +567,19 @@ public sealed partial class MainWindow : Window
         return geometry;
     }
 
-    private static IReadOnlyList<float> SelectTextureCoordinates(CanonicalMesh mesh, CanonicalScene scene, int materialIndex, SceneRenderMode renderMode)
+    private static IReadOnlyList<float> SelectTextureCoordinates(CanonicalMesh mesh, CanonicalScene scene, int materialIndex, SceneRenderMode renderMode, string? selectedSlot)
     {
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var primaryTexture = SelectPrimaryViewportTexture(material, renderMode);
-        var requestedChannel = primaryTexture?.UvChannel ?? mesh.PreferredUvChannel;
+        var primaryTexture = SelectPrimaryViewportTexture(material, renderMode, selectedSlot);
+        var hasExplicitTextureUvDirective = HasExplicitTextureUvDirective(primaryTexture);
+        var hasConfirmedTextureUvDirective = hasExplicitTextureUvDirective &&
+                                            primaryTexture is not null &&
+                                            !primaryTexture.IsApproximateUvTransform;
+        var requestedChannel = hasConfirmedTextureUvDirective
+            ? primaryTexture!.UvChannel
+            : mesh.PreferredUvChannel;
         IReadOnlyList<float> coordinates;
 
         if (requestedChannel == 1 && mesh.Uv1s is { Count: > 0 })
@@ -455,13 +595,14 @@ public sealed partial class MainWindow : Window
             coordinates = mesh.Uvs;
         }
 
-        if (requestedChannel == 1)
+        if (requestedChannel == 1 && hasConfirmedTextureUvDirective)
         {
             coordinates = NormalizeUvCoordinatesIfLocalSubspace(coordinates);
         }
 
-        if (renderMode != SceneRenderMode.UvMap ||
+        if (renderMode != SceneRenderMode.MaterialUv ||
             primaryTexture is null ||
+            primaryTexture.IsApproximateUvTransform ||
             (Math.Abs(primaryTexture.UvScaleU - 1f) < 0.0001f &&
              Math.Abs(primaryTexture.UvScaleV - 1f) < 0.0001f &&
              Math.Abs(primaryTexture.UvOffsetU) < 0.0001f &&
@@ -471,27 +612,18 @@ public sealed partial class MainWindow : Window
         }
 
         var transformed = new float[coordinates.Count];
-        var minU = Math.Min(primaryTexture.UvOffsetU, primaryTexture.UvOffsetU + primaryTexture.UvScaleU);
-        var maxU = Math.Max(primaryTexture.UvOffsetU, primaryTexture.UvOffsetU + primaryTexture.UvScaleU);
-        var minV = Math.Min(primaryTexture.UvOffsetV, primaryTexture.UvOffsetV + primaryTexture.UvScaleV);
-        var maxV = Math.Max(primaryTexture.UvOffsetV, primaryTexture.UvOffsetV + primaryTexture.UvScaleV);
         for (var index = 0; index + 1 < coordinates.Count; index += 2)
         {
-            var transformedU = (coordinates[index] * primaryTexture.UvScaleU) + primaryTexture.UvOffsetU;
-            var transformedV = (coordinates[index + 1] * primaryTexture.UvScaleV) + primaryTexture.UvOffsetV;
-
-            // Atlas-cropped TS4 materials can leave UVs slightly outside the selected sub-rect.
-            // Clamp them so preview sampling does not bleed into neighboring atlas islands.
-            transformed[index] = Math.Clamp(transformedU, minU, maxU);
-            transformed[index + 1] = Math.Clamp(transformedV, minV, maxV);
+            transformed[index] = (coordinates[index] * primaryTexture.UvScaleU) + primaryTexture.UvOffsetU;
+            transformed[index + 1] = (coordinates[index + 1] * primaryTexture.UvScaleV) + primaryTexture.UvOffsetV;
         }
 
         return transformed;
     }
 
-    private static CanonicalTexture? SelectPrimaryViewportTexture(CanonicalMaterial? material, SceneRenderMode renderMode)
+    private static CanonicalTexture? SelectPrimaryViewportTexture(CanonicalMaterial? material, SceneRenderMode renderMode, string? selectedSlot)
     {
-        var textureGroup = SelectViewportTextureGroup(material, renderMode);
+        var textureGroup = SelectViewportTextureGroup(material, renderMode, selectedSlot);
         if (textureGroup.Count == 0)
         {
             return null;
@@ -585,28 +717,32 @@ public sealed partial class MainWindow : Window
         return result;
     }
 
-    private static PhongMaterial CreateMaterial(CanonicalScene scene, int materialIndex, SceneRenderMode renderMode)
+    private static PhongMaterial CreateMaterial(CanonicalScene scene, int materialIndex, SceneRenderMode renderMode, string? selectedSlot)
     {
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var textureGroup = SelectViewportTextureGroup(material, renderMode);
+        var textureGroup = SelectViewportTextureGroup(material, renderMode, selectedSlot);
         var diffuseTexture = SelectBaseColorTexture(textureGroup);
         var layeredColorTexture = SelectLayeredColorTexture(textureGroup);
         var emissiveTexture = SelectEmissiveTexture(textureGroup, diffuseTexture, layeredColorTexture);
-        var opacityTexture = SelectOpacityTexture(textureGroup, diffuseTexture, material?.AlphaTextureSlot);
+        var opacityTexture = SelectViewportOpacityTexture(material, textureGroup, diffuseTexture, selectedSlot);
         var normalTexture = SelectNormalTexture(textureGroup);
         var specularTexture = SelectSpecularTexture(textureGroup);
-        var viewportColorTexture = diffuseTexture ?? layeredColorTexture ?? emissiveTexture;
+        var selectedSlotTexture = !string.IsNullOrWhiteSpace(selectedSlot)
+            ? textureGroup.FirstOrDefault(texture => texture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
+            : null;
+        var viewportColorTexture = selectedSlotTexture ?? diffuseTexture ?? layeredColorTexture ?? emissiveTexture;
         var uvTransform = BuildUvTransform(viewportColorTexture);
         var approximateBaseColor = BuildApproximateBaseColor(material);
         var diffuseColor = approximateBaseColor ?? new Color4(0.62f, 0.62f, 0.62f, 1f);
+        var texturedLitDiffuseColor = new Color4(1f, 1f, 1f, 1f);
         var ambientColor = approximateBaseColor is null
-            ? new Color4(0.2f, 0.2f, 0.2f, 1f)
+            ? new Color4(0.3f, 0.3f, 0.3f, 1f)
             : new Color4(
-                Math.Clamp(approximateBaseColor.Value.Red * 0.2f, 0f, 1f),
-                Math.Clamp(approximateBaseColor.Value.Green * 0.2f, 0f, 1f),
-                Math.Clamp(approximateBaseColor.Value.Blue * 0.2f, 0f, 1f),
+                Math.Clamp(approximateBaseColor.Value.Red * 0.3f, 0f, 1f),
+                Math.Clamp(approximateBaseColor.Value.Green * 0.3f, 0f, 1f),
+                Math.Clamp(approximateBaseColor.Value.Blue * 0.3f, 0f, 1f),
                 1f);
 
         var isFlat = renderMode == SceneRenderMode.FlatTexture;
@@ -617,10 +753,9 @@ public sealed partial class MainWindow : Window
             !isFlat &&
             viewportColorTexture is not null;
         var renderEmissiveMap = (isFlat && viewportColorTexture is not null) || (!isFlat && emissiveTexture is not null);
-        var renderAlphaMap = opacityTexture is not null;
-        var textureModel = viewportColorTexture is null
-            ? null
-            : new TextureModel(new MemoryStream(viewportColorTexture.PngBytes), autoCloseStream: true);
+        var renderAlphaMap = ShouldRenderTransparentViewport(material, textureGroup, diffuseTexture, selectedSlot);
+        var forceOpaqueViewportTexture = isLit && !renderAlphaMap;
+        var textureModel = CreateTextureModel(viewportColorTexture, forceOpaqueViewportTexture);
         var emissiveTextureModel = emissiveTexture is null
             ? null
             : new TextureModel(new MemoryStream(emissiveTexture.PngBytes), autoCloseStream: true);
@@ -637,13 +772,23 @@ public sealed partial class MainWindow : Window
             emissiveTexture is not null &&
             layeredColorTexture is not null &&
             ReferenceEquals(emissiveTexture, layeredColorTexture);
+        var hasLitNormalDetail = normalTextureModel is not null;
+        var hasLitSpecularDetail = specularTextureModel is not null;
+        var useMatteLitShading = isLit && !hasLitNormalDetail && !hasLitSpecularDetail;
+        var litAmbientColor = useMatteLitShading
+            ? new Color4(0.46f, 0.46f, 0.46f, 1f)
+            : new Color4(0.34f, 0.34f, 0.34f, 1f);
+        var litSpecularColor = useMatteLitShading
+            ? new Color4(0.02f, 0.02f, 0.02f, 1f)
+            : new Color4(0.08f, 0.08f, 0.08f, 1f);
+        var litSpecularShininess = useMatteLitShading ? 4f : 12f;
 
         return new PhongMaterial
         {
             DiffuseColor = isWireframe
                 ? new Color4(0.95f, 0.95f, 0.95f, 1f)
                 : isLit
-                    ? diffuseColor
+                    ? (renderDiffuseMap ? texturedLitDiffuseColor : diffuseColor)
                     : viewportColorTexture is null
                         ? diffuseColor
                         : new Color4(0f, 0f, 0f, 1f),
@@ -652,15 +797,15 @@ public sealed partial class MainWindow : Window
                     ? diffuseColor
                     : new Color4(0f, 0f, 0f, 1f)
                 : isLit
-                    ? ambientColor
+                    ? (renderDiffuseMap ? litAmbientColor : ambientColor)
                     : ambientColor,
             EmissiveColor = isFlat
                 ? new Color4(1f, 1f, 1f, 1f)
                 : usesOverlayAsSecondaryLayer
                     ? new Color4(0.45f, 0.45f, 0.45f, 1f)
                     : new Color4(0f, 0f, 0f, 1f),
-            SpecularColor = isFlat ? new Color4(0f, 0f, 0f, 1f) : new Color4(0.16f, 0.16f, 0.16f, 1f),
-            SpecularShininess = isFlat ? 0f : 24f,
+            SpecularColor = isFlat ? new Color4(0f, 0f, 0f, 1f) : litSpecularColor,
+            SpecularShininess = isFlat ? 0f : litSpecularShininess,
             RenderDiffuseMap = renderDiffuseMap,
             DiffuseMap = renderDiffuseMap ? textureModel : null,
             RenderEmissiveMap = renderEmissiveMap,
@@ -674,6 +819,7 @@ public sealed partial class MainWindow : Window
             RenderSpecularColorMap = isLit && specularTextureModel is not null,
             SpecularColorMap = isLit ? specularTextureModel : null,
             EnableAutoTangent = isLit && normalTextureModel is not null,
+            RenderShadowMap = isLit,
             UVTransform = uvTransform
         };
     }
@@ -692,9 +838,57 @@ public sealed partial class MainWindow : Window
             Math.Clamp(color.A, 0f, 1f));
     }
 
-    private static UVTransform BuildUvTransform(CanonicalTexture? texture)
+    private static TextureModel? CreateTextureModel(CanonicalTexture? texture, bool forceOpaqueAlpha = false)
     {
         if (texture is null)
+        {
+            return null;
+        }
+
+        var pngBytes = forceOpaqueAlpha ? ForceOpaquePngAlpha(texture.PngBytes) : texture.PngBytes;
+        return new TextureModel(new MemoryStream(pngBytes), autoCloseStream: true);
+    }
+
+    private static byte[] ForceOpaquePngAlpha(byte[] pngBytes)
+    {
+        using var input = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+        input.WriteAsync(pngBytes.AsBuffer()).AsTask().GetAwaiter().GetResult();
+        input.Seek(0);
+
+        var decoder = BitmapDecoder.CreateAsync(input).AsTask().GetAwaiter().GetResult();
+        var pixelData = decoder.GetPixelDataAsync(
+            BitmapPixelFormat.Bgra8,
+            BitmapAlphaMode.Straight,
+            new BitmapTransform(),
+            ExifOrientationMode.IgnoreExifOrientation,
+            ColorManagementMode.DoNotColorManage).AsTask().GetAwaiter().GetResult();
+        var pixels = pixelData.DetachPixelData();
+        for (var offset = 3; offset < pixels.Length; offset += 4)
+        {
+            pixels[offset] = 0xFF;
+        }
+
+        using var output = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+        var encoder = BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output).AsTask().GetAwaiter().GetResult();
+        encoder.SetPixelData(
+            BitmapPixelFormat.Bgra8,
+            BitmapAlphaMode.Straight,
+            decoder.PixelWidth,
+            decoder.PixelHeight,
+            decoder.DpiX,
+            decoder.DpiY,
+            pixels);
+        encoder.FlushAsync().AsTask().GetAwaiter().GetResult();
+        output.Seek(0);
+        using var stream = output.AsStreamForRead();
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        return memory.ToArray();
+    }
+
+    private static UVTransform BuildUvTransform(CanonicalTexture? texture)
+    {
+        if (texture is null || !HasExplicitTextureUvDirective(texture))
         {
             return new UVTransform(0f);
         }
@@ -707,11 +901,34 @@ public sealed partial class MainWindow : Window
             translationY: texture.UvOffsetV);
     }
 
-    private static IReadOnlyList<CanonicalTexture> SelectViewportTextureGroup(CanonicalMaterial? material, SceneRenderMode renderMode)
+    private static bool HasExplicitTextureUvDirective(CanonicalTexture? texture)
+    {
+        if (texture is null)
+        {
+            return false;
+        }
+
+        return texture.UvChannel != 0 ||
+               Math.Abs(texture.UvScaleU - 1f) >= 0.0001f ||
+               Math.Abs(texture.UvScaleV - 1f) >= 0.0001f ||
+               Math.Abs(texture.UvOffsetU) >= 0.0001f ||
+               Math.Abs(texture.UvOffsetV) >= 0.0001f;
+    }
+
+    private static IReadOnlyList<CanonicalTexture> SelectViewportTextureGroup(CanonicalMaterial? material, SceneRenderMode renderMode, string? selectedSlot)
     {
         if (material is null || material.Textures.Count == 0)
         {
             return [];
+        }
+
+        if (!string.IsNullOrWhiteSpace(selectedSlot))
+        {
+            return material.Textures
+                .Where(texture => texture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(texture => ScorePrimaryViewportTexture(texture, renderMode))
+                .ThenBy(texture => texture.Slot, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
 
         return material.Textures
@@ -755,23 +972,25 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    private static bool IsTransparentMaterial(CanonicalScene scene, int materialIndex)
+    private static bool IsTransparentMaterial(CanonicalScene scene, int materialIndex, string? selectedSlot)
     {
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var diffuseTexture = SelectBaseColorTexture(material);
-        var opacityTexture = SelectOpacityTexture(material, diffuseTexture);
-        return material?.IsTransparent == true || opacityTexture is not null;
+        var textureGroup = SelectViewportTextureGroup(material, SceneRenderMode.LitTexture, selectedSlot);
+        var diffuseTexture = SelectBaseColorTexture(textureGroup);
+        return ShouldRenderTransparentViewport(material, textureGroup, diffuseTexture, selectedSlot);
     }
 
     private async Task<WriteableBitmap> GenerateUvPreviewAsync(CanonicalScene scene, CancellationToken cancellationToken)
     {
+        var renderMode = ViewModel.SelectedSceneRenderMode;
+        var selectedSlot = GetSelectedSceneTextureSlot();
         var textureEntries = scene.Materials
             .Select((material, index) => new
             {
                 MaterialIndex = index,
-                Texture = SelectPrimaryViewportTexture(material, SceneRenderMode.UvMap)
+                Texture = SelectPrimaryViewportTexture(material, renderMode, selectedSlot)
             })
             .Where(entry => entry.Texture is not null)
             .GroupBy(
@@ -824,7 +1043,7 @@ public sealed partial class MainWindow : Window
                 .ToArray();
             foreach (var meshEntry in meshes)
             {
-                var coordinates = SelectTextureCoordinates(meshEntry.Mesh, scene, meshEntry.Mesh.MaterialIndex, SceneRenderMode.UvMap);
+                var coordinates = SelectTextureCoordinates(meshEntry.Mesh, scene, meshEntry.Mesh.MaterialIndex, renderMode, selectedSlot);
                 var color = colors[meshEntry.MeshIndex % colors.Length];
                 DrawUvWireframe(canvas, canvasWidth, canvasHeight, coordinates, meshEntry.Mesh.Indices, offsetX, offsetY, width, height, color);
             }
@@ -1053,11 +1272,10 @@ public sealed partial class MainWindow : Window
         var occupiedHeight =
             PreviewPaneGrid.RowDefinitions[0].ActualHeight +
             PreviewPaneGrid.RowDefinitions[2].ActualHeight +
-            PreviewPaneGrid.RowDefinitions[3].ActualHeight +
-            PreviewPaneGrid.RowDefinitions[4].ActualHeight;
+            PreviewPaneGrid.RowDefinitions[3].ActualHeight;
         var availableResizableHeight = Math.Max(300, PreviewPaneGrid.ActualHeight - occupiedHeight);
         var minPreviewHeight = Math.Max(PreviewViewportRow.MinHeight, 180);
-        var minDetailsHeight = 120d;
+        var minDetailsHeight = Math.Max(PreviewDiagnosticsRow.MinHeight, 120d);
         var newPreviewHeight = Math.Clamp(previewSplitterStartHeight + delta, minPreviewHeight, availableResizableHeight - minDetailsHeight);
         PreviewViewportRow.Height = new GridLength(newPreviewHeight, GridUnitType.Pixel);
     }
@@ -1181,7 +1399,64 @@ public sealed partial class MainWindow : Window
                 texture.Slot.Contains("opacity", StringComparison.OrdinalIgnoreCase) ||
                 texture.Slot.Contains("mask", StringComparison.OrdinalIgnoreCase) ||
                 texture.Slot.Contains("cutout", StringComparison.OrdinalIgnoreCase))
-            ?? (TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null);
+            ?? (ShouldUseBaseColorAlphaAsOpacityFallback(material, baseColorTexture) ? baseColorTexture : null);
+    }
+
+    private static CanonicalTexture? SelectViewportOpacityTexture(
+        CanonicalMaterial? material,
+        IReadOnlyList<CanonicalTexture> textures,
+        CanonicalTexture? baseColorTexture,
+        string? selectedSlot)
+    {
+        if (string.IsNullOrWhiteSpace(selectedSlot))
+        {
+            return SelectOpacityTexture(material, baseColorTexture);
+        }
+
+        var scopedAlphaSlot = !string.IsNullOrWhiteSpace(material?.AlphaTextureSlot) &&
+                              string.Equals(material.AlphaTextureSlot, selectedSlot, StringComparison.OrdinalIgnoreCase)
+            ? material.AlphaTextureSlot
+            : null;
+        return SelectOpacityTexture(textures, baseColorTexture, scopedAlphaSlot);
+    }
+
+    private static bool HasExplicitOpacityTexture(CanonicalMaterial? material)
+    {
+        if (material is null || material.Textures.Count == 0)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(material.AlphaTextureSlot) &&
+            material.Textures.Any(texture => texture.Slot.Equals(material.AlphaTextureSlot, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return material.Textures.Any(texture =>
+            texture.Semantic == CanonicalTextureSemantic.Opacity ||
+            texture.Slot.Contains("alpha", StringComparison.OrdinalIgnoreCase) ||
+            texture.Slot.Contains("opacity", StringComparison.OrdinalIgnoreCase) ||
+            texture.Slot.Contains("mask", StringComparison.OrdinalIgnoreCase) ||
+            texture.Slot.Contains("cutout", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ShouldRenderTransparentViewport(
+        CanonicalMaterial? material,
+        IReadOnlyList<CanonicalTexture> textures,
+        CanonicalTexture? baseColorTexture,
+        string? selectedSlot)
+    {
+        if (string.IsNullOrWhiteSpace(selectedSlot))
+        {
+            return material?.IsTransparent == true || HasExplicitOpacityTexture(material);
+        }
+
+        var scopedAlphaSlot = !string.IsNullOrWhiteSpace(material?.AlphaTextureSlot) &&
+                              string.Equals(material.AlphaTextureSlot, selectedSlot, StringComparison.OrdinalIgnoreCase)
+            ? material.AlphaTextureSlot
+            : null;
+        return SelectOpacityTexture(textures, baseColorTexture, scopedAlphaSlot) is not null;
     }
 
     private static CanonicalTexture? SelectOpacityTexture(IReadOnlyList<CanonicalTexture> textures, CanonicalTexture? baseColorTexture, string? explicitAlphaSlot)
@@ -1193,6 +1468,24 @@ public sealed partial class MainWindow : Window
 
         var scope = new CanonicalMaterial("Scoped", textures, AlphaTextureSlot: explicitAlphaSlot);
         return SelectOpacityTexture(scope, baseColorTexture);
+    }
+
+    private static bool ShouldUseBaseColorAlphaAsOpacityFallback(CanonicalMaterial material, CanonicalTexture? baseColorTexture)
+    {
+        if (!TextureSupportsAlpha(baseColorTexture))
+        {
+            return false;
+        }
+
+        // Portable fallback-diffuse approximations are useful as color, but their alpha channel
+        // is not reliable enough to drive lit preview transparency unless the material explicitly
+        // named an alpha/opacity slot.
+        if (material.SourceKind == CanonicalMaterialSourceKind.FallbackCandidate)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static CanonicalTexture? SelectEmissiveTexture(CanonicalMaterial? material, CanonicalTexture? baseColorTexture, CanonicalTexture? layeredColorTexture)

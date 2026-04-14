@@ -17,6 +17,7 @@ public partial class App : Application
 {
     private readonly IHost host;
     private Window? window;
+    private int shutdownRequested;
 
     public App()
     {
@@ -28,6 +29,7 @@ public partial class App : Application
                 services.AddSingleton(IndexingRunOptions.CreateDefault());
                 services.AddSingleton<ICacheService, FileSystemCacheService>();
                 services.AddSingleton<IAppPreferencesService, JsonAppPreferencesService>();
+                services.AddSingleton<IIndexingTelemetryRecorderService, IndexingTelemetryRecorderService>();
                 services.AddSingleton<IIndexStore, SqliteIndexStore>();
                 services.AddSingleton<IPackageScanner, FileSystemPackageScanner>();
                 services.AddSingleton<IResourceCatalogService, LlamaResourceCatalogService>();
@@ -53,6 +55,40 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         window = host.Services.GetRequiredService<MainWindow>();
+        window.Closed += OnMainWindowClosed;
         window.Activate();
+    }
+
+    private async void OnMainWindowClosed(object sender, WindowEventArgs args)
+    {
+        if (Interlocked.Exchange(ref shutdownRequested, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (sender is Window closedWindow)
+            {
+                closedWindow.Closed -= OnMainWindowClosed;
+            }
+
+            await host.StopAsync(TimeSpan.FromSeconds(2));
+        }
+        catch
+        {
+        }
+        finally
+        {
+            try
+            {
+                host.Dispose();
+            }
+            catch
+            {
+            }
+
+            Exit();
+        }
     }
 }

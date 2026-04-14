@@ -9,14 +9,23 @@ public sealed partial class BuildBuySceneBuildService
     private async Task<SceneBuildResult> BuildGeometrySceneAsync(
         ResourceMetadata geometryResource,
         ResourceMetadata logicalRootResource,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress)
     {
-        var bytes = await resourceCatalogService.GetResourceBytesAsync(geometryResource.PackagePath, geometryResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+        var geometryPackageName = Path.GetFileName(geometryResource.PackagePath);
+        ReportProgress(progress, $"Loading geometry bytes from {geometryPackageName}...", 0.15);
+        var bytes = await resourceCatalogService.GetResourceBytesAsync(
+            geometryResource.PackagePath,
+            geometryResource.Key,
+            raw: false,
+            cancellationToken,
+            CreateReadProgressReporter(progress, 0.15, 0.35, geometryPackageName)).ConfigureAwait(false);
         var diagnostics = new List<string>();
 
         Ts4GeomResource geom;
         try
         {
+            ReportProgress(progress, "Parsing geometry...", 0.35);
             geom = Ts4GeomResource.Parse(bytes);
         }
         catch (Exception ex)
@@ -35,12 +44,14 @@ public sealed partial class BuildBuySceneBuildService
         }
 
         var textureCache = new Dictionary<string, CanonicalTexture?>(StringComparer.OrdinalIgnoreCase);
+        ReportProgress(progress, "Resolving textures...", 0.55);
         var textures = await ResolveFallbackTexturesAsync(geometryResource, textureCache, cancellationToken).ConfigureAwait(false);
         if (textures.Count == 0)
         {
             diagnostics.Add("No exact-instance texture candidates were decoded for this Geometry root.");
         }
 
+        ReportProgress(progress, "Resolving rig...", 0.72);
         var rig = await TryResolveRigAsync(geometryResource, cancellationToken).ConfigureAwait(false);
         diagnostics.AddRange(rig.Diagnostics);
         var bones = BuildCanonicalBones(geom, rig.Rig);
@@ -76,6 +87,7 @@ public sealed partial class BuildBuySceneBuildService
             ComputeBounds([mesh]));
 
         diagnostics.Insert(0, $"Selected geometry root: {geometryResource.Key.FullTgi}");
+        ReportProgress(progress, "Scene ready.", 1.0);
         var status = textures.Count == 0 || rig.Rig is null
             ? SceneBuildStatus.Partial
             : SceneBuildStatus.SceneReady;
@@ -97,7 +109,13 @@ public sealed partial class BuildBuySceneBuildService
 
         try
         {
-            var bytes = await resourceCatalogService.GetResourceBytesAsync(rig.PackagePath, rig.Key, raw: false, cancellationToken).ConfigureAwait(false);
+            var rigPackageName = Path.GetFileName(rig.PackagePath);
+            var bytes = await resourceCatalogService.GetResourceBytesAsync(
+                rig.PackagePath,
+                rig.Key,
+                raw: false,
+                cancellationToken,
+                CreateReadProgressReporter(null, 0d, 1d, rigPackageName)).ConfigureAwait(false);
             return new Ts4RigResolution(Ts4RigResource.Parse(bytes), [$"Resolved rig: {rig.Key.FullTgi}"]);
         }
         catch (Exception ex)

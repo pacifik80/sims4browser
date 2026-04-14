@@ -2,7 +2,9 @@ using System.Collections.ObjectModel;
 using System.Reflection;
 using System.Runtime.InteropServices.WindowsRuntime;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Sims4ResourceExplorer.App.Services;
 using Sims4ResourceExplorer.Core;
@@ -25,6 +27,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IAudioPlayer audioPlayer;
     private readonly IndexingRunOptions defaultIndexingOptions;
     private readonly IAppPreferencesService appPreferencesService;
+    private readonly IIndexingTelemetryRecorderService indexingTelemetryRecorderService;
     private readonly AssetBrowserState assetBrowserState = new();
     private readonly RawResourceBrowserState rawResourceBrowserState = new();
 
@@ -54,7 +57,8 @@ public sealed partial class MainViewModel : ObservableObject
         IResourceMetadataEnrichmentService resourceMetadataEnrichmentService,
         IAudioPlayer audioPlayer,
         IndexingRunOptions defaultIndexingOptions,
-        IAppPreferencesService appPreferencesService)
+        IAppPreferencesService appPreferencesService,
+        IIndexingTelemetryRecorderService indexingTelemetryRecorderService)
     {
         this.indexStore = indexStore;
         this.packageIndexCoordinator = packageIndexCoordinator;
@@ -66,6 +70,7 @@ public sealed partial class MainViewModel : ObservableObject
         this.audioPlayer = audioPlayer;
         this.defaultIndexingOptions = defaultIndexingOptions;
         this.appPreferencesService = appPreferencesService;
+        this.indexingTelemetryRecorderService = indexingTelemetryRecorderService;
 
         AvailableWorkerCounts = Enumerable.Range(1, IndexingRunOptions.GetMachineWorkerLimit()).ToArray();
         BrowserModes = Enum.GetValues<BrowserMode>();
@@ -87,7 +92,12 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<string> AssetIdentityTypes { get; } = [];
     public ObservableCollection<string> AssetPrimaryGeometryTypes { get; } = [];
     public ObservableCollection<string> AssetThumbnailTypes { get; } = [];
+    public ObservableCollection<string> AssetCatalogSignal0020Values { get; } = [];
+    public ObservableCollection<string> AssetCatalogSignal002CValues { get; } = [];
+    public ObservableCollection<string> AssetCatalogSignal0030Values { get; } = [];
+    public ObservableCollection<string> AssetCatalogSignal0034Values { get; } = [];
     public ObservableCollection<SceneLodOption> AvailableSceneLods { get; } = [];
+    public ObservableCollection<string> AvailableSceneTextureSlots { get; } = [];
     public ObservableLog Log { get; } = [];
     public IReadOnlyList<int> AvailableWorkerCounts { get; }
     public IReadOnlyList<BrowserMode> BrowserModes { get; }
@@ -130,6 +140,18 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string assetThumbnailTypeText = string.Empty;
+
+    [ObservableProperty]
+    private string assetCatalogSignal0020Text = string.Empty;
+
+    [ObservableProperty]
+    private string assetCatalogSignal002CText = string.Empty;
+
+    [ObservableProperty]
+    private string assetCatalogSignal0030Text = string.Empty;
+
+    [ObservableProperty]
+    private string assetCatalogSignal0034Text = string.Empty;
 
     [ObservableProperty]
     private string assetPackageText = string.Empty;
@@ -243,6 +265,27 @@ public sealed partial class MainViewModel : ObservableObject
     private string previewSurfaceTitle = "Diagnostics";
 
     [ObservableProperty]
+    private bool isPreviewLoading;
+
+    [ObservableProperty]
+    private string previewLoadStatus = string.Empty;
+
+    [ObservableProperty]
+    private double previewLoadProgressMaximum = 1d;
+
+    [ObservableProperty]
+    private double previewLoadProgressValue;
+
+    [ObservableProperty]
+    private bool previewLoadProgressIndeterminate;
+
+    [ObservableProperty]
+    private bool previewLoadCompleted;
+
+    [ObservableProperty]
+    private int selectedPreviewDiagnosticsTabIndex;
+
+    [ObservableProperty]
     private string resultSummary = "Choose a scope to begin.";
 
     [ObservableProperty]
@@ -253,6 +296,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private SceneLodOption? selectedSceneLod;
+
+    [ObservableProperty]
+    private string selectedSceneTextureSlot = "All";
 
     public bool IsNotBusy => !IsBusy;
     public Visibility AssetBrowserVisibility => SelectedBrowserMode == BrowserMode.AssetBrowser ? Visibility.Visible : Visibility.Collapsed;
@@ -270,15 +316,19 @@ public sealed partial class MainViewModel : ObservableObject
     public string RawSearchPlaceholder => "Search package path, type name, TGI, group, or instance";
     public string AssetSearchHelp => "Examples: chair, comfort, objects.package";
     public string RawSearchHelp => "Examples: objectcatalog, 00B2D882, 00000000, package fragment";
+    public string EffectivePreviewLoadStatus => string.IsNullOrWhiteSpace(PreviewLoadStatus) ? "Ready" : PreviewLoadStatus;
+    public Brush PreviewLoadBrush => new SolidColorBrush(PreviewLoadCompleted && !IsPreviewLoading ? Colors.ForestGreen : Colors.DodgerBlue);
     public bool IsScenePreviewActive => PreviewSurfaceMode == PreviewSurfaceMode.Scene && CurrentScene is not null;
     public bool IsImagePreviewActive => PreviewSurfaceMode == PreviewSurfaceMode.Image && PreviewImageSource is not null;
     public bool IsDiagnosticsPreviewActive => PreviewSurfaceMode == PreviewSurfaceMode.Diagnostics;
     public Visibility DiagnosticsPreviewVisibility => IsDiagnosticsPreviewActive ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility SecondaryDiagnosticsVisibility => !IsDiagnosticsPreviewActive && !string.IsNullOrWhiteSpace(PreviewText) ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility DiagnosticsTabsVisibility => !string.IsNullOrWhiteSpace(PreviewText) || !string.IsNullOrWhiteSpace(DetailsText) ? Visibility.Visible : Visibility.Collapsed;
     public bool CanResetView => CurrentScene is not null;
     public bool CanExportSelectedAsset => PreviewInteractionPolicy.CanExportSelectedAsset(selectedAsset, selectedAssetGraph, selectedAssetSceneRoot, CurrentScene);
     public bool HasSceneLodOptions => AvailableSceneLods.Count > 0;
     public bool CanSelectSceneLod => AvailableSceneLods.Count > 1;
+    public bool HasSceneTextureSlotOptions => AvailableSceneTextureSlots.Count > 0;
+    public bool CanSelectSceneTextureSlot => AvailableSceneTextureSlots.Count > 1;
 
     public async Task InitializeAsync()
     {
@@ -322,20 +372,25 @@ public sealed partial class MainViewModel : ObservableObject
         IsBusy = true;
         indexingCancellationTokenSource = new CancellationTokenSource();
         StatusMessage = $"Indexing started with {SelectedWorkerCount} workers.";
+        IndexingTelemetrySession? telemetrySession = null;
 
         try
         {
             await Task.Yield();
             await appPreferencesService.SaveAsync(new AppPreferences(SelectedWorkerCount), CancellationToken.None);
-            var progress = new Progress<IndexingProgress>(value => ApplyIndexingProgress(value, indexingDialogViewModel));
             var snapshotSources = DataSources.ToArray();
             var selectedWorkerCount = SelectedWorkerCount;
             var indexingToken = indexingCancellationTokenSource.Token;
+            telemetrySession = await indexingTelemetryRecorderService
+                .StartSessionAsync(snapshotSources, selectedWorkerCount, indexingToken);
+            AppendLog($"Index telemetry: {telemetrySession.TimelinePath}");
+            var progress = new Progress<IndexingProgress>(value => ApplyIndexingProgress(value, indexingDialogViewModel, telemetrySession));
 
             await Task.Run(
                 async () => await packageIndexCoordinator.RunAsync(snapshotSources, progress, indexingToken, selectedWorkerCount).ConfigureAwait(false),
                 indexingToken);
 
+            await telemetrySession.CompleteAsync("completed", CancellationToken.None);
             indexingDialogViewModel.MarkCompleted("Indexing completed. Refreshing browser results...");
             MarkAllQueriesDirty();
             await ReloadAssetFacetOptionsAsync();
@@ -345,18 +400,30 @@ public sealed partial class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
+            if (telemetrySession is not null)
+            {
+                await telemetrySession.CompleteAsync("canceled", CancellationToken.None);
+            }
             StatusMessage = "Indexing canceled.";
             AppendLog("Indexing canceled by user.");
             indexingDialogViewModel.MarkCanceled();
         }
         catch (Exception ex)
         {
+            if (telemetrySession is not null)
+            {
+                await telemetrySession.CompleteAsync("failed", CancellationToken.None);
+            }
             StatusMessage = $"Indexing failed: {ex.Message}";
             AppendLog($"Indexing failed: {ex}");
             indexingDialogViewModel.MarkFailed($"Indexing failed: {ex.Message}");
         }
         finally
         {
+            if (telemetrySession is not null)
+            {
+                await telemetrySession.DisposeAsync();
+            }
             IsBusy = false;
             indexingCancellationTokenSource?.Dispose();
             indexingCancellationTokenSource = null;
@@ -444,18 +511,25 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetSceneRoot = null;
         SetSceneLodOptions([]);
         ResetPreviewState();
+        BeginPreviewLoad(3, "Resolving resource metadata...");
+        await YieldToUiAsync();
 
         try
         {
+            await AdvancePreviewLoadAsync(1, "Resolving resource metadata...");
             resource = await resourceMetadataEnrichmentService.EnrichAsync(resource, CancellationToken.None);
             selectedResource = resource;
+            await AdvancePreviewLoadAsync(2, "Building preview...");
             var preview = await previewService.CreatePreviewAsync(resource, CancellationToken.None);
+            await AdvancePreviewLoadAsync(3, "Applying preview...");
             await ApplyPreviewAsync(resource, preview, null);
+            CompletePreviewLoad();
         }
         catch (Exception ex)
         {
             PreviewText = ex.ToString();
             DetailsText = BuildResourceDetails(resource);
+            CompletePreviewLoad();
         }
     }
 
@@ -471,12 +545,17 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetSceneRoot = null;
         selectedResource = null;
         ResetPreviewState();
+        BeginPreviewLoad(1d, "Scanning index...");
+        await YieldToUiAsync();
 
+        await AdvancePreviewLoadAsync(0.04, "Scanning index...");
         var packageResources = await indexStore.GetResourcesByInstanceAsync(asset.PackagePath, asset.RootKey.FullInstance, CancellationToken.None);
+        await AdvancePreviewLoadAsync(0.10, "Building asset graph...");
         var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         selectedAssetGraph = graph;
         var assetDetails = AssetDetailsFormatter.BuildAssetDetails(asset, graph, null, null);
         var fallbackPreviewResource = FindAssetFallbackPreviewResource(asset, graph, packageResources);
+        await AdvancePreviewLoadAsync(0.16, "Resolving scene root...");
 
         ResourceMetadata? sceneRoot = null;
         string unsupportedMessage;
@@ -510,6 +589,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (sceneRoot is null)
         {
             SetSceneLodOptions([]);
+            await AdvancePreviewLoadAsync(4, "Building fallback preview...");
             var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(
                 fallbackPreviewResource,
                 assetDetails,
@@ -524,6 +604,8 @@ public sealed partial class MainViewModel : ObservableObject
                 NotifyPreviewStateChanged();
             }
 
+            CompletePreviewLoad();
+
             return;
         }
 
@@ -531,10 +613,14 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetSceneRoot = sceneRoot;
         SetSceneLodOptions(BuildSceneLodOptions(graph, sceneRoot), sceneRoot.Key.FullTgi);
 
-        var preview = await previewService.CreatePreviewAsync(sceneRoot, CancellationToken.None);
+        await AdvancePreviewLoadAsync(0.22, "Preparing scene build...");
+        var previewProgress = CreatePreviewBuildProgressReporter(0.22, 0.72);
+        await AdvancePreviewLoadAsync(0.24, "Building 3D preview...");
+        var preview = await previewService.CreatePreviewAsync(sceneRoot, CancellationToken.None, previewProgress);
         var assetDetailsWithScene = AssetDetailsFormatter.BuildAssetDetails(asset, graph, sceneRoot, preview.Content as ScenePreviewContent);
         if (preview.Content is ScenePreviewContent { Scene: null } failedScenePreview)
         {
+            await AdvancePreviewLoadAsync(0.96, "Applying fallback preview...");
             var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(
                 fallbackPreviewResource,
                 $"{assetDetailsWithScene}{Environment.NewLine}{Environment.NewLine}Fallback: scene reconstruction failed, showing asset image preview instead.",
@@ -542,11 +628,14 @@ public sealed partial class MainViewModel : ObservableObject
                 graph.Diagnostics);
             if (fallbackPreviewApplied)
             {
+                CompletePreviewLoad();
                 return;
             }
         }
 
+        await AdvancePreviewLoadAsync(0.96, "Applying preview...");
         await ApplyPreviewAsync(sceneRoot, preview, assetDetailsWithScene);
+        CompletePreviewLoad();
     }
 
     public async Task ExportSelectedRawAsync(string outputDirectory)
@@ -627,10 +716,16 @@ public sealed partial class MainViewModel : ObservableObject
         var resource = option.Resource;
         selectedResource = resource;
         selectedAssetSceneRoot = resource;
+        BeginPreviewLoad(1d, "Building selected LOD preview...");
+        await YieldToUiAsync();
 
-        var preview = await previewService.CreatePreviewAsync(resource, CancellationToken.None);
+        var previewProgress = CreatePreviewBuildProgressReporter(0.10, 0.82);
+        await AdvancePreviewLoadAsync(0.10, "Building selected LOD preview...");
+        var preview = await previewService.CreatePreviewAsync(resource, CancellationToken.None, previewProgress);
         var assetDetails = AssetDetailsFormatter.BuildAssetDetails(selectedAsset, selectedAssetGraph, resource, preview.Content as ScenePreviewContent);
+        await AdvancePreviewLoadAsync(0.96, "Applying preview...");
         await ApplyPreviewAsync(resource, preview, assetDetails);
+        CompletePreviewLoad();
     }
 
     private async Task ReloadSourcesAsync()
@@ -649,11 +744,19 @@ public sealed partial class MainViewModel : ObservableObject
         ReplaceCollection(AssetIdentityTypes, PrependAll(options.IdentityTypes));
         ReplaceCollection(AssetPrimaryGeometryTypes, PrependAll(options.PrimaryGeometryTypes));
         ReplaceCollection(AssetThumbnailTypes, PrependAll(options.ThumbnailTypeNames));
+        ReplaceCollection(AssetCatalogSignal0020Values, PrependAll(options.CatalogSignal0020Values ?? []));
+        ReplaceCollection(AssetCatalogSignal002CValues, PrependAll(options.CatalogSignal002CValues ?? []));
+        ReplaceCollection(AssetCatalogSignal0030Values, PrependAll(options.CatalogSignal0030Values ?? []));
+        ReplaceCollection(AssetCatalogSignal0034Values, PrependAll(options.CatalogSignal0034Values ?? []));
         if (!AssetCategories.Contains(AssetCategoryText)) AssetCategoryText = string.Empty;
         if (!AssetRootTypes.Contains(AssetRootTypeText)) AssetRootTypeText = string.Empty;
         if (!AssetIdentityTypes.Contains(AssetIdentityTypeText)) AssetIdentityTypeText = string.Empty;
         if (!AssetPrimaryGeometryTypes.Contains(AssetPrimaryGeometryTypeText)) AssetPrimaryGeometryTypeText = string.Empty;
         if (!AssetThumbnailTypes.Contains(AssetThumbnailTypeText)) AssetThumbnailTypeText = string.Empty;
+        if (!AssetCatalogSignal0020Values.Contains(AssetCatalogSignal0020Text)) AssetCatalogSignal0020Text = string.Empty;
+        if (!AssetCatalogSignal002CValues.Contains(AssetCatalogSignal002CText)) AssetCatalogSignal002CText = string.Empty;
+        if (!AssetCatalogSignal0030Values.Contains(AssetCatalogSignal0030Text)) AssetCatalogSignal0030Text = string.Empty;
+        if (!AssetCatalogSignal0034Values.Contains(AssetCatalogSignal0034Text)) AssetCatalogSignal0034Text = string.Empty;
     }
 
     private async Task RefreshAssetBrowserAsync(bool resetWindow, bool append)
@@ -845,6 +948,10 @@ public sealed partial class MainViewModel : ObservableObject
         assetBrowserState.IdentityTypeText = AssetIdentityTypeText;
         assetBrowserState.PrimaryGeometryTypeText = AssetPrimaryGeometryTypeText;
         assetBrowserState.ThumbnailTypeText = AssetThumbnailTypeText;
+        assetBrowserState.CatalogSignal0020Text = AssetCatalogSignal0020Text;
+        assetBrowserState.CatalogSignal002CText = AssetCatalogSignal002CText;
+        assetBrowserState.CatalogSignal0030Text = AssetCatalogSignal0030Text;
+        assetBrowserState.CatalogSignal0034Text = AssetCatalogSignal0034Text;
         assetBrowserState.PackageText = AssetPackageText;
         assetBrowserState.PackageRelativeText = AssetPackageRelativeText;
         assetBrowserState.HasThumbnailOnly = AssetHasThumbnailOnly;
@@ -887,6 +994,10 @@ public sealed partial class MainViewModel : ObservableObject
         AssetIdentityTypeText = assetBrowserState.IdentityTypeText;
         AssetPrimaryGeometryTypeText = assetBrowserState.PrimaryGeometryTypeText;
         AssetThumbnailTypeText = assetBrowserState.ThumbnailTypeText;
+        AssetCatalogSignal0020Text = assetBrowserState.CatalogSignal0020Text;
+        AssetCatalogSignal002CText = assetBrowserState.CatalogSignal002CText;
+        AssetCatalogSignal0030Text = assetBrowserState.CatalogSignal0030Text;
+        AssetCatalogSignal0034Text = assetBrowserState.CatalogSignal0034Text;
         AssetPackageText = assetBrowserState.PackageText;
         AssetPackageRelativeText = assetBrowserState.PackageRelativeText;
         AssetHasThumbnailOnly = assetBrowserState.HasThumbnailOnly;
@@ -1156,9 +1267,41 @@ public sealed partial class MainViewModel : ObservableObject
         PreviewImageSource = null;
         CurrentScene = null;
         PreviewText = string.Empty;
+        DetailsText = string.Empty;
         PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
         PreviewSurfaceTitle = "Diagnostics";
+        SelectedPreviewDiagnosticsTabIndex = 0;
         NotifyPreviewStateChanged();
+    }
+
+    private void BeginPreviewLoad(double totalSteps, string status)
+    {
+        PreviewLoadProgressMaximum = Math.Max(1d, totalSteps);
+        PreviewLoadProgressValue = 0d;
+        PreviewLoadProgressIndeterminate = false;
+        PreviewLoadStatus = status;
+        PreviewLoadCompleted = false;
+        IsPreviewLoading = true;
+    }
+
+    private void AdvancePreviewLoad(double stepValue, string status)
+    {
+        PreviewLoadProgressValue = Math.Clamp(stepValue, 0d, PreviewLoadProgressMaximum);
+        PreviewLoadStatus = status;
+    }
+
+    private async Task AdvancePreviewLoadAsync(double stepValue, string status)
+    {
+        AdvancePreviewLoad(stepValue, status);
+        await YieldToUiAsync();
+    }
+
+    private void CompletePreviewLoad()
+    {
+        PreviewLoadProgressValue = PreviewLoadProgressMaximum;
+        PreviewLoadStatus = "Ready";
+        PreviewLoadCompleted = true;
+        IsPreviewLoading = false;
     }
 
     private void SetSceneLodOptions(IEnumerable<SceneLodOption> options, string? selectedFullTgi = null)
@@ -1179,6 +1322,29 @@ public sealed partial class MainViewModel : ObservableObject
 
         OnPropertyChanged(nameof(HasSceneLodOptions));
         OnPropertyChanged(nameof(CanSelectSceneLod));
+    }
+
+    private void SetSceneTextureSlotOptions(CanonicalScene? scene)
+    {
+        var slots = scene is null
+            ? ["All"]
+            : PrependAll(
+                scene.Materials
+                    .SelectMany(static material => material.Textures)
+                    .Select(static texture => texture.Slot)
+                    .Where(static slot => !string.IsNullOrWhiteSpace(slot))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(static slot => slot, StringComparer.OrdinalIgnoreCase)
+                    .ToArray());
+
+        ReplaceCollection(AvailableSceneTextureSlots, slots);
+        if (!AvailableSceneTextureSlots.Contains(SelectedSceneTextureSlot, StringComparer.OrdinalIgnoreCase))
+        {
+            SelectedSceneTextureSlot = "All";
+        }
+
+        OnPropertyChanged(nameof(HasSceneTextureSlotOptions));
+        OnPropertyChanged(nameof(CanSelectSceneTextureSlot));
     }
 
     private static IReadOnlyList<SceneLodOption> BuildSceneLodOptions(AssetGraph graph, ResourceMetadata selectedSceneRoot)
@@ -1231,11 +1397,29 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsImagePreviewActive));
         OnPropertyChanged(nameof(IsDiagnosticsPreviewActive));
         OnPropertyChanged(nameof(DiagnosticsPreviewVisibility));
-        OnPropertyChanged(nameof(SecondaryDiagnosticsVisibility));
+        OnPropertyChanged(nameof(DiagnosticsTabsVisibility));
         OnPropertyChanged(nameof(CanResetView));
         OnPropertyChanged(nameof(CanExportSelectedAsset));
         OnPropertyChanged(nameof(HasSceneLodOptions));
         OnPropertyChanged(nameof(CanSelectSceneLod));
+        OnPropertyChanged(nameof(HasSceneTextureSlotOptions));
+        OnPropertyChanged(nameof(CanSelectSceneTextureSlot));
+        OnPropertyChanged(nameof(EffectivePreviewLoadStatus));
+        OnPropertyChanged(nameof(PreviewLoadBrush));
+    }
+
+    private IProgress<PreviewBuildProgress> CreatePreviewBuildProgressReporter(double baseStep, double span) =>
+        new Progress<PreviewBuildProgress>(progress =>
+        {
+            var fraction = Math.Clamp(progress.Fraction ?? 0d, 0d, 1d);
+            var easedFraction = Math.Pow(fraction, 1.35);
+            var mappedStep = baseStep + (easedFraction * span);
+            AdvancePreviewLoad(mappedStep, progress.Status);
+        });
+
+    private static async Task YieldToUiAsync()
+    {
+        await Task.Yield();
     }
 
     partial void OnSelectedWorkerCountChanged(int value)
@@ -1249,10 +1433,20 @@ public sealed partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsNotBusy));
     }
+    partial void OnIsPreviewLoadingChanged(bool value) => NotifyPreviewStateChanged();
+    partial void OnPreviewLoadStatusChanged(string value) => NotifyPreviewStateChanged();
+    partial void OnPreviewLoadCompletedChanged(bool value) => NotifyPreviewStateChanged();
     partial void OnPreviewSurfaceModeChanged(PreviewSurfaceMode value) => NotifyPreviewStateChanged();
     partial void OnPreviewImageSourceChanged(BitmapImage? value) => NotifyPreviewStateChanged();
-    partial void OnCurrentSceneChanged(CanonicalScene? value) => NotifyPreviewStateChanged();
+    partial void OnCurrentSceneChanged(CanonicalScene? value)
+    {
+        SetSceneTextureSlotOptions(value);
+        NotifyPreviewStateChanged();
+    }
     partial void OnPreviewTextChanged(string value) => NotifyPreviewStateChanged();
+    partial void OnDetailsTextChanged(string value) => NotifyPreviewStateChanged();
+    partial void OnSelectedSceneRenderModeChanged(SceneRenderMode value) => NotifyPreviewStateChanged();
+    partial void OnSelectedSceneTextureSlotChanged(string value) => NotifyPreviewStateChanged();
     partial void OnSelectedSceneLodChanged(SceneLodOption? value)
     {
         if (!suppressSceneLodSelectionPreview && value is not null)
@@ -1363,6 +1557,50 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     partial void OnAssetThumbnailTypeTextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetCatalogSignal0020TextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetCatalogSignal002CTextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetCatalogSignal0030TextChanged(string value)
+    {
+        SyncAssetStateFromProperties();
+        assetQueryDirty = true;
+        UpdateBrowsePresentation();
+        if (SelectedBrowserMode == BrowserMode.AssetBrowser)
+        {
+            _ = RefreshActiveBrowserAsync(resetWindow: true);
+        }
+    }
+
+    partial void OnAssetCatalogSignal0034TextChanged(string value)
     {
         SyncAssetStateFromProperties();
         assetQueryDirty = true;
@@ -1558,8 +1796,9 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    private void ApplyIndexingProgress(IndexingProgress progress, IndexingDialogViewModel indexingDialogViewModel)
+    private void ApplyIndexingProgress(IndexingProgress progress, IndexingDialogViewModel indexingDialogViewModel, IndexingTelemetrySession telemetrySession)
     {
+        telemetrySession.Record(progress);
         indexingDialogViewModel.ApplyProgress(progress);
         StatusMessage = string.IsNullOrWhiteSpace(progress.Message)
             ? $"Indexing: {progress.PackagesProcessed}/{progress.PackagesTotal} packages"
@@ -1662,7 +1901,8 @@ public sealed partial class MainViewModel : ObservableObject
 public enum SceneRenderMode
 {
     Wireframe,
-    UvMap,
+    RawUv,
+    MaterialUv,
     FlatTexture,
     LitTexture
 }

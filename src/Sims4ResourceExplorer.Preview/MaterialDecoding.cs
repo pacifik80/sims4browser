@@ -163,10 +163,13 @@ internal static class Ts4MaterialDecoder
             .ToArray();
         if (animatedProperties.Any(static name => !IsWeakAnimatedSemantic(name)) ||
             (animatedProperties.Length > 0 &&
-             coverageTier != Ts4MaterialCoverageTier.StaticReady &&
              (LooksLikeAnimatedFamilyName(profileName) || LooksLikeAnimatedFamilyName(familyName))))
         {
             notes.Add("Animated UV controls are ignored by static preview and currently fall back to a still-frame approximation.");
+            if (coverageTier == Ts4MaterialCoverageTier.StaticReady)
+            {
+                coverageTier = Ts4MaterialCoverageTier.Approximate;
+            }
         }
 
         if (material.Properties.Any(static property => IsStrongProjectiveUvSemantic(property.Name)) ||
@@ -392,6 +395,36 @@ internal static class Ts4MaterialDecoder
     {
         if (TryBuildProjectiveStillMapping(material, state.DiffuseUvMapping, out var mapping, out var note))
         {
+            if (IsImplausiblyThinProjectiveAtlasWindow(mapping))
+            {
+                var rejectionNotes = state.Notes.ToList();
+                rejectionNotes.Add("Projective atlas window was rejected as implausibly thin; preview falls back to mesh UVs.");
+                var fallbackMapping = new Ts4TextureUvMapping(mapping.UvChannel, 1f, 1f, 0f, 0f);
+                var fallbackSamplingInstructions = BuildSamplingInstructions(material, fallbackMapping, profileName, familyName, Ts4MaterialCoverageTier.Approximate);
+                if (fallbackSamplingInstructions.Count == 0)
+                {
+                    fallbackSamplingInstructions =
+                    [
+                        new Ts4MaterialSamplingInstruction(
+                            "diffuse",
+                            fallbackMapping.UvChannel,
+                            fallbackMapping.UvScaleU,
+                            fallbackMapping.UvScaleV,
+                            fallbackMapping.UvOffsetU,
+                            fallbackMapping.UvOffsetV,
+                            "diffuse-material-path",
+                            true)
+                    ];
+                }
+                return state with
+                {
+                    DiffuseUvMapping = fallbackMapping,
+                    SamplingInstructions = fallbackSamplingInstructions,
+                    CoverageTier = Ts4MaterialCoverageTier.Approximate,
+                    Notes = rejectionNotes
+                };
+            }
+
             var notes = state.Notes.ToList();
             var staticAtlasWindow = CanTreatProjectiveAtlasWindowAsStatic(material, profileName, familyName);
             var samplingSource = staticAtlasWindow ? "projective-static-atlas-path" : "projective-still-approximation";
@@ -435,6 +468,14 @@ internal static class Ts4MaterialDecoder
         }
 
         return state;
+    }
+
+    private static bool IsImplausiblyThinProjectiveAtlasWindow(Ts4TextureUvMapping mapping)
+    {
+        var scaleU = Math.Abs(mapping.UvScaleU);
+        var scaleV = Math.Abs(mapping.UvScaleV);
+        var area = scaleU * scaleV;
+        return scaleU < 0.02f || scaleV < 0.02f || area < 0.02f;
     }
 
     internal static Ts4MaterialDecodeState ApplySparseUvMappingApproximation(Ts4MaterialDecodeState state, MaterialIr material, string notePrefix)
@@ -751,7 +792,6 @@ internal static class Ts4MaterialDecoder
             .ToArray();
         if (animatedProperties.Any(static name => !IsWeakAnimatedSemantic(name)) ||
             (animatedProperties.Length > 0 &&
-             coverageTier != Ts4MaterialCoverageTier.StaticReady &&
              (LooksLikeAnimatedFamilyName(profileName) || LooksLikeAnimatedFamilyName(familyName))))
         {
             return ("animated-still-frame", true);
@@ -1057,6 +1097,14 @@ internal static class Ts4MaterialDecoder
             return false;
         }
 
+        if (packedVector.Length >= 4 &&
+            string.Equals(property.Name, "uvMapping", StringComparison.OrdinalIgnoreCase) &&
+            LooksLikePackedAtlasWindow(packedVector) &&
+            !IsPlausiblePackedAtlasWindow(packedVector))
+        {
+            return false;
+        }
+
         if (Ts4ShaderSemantics.TryInterpretDiffuseUvMappingVector(parameter, packedVector, current, out var semanticMapping))
         {
             updated = semanticMapping;
@@ -1079,6 +1127,55 @@ internal static class Ts4MaterialDecoder
         }
 
         return false;
+    }
+
+    private static bool IsPlausiblePackedAtlasWindow(float[] values)
+    {
+        if (values.Length < 4)
+        {
+            return false;
+        }
+
+        var scaleU = values[0];
+        var scaleV = values[1];
+        var offsetU = values[2];
+        var offsetV = values[3];
+        if (!float.IsFinite(scaleU) || !float.IsFinite(scaleV) || !float.IsFinite(offsetU) || !float.IsFinite(offsetV))
+        {
+            return false;
+        }
+
+        if (scaleU <= 0f || scaleV <= 0f || scaleU > 1f || scaleV > 1f)
+        {
+            return false;
+        }
+
+        const float tolerance = 0.05f;
+        var minU = Math.Min(offsetU, offsetU + scaleU);
+        var maxU = Math.Max(offsetU, offsetU + scaleU);
+        var minV = Math.Min(offsetV, offsetV + scaleV);
+        var maxV = Math.Max(offsetV, offsetV + scaleV);
+        return minU >= -tolerance &&
+               minV >= -tolerance &&
+               maxU <= 1f + tolerance &&
+               maxV <= 1f + tolerance;
+    }
+
+    private static bool LooksLikePackedAtlasWindow(float[] values)
+    {
+        if (values.Length < 4)
+        {
+            return false;
+        }
+
+        var scaleU = values[0];
+        var scaleV = values[1];
+        return float.IsFinite(scaleU) &&
+               float.IsFinite(scaleV) &&
+               scaleU > 0f &&
+               scaleV > 0f &&
+               scaleU <= 1f &&
+               scaleV <= 1f;
     }
 
     private static bool TryDecodePackedUvVector(MaterialIrProperty property, out float[] vector, out string encoding)

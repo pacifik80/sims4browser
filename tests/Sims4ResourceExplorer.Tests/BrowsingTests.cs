@@ -20,6 +20,7 @@ public sealed class BrowsingTests : IDisposable
             SearchText = "chair",
             Domain = AssetBrowserDomain.BuildBuy,
             CategoryText = "comfort",
+            CatalogSignal002CText = "0x0000009F",
             HasThumbnailOnly = true,
             VariantsOnly = true,
             Sort = AssetBrowserSort.Category
@@ -31,6 +32,7 @@ public sealed class BrowsingTests : IDisposable
         Assert.Contains(chips, chip => chip.Key == "sourceScope");
         Assert.Contains(chips, chip => chip.Key == "search");
         Assert.Contains(chips, chip => chip.Key == "category");
+        Assert.Contains(chips, chip => chip.Key == "catalogSignal002c");
         Assert.Contains(chips, chip => chip.Key == "hasThumbnail");
         Assert.Contains(chips, chip => chip.Key == "variants");
         Assert.Contains("Assets > Build/Buy > Game + DLC", summary);
@@ -316,11 +318,13 @@ public sealed class BrowsingTests : IDisposable
 
         var rootA = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 1, "Chair");
         var rootB = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 2, "Lamp");
+        var rootC = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 3, "Tree");
         await store.ReplacePackageAsync(
-            new PackageScanResult(source.Id, SourceKind.Game, "objects.package", 10, DateTimeOffset.UtcNow, [rootA, rootB], []),
+            new PackageScanResult(source.Id, SourceKind.Game, "objects.package", 10, DateTimeOffset.UtcNow, [rootA, rootB, rootC], []),
             [
                 new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Chair", "Comfort", "objects.package", rootA.Key, "thumbnail", 1, 4, string.Empty, new AssetCapabilitySnapshot(true, true, true, true), PackageName: "objects.package", RootTypeName: "Model", ThumbnailTypeName: "BuyBuildThumbnail", PrimaryGeometryType: "ModelLOD", IdentityType: "ObjectDefinition", CategoryNormalized: "buildbuy"),
-                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Lamp", "Lighting", "objects.package", rootB.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, false, false, false), PackageName: "objects.package", RootTypeName: "Model", ThumbnailTypeName: null, PrimaryGeometryType: null, IdentityType: "ObjectCatalog", CategoryNormalized: "buildbuy")
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Lamp", "Lighting", "objects.package", rootB.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, false, false, false), PackageName: "objects.package", RootTypeName: "Model", ThumbnailTypeName: null, PrimaryGeometryType: null, IdentityType: "ObjectCatalog", CategoryNormalized: "buildbuy", CatalogSignal002C: 0x0000009F, CatalogSignal0030: 0x00000004),
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Tree", "Outdoor", "objects.package", rootC.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, false, false, false), PackageName: "objects.package", RootTypeName: "ObjectCatalog", ThumbnailTypeName: null, PrimaryGeometryType: null, IdentityType: "ObjectCatalog", CategoryNormalized: "buildbuy", CatalogSignal0020: 0x01000100, CatalogSignal002C: 0x00000000, CatalogSignal0030: 0x00000000, CatalogSignal0034: 0x00FFFF00)
             ],
             CancellationToken.None);
 
@@ -328,11 +332,60 @@ public sealed class BrowsingTests : IDisposable
 
         Assert.Contains("Comfort", options.Categories);
         Assert.Contains("Lighting", options.Categories);
-        Assert.Equal(["Model"], options.RootTypeNames);
+        Assert.Contains("Model", options.RootTypeNames);
+        Assert.Contains("ObjectCatalog", options.RootTypeNames);
         Assert.Contains("ObjectDefinition", options.IdentityTypes);
         Assert.Contains("ObjectCatalog", options.IdentityTypes);
         Assert.Equal(["ModelLOD"], options.PrimaryGeometryTypes);
         Assert.Equal(["BuyBuildThumbnail"], options.ThumbnailTypeNames);
+        Assert.Contains("0x01000100", options.CatalogSignal0020Values!);
+        Assert.Contains("0x0000009F", options.CatalogSignal002CValues!);
+        Assert.Contains("0x00000004", options.CatalogSignal0030Values!);
+        Assert.Contains("0x00FFFF00", options.CatalogSignal0034Values!);
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_QueryAssets_CanFilterByCatalogSignals()
+    {
+        var cache = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cache);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Game", tempRoot, SourceKind.Game);
+        await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+        var rootA = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 1, "Lamp");
+        var rootB = CreateResource(source.Id, "objects.package", SourceKind.Game, "ObjectCatalog", 2, "Tree");
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, "objects.package", 10, DateTimeOffset.UtcNow, [rootA, rootB], []),
+            [
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Lamp", "Lighting", "objects.package", rootA.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, false, false, false), CatalogSignal002C: 0x0000009F, CatalogSignal0030: 0x00000004),
+                new AssetSummary(Guid.NewGuid(), source.Id, SourceKind.Game, AssetKind.BuildBuy, "Tree", "Outdoor", "objects.package", rootB.Key, null, 1, 2, string.Empty, new AssetCapabilitySnapshot(true, false, false, false), CatalogSignal002C: 0x00000000, CatalogSignal0030: 0x00000000)
+            ],
+            CancellationToken.None);
+
+        var result = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                string.Empty,
+                AssetBrowserDomain.BuildBuy,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                10,
+                new AssetCapabilityFilter(),
+                CatalogSignal002CText: "0x0000009F",
+                CatalogSignal0030Text: "0x00000004"),
+            CancellationToken.None);
+
+        var asset = Assert.Single(result.Items);
+        Assert.Equal("Lamp", asset.DisplayName);
+        Assert.Equal<uint>(0x0000009F, asset.CatalogSignal002C!.Value);
+        Assert.Equal<uint>(0x00000004, asset.CatalogSignal0030!.Value);
     }
 
     public void Dispose()

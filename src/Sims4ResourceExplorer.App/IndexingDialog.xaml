@@ -27,6 +27,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <StackPanel Spacing="4">
@@ -36,12 +37,22 @@
                 <StackPanel Grid.Column="1" Spacing="4">
                     <TextBlock Text="{Binding PackagesText}" />
                     <TextBlock Text="{Binding ResourcesText}" />
+                    <TextBlock Text="{Binding DataProgressText}" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="4">
                     <TextBlock Text="{Binding ElapsedEtaText}" />
                     <TextBlock Text="{Binding ThroughputText}" />
                 </StackPanel>
-                <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Text="{Binding SummaryText}" TextWrapping="WrapWholeWords" />
+                <StackPanel Grid.Row="1" Spacing="4">
+                    <TextBlock Text="{Binding WorkerStatesText}" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
+                    <TextBlock Text="{Binding PersistBacklogText}" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="2" Spacing="4">
+                    <TextBlock Text="{Binding WriterTelemetryText}" />
+                </StackPanel>
+                <TextBlock Grid.Row="2" Grid.ColumnSpan="3" Text="{Binding SummaryText}" TextWrapping="WrapWholeWords" />
             </Grid>
         </StackPanel>
 

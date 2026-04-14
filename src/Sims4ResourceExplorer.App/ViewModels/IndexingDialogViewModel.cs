@@ -46,10 +46,22 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
     private string backlogText = "Queue: 0";
 
     [ObservableProperty]
+    private string workerStatesText = "Worker states: 0 waiting | 0 active | 0 idle | 0 failed";
+
+    [ObservableProperty]
+    private string persistBacklogText = "Persist queue: 0";
+
+    [ObservableProperty]
+    private string writerTelemetryText = "Writer: idle | busy 0% | batch 0";
+
+    [ObservableProperty]
     private string packagesText = "Packages: 0 / 0";
 
     [ObservableProperty]
     private string resourcesText = "Resources: 0";
+
+    [ObservableProperty]
+    private string dataProgressText = "Data: 0 B / 0 B";
 
     [ObservableProperty]
     private string elapsedText = "Elapsed: 00:00:00";
@@ -71,21 +83,28 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
 
     public void ApplyProgress(IndexingProgress progress)
     {
-        PackagesProgressMaximum = Math.Max(1, progress.PackagesTotal);
-        PackagesProgressValue = Math.Min(progress.PackagesProcessed, progress.PackagesTotal);
+        var useByteProgress = progress.DiscoveryCompleted && progress.PackageBytesTotal > 0;
+        PackagesProgressMaximum = useByteProgress ? Math.Max(1, progress.PackageBytesTotal) : Math.Max(1, progress.PackagesTotal);
+        PackagesProgressValue = useByteProgress
+            ? Math.Min(progress.PackageBytesProcessed, progress.PackageBytesTotal)
+            : Math.Min(progress.PackagesProcessed, progress.PackagesTotal);
         PackagesProgressIndeterminate = !progress.DiscoveryCompleted;
         OverallSummary = progress.DiscoveryCompleted
-            ? $"Packages {progress.PackagesProcessed}/{progress.PackagesTotal} | Resources {progress.ResourcesProcessed:N0} | Throughput {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec"
-            : $"Packages {progress.PackagesProcessed} processed / {progress.PackagesTotal} discovered so far | Resources {progress.ResourcesProcessed:N0} | Throughput {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec";
+            ? $"Packages {progress.PackagesProcessed}/{progress.PackagesTotal} | Data {IndexingDisplayFormat.FormatBytes(progress.PackageBytesProcessed)} / {IndexingDisplayFormat.FormatBytes(progress.PackageBytesTotal)} | Resources {progress.ResourcesProcessed:N0} | Throughput {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec"
+            : $"Packages {progress.PackagesProcessed} processed / {progress.PackagesTotal} discovered so far | Data {IndexingDisplayFormat.FormatBytes(progress.PackageBytesProcessed)} / {IndexingDisplayFormat.FormatBytes(progress.PackageBytesTotal)} | Resources {progress.ResourcesProcessed:N0} | Throughput {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec";
         LatestEventText = string.IsNullOrWhiteSpace(progress.Message)
             ? "Monitoring indexing run."
             : progress.Message;
         WorkerCountText = $"Workers: {progress.ActiveWorkerCount} active / {Math.Max(progress.ConfiguredWorkerCount, ConfiguredWorkerCount)} configured";
-        BacklogText = $"Buffered queue: {progress.PendingPackageCount}";
+        WorkerStatesText = $"Worker states: {progress.WaitingWorkerCount} waiting | {progress.ActiveWorkerCount} active | {progress.IdleWorkerCount} idle | {progress.FailedWorkerCount} failed";
+        BacklogText = $"Scan queue: {progress.PendingPackageCount}";
+        PersistBacklogText = $"Persist queue: {progress.PendingPersistCount}";
+        WriterTelemetryText = $"Writer: {(progress.WriterBusy ? "busy" : "idle")} | busy {progress.WriterBusyPercent:0}% | batch {progress.ActiveWriterBatchCount}";
         PackagesText = progress.DiscoveryCompleted
             ? $"Packages: {progress.PackagesProcessed} / {progress.PackagesTotal}"
             : $"Packages: {progress.PackagesProcessed} processed / {progress.PackagesTotal} discovered so far";
         ResourcesText = $"Resources: {progress.ResourcesProcessed:N0}";
+        DataProgressText = $"Data: {IndexingDisplayFormat.FormatBytes(progress.PackageBytesProcessed)} / {IndexingDisplayFormat.FormatBytes(progress.PackageBytesTotal)}";
         ElapsedText = $"Elapsed: {progress.Elapsed:hh\\:mm\\:ss}";
         ElapsedEtaText = $"Elapsed / Remaining ETA: {progress.Elapsed:hh\\:mm\\:ss} / {BuildEtaText(progress)}";
         ThroughputText = $"Throughput: {IndexingDisplayFormat.FormatRate(progress.OverallThroughput)} res/sec";
@@ -163,6 +182,19 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         if (progress.Summary is not null)
         {
             return TimeSpan.Zero;
+        }
+
+        if (progress.DiscoveryCompleted && progress.PackageBytesTotal > 0)
+        {
+            var remainingBytes = Math.Max(0, progress.PackageBytesTotal - progress.PackageBytesProcessed);
+            if (remainingBytes > 0 && progress.Elapsed.TotalSeconds > 0 && progress.PackageBytesProcessed > 0)
+            {
+                var byteRate = progress.PackageBytesProcessed / progress.Elapsed.TotalSeconds;
+                if (byteRate > 0)
+                {
+                    return TimeSpan.FromSeconds(remainingBytes / byteRate);
+                }
+            }
         }
 
         if (!progress.DiscoveryCompleted)
@@ -315,6 +347,22 @@ internal static class IndexingDisplayFormat
             < 10 => rate.ToString("0.0"),
             _ => rate.ToString("0")
         };
+
+    public static string FormatBytes(long bytes)
+    {
+        const double kib = 1024d;
+        const double mib = kib * 1024d;
+        const double gib = mib * 1024d;
+
+        return bytes switch
+        {
+            <= 0 => "0 B",
+            < 1024L => $"{bytes:N0} B",
+            < 1024L * 1024L => $"{bytes / kib:0.0} KiB",
+            < 1024L * 1024L * 1024L => $"{bytes / mib:0.0} MiB",
+            _ => $"{bytes / gib:0.00} GiB"
+        };
+    }
 
     public static string FormatEta(TimeSpan eta) =>
         eta <= TimeSpan.Zero ? "--:--:--" : eta.ToString(@"hh\:mm\:ss");

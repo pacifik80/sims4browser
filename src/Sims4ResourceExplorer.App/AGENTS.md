@@ -141,6 +141,20 @@ dotnet build -c Debug -p:Platform=$Platform
 dotnet build -c Release -p:Platform=$Platform
 ```
 
+### Project Build Number Rule
+
+- **Every user-facing verification build must increment `<BuildNumber>`** in `src/Sims4ResourceExplorer.App/Sims4ResourceExplorer.App.csproj`.
+- The new build identifier must appear consistently in both places:
+  - the app window title, via `AssemblyInformationalVersion`
+  - the in-app diagnostics line `Build: ...`
+- Do **not** reuse the previous build number after changing code and producing a new build for testing.
+- When setting `<InformationalVersion>`, keep it aligned with the new build number and disable automatic source-revision suffixing if needed so the displayed build string is not duplicated.
+- If code changes are meant to be checked by launching the app, always:
+  - increment `<BuildNumber>`
+  - clean/build the app so `run.ps1` can be launched immediately
+  - tell the user the exact build id they should see after launch
+- Do not reduce or disable user-visible functionality for performance without discussing it first.
+
 ### Register & Run the MSIX Package (Sideload)
 
 After building, register the app package so Windows can launch it:
@@ -178,6 +192,68 @@ dotnet test -c Debug -p:Platform=$Platform
 - **Every change must build and pass tests** -- Run `dotnet build` and `dotnet test` (see [Build, Run & Deploy](#build-run--deploy)) before considering any task complete.
 - **Follow all instruction files** -- The detailed rules in `.github/instructions/` are authoritative. **You must actually open and read them** (not just acknowledge they exist) when working within their scope. See the trigger conditions in steps 5-8 above.
 - **Web search before decompilation** -- When facing unknown types or build errors, always search the web / API docs first. Only use WinMD/ILDASM as a last resort (see [Troubleshooting Build Errors](#troubleshooting-build-errors)).
+
+## Sims4 Browser Project-Specific Continuation Rules
+
+These rules are specific to the current Sims 4 Browser work and should be
+preserved across chat sessions.
+
+### Preview / Material Diagnostics Model
+
+- Treat the preview as three different concerns:
+  - `RawUv` = raw mesh UV only.
+  - `MaterialUv` = UV after a **confirmed** material transform only.
+  - `FlatTexture` / `LitTexture` = viewport render of the selected material/slot.
+- **Do not** make `MaterialUv` "look nicer" with fallback normalization or
+  inferred transforms when the transform is not actually decoded from the
+  material. If the transform is unresolved, `MaterialUv` should effectively
+  match `RawUv` or clearly indicate that no decoded transform is available.
+- Be explicit when something is an approximation. Do not present diagnostic
+  overlays as if they were authoritative shader behavior if they are derived
+  from fallback or heuristics.
+
+### Slot / Layer Preview Direction
+
+- Keep moving the preview UI toward this model:
+  - `FlatTexture` and `LitTexture` support `All` or a selected texture slot.
+  - `MaterialUv` is slot-specific.
+  - `RawUv` stays material-independent.
+- Future work should prefer explicit selectors for:
+  - material
+  - slot
+  - variant/state
+  rather than silently picking one "best" path.
+
+### Shader / UV Logic Discipline
+
+- Avoid papering over broken UV or material behavior with display-only hacks
+  unless they are clearly marked as diagnostic approximations.
+- Prefer these layers of truth, in order:
+  1. raw mesh UV / geometry data
+  2. decoded material semantics from MATD / MTST / shader metadata
+  3. viewport approximation only when 1-2 are insufficient
+- If a fix is heuristic, say so plainly in comments / notes / summaries.
+- Do not claim a heuristic is "the real shader logic" unless it is backed by
+  decoded data.
+
+### Lit Texture Quality Direction
+
+- `LitTexture` is currently a portable viewport approximation, not the full
+  in-game shader runtime.
+- Prefer broad, viewport-level fixes over asset-specific hacks:
+  - lighting rig
+  - ambient/specular balance
+  - shadow quality
+  - misuse of overlay as fake emissive
+- Be careful with any change that makes matte assets look metallic, foggy, or
+  washed out.
+
+### Runtime / Launch Hygiene
+
+- `run.ps1` should be treated as part of the developer workflow and kept robust.
+- If a user reports that "the app crashed on run", inspect `run.ps1`,
+  process-exit behavior, and output cleanup locks before assuming the app
+  itself crashed.
 
 ## Windows AI Prerequisites
 

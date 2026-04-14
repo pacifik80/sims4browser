@@ -49,13 +49,68 @@ function Get-LockingAppProcesses {
     return $appProcesses
 }
 
+function Wait-ForProcessExit {
+    param(
+        [int[]]$ProcessIds,
+        [int]$TimeoutMilliseconds = 5000
+    )
+
+    if (-not $ProcessIds -or $ProcessIds.Count -eq 0) {
+        return
+    }
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
+        $stillRunning = @($ProcessIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+        if ($stillRunning.Count -eq 0) {
+            return
+        }
+
+        Start-Sleep -Milliseconds 200
+    }
+}
+
+function Remove-PathWithRetries {
+    param(
+        [string]$TargetPath,
+        [int]$Attempts = 10,
+        [int]$DelayMilliseconds = 400
+    )
+
+    if (-not (Test-Path $TargetPath)) {
+        return
+    }
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $TargetPath -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            $lastError = $_
+            Start-Sleep -Milliseconds $DelayMilliseconds
+        }
+    }
+
+    $lockingNow = Get-LockingAppProcesses -TargetPath $resolvedExePath
+    if ($lockingNow.Count -gt 0) {
+        $processSummary = ($lockingNow | ForEach-Object { "$($_.ProcessName)[$($_.Id)]" }) -join ", "
+        throw "Failed to remove '$TargetPath' after $Attempts attempt(s). Locking app processes: $processSummary. Last error: $($lastError.Exception.Message)"
+    }
+
+    throw "Failed to remove '$TargetPath' after $Attempts attempt(s). Last error: $($lastError.Exception.Message)"
+}
+
 $lockingProcesses = Get-LockingAppProcesses -TargetPath $resolvedExePath
 
 if (-not $NoBuild -and $lockingProcesses.Count -gt 0) {
     Write-Host "Stopping running app instance(s) so the latest build can be produced..." -ForegroundColor Yellow
+    $stoppedProcessIds = @()
     foreach ($process in $lockingProcesses) {
         try {
             Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            $stoppedProcessIds += $process.Id
             Write-Host "Stopped process $($process.Id)" -ForegroundColor DarkYellow
         }
         catch {
@@ -63,13 +118,14 @@ if (-not $NoBuild -and $lockingProcesses.Count -gt 0) {
         }
     }
 
-    Start-Sleep -Milliseconds 500
+    Wait-ForProcessExit -ProcessIds $stoppedProcessIds -TimeoutMilliseconds 7000
+    Start-Sleep -Milliseconds 800
 }
 
 if (-not $NoBuild) {
     if (Test-Path $outputRoot) {
         Write-Host "Removing previous app output so the next launch is guaranteed to use fresh binaries..." -ForegroundColor Yellow
-        Remove-Item -LiteralPath $outputRoot -Recurse -Force
+        Remove-PathWithRetries -TargetPath $outputRoot
     }
 
     $buildArguments = @(

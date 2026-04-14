@@ -1,5 +1,7 @@
 using LlamaLogic.Packages;
 using Sims4ResourceExplorer.Core;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace Sims4ResourceExplorer.Packages;
 
@@ -34,6 +36,9 @@ public sealed class FileSystemPackageScanner : IPackageScanner
 
 public sealed class LlamaResourceCatalogService : IResourceCatalogService
 {
+    private const int ParallelEnumerationThreshold = 20000;
+    private const int EnumerationRangeSize = 4096;
+
     public async Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken)
     {
         var diagnostics = new List<string>();
@@ -48,30 +53,43 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
         const int reportEveryResources = 250;
         var lastReportAt = TimeSpan.Zero;
-        var resources = new List<ResourceMetadata>(keys.Count);
+        ResourceMetadata[] resources;
 
+        if (ShouldParallelizeEnumeration(keys.Count))
+        {
+            resources = EnumerateResourcesParallel(source, packagePath, keys, progress, stopwatch, reportEveryResources, ref lastReportAt, cancellationToken);
+        }
+        else
+        {
+            resources = EnumerateResourcesSequential(source, packagePath, keys, progress, stopwatch, reportEveryResources, ref lastReportAt, cancellationToken);
+        }
+        progress?.Report(new PackageScanProgress("finalizing package", keys.Count, keys.Count, 0, stopwatch.Elapsed));
+
+        return new PackageScanResult(
+            source.Id,
+            source.Kind,
+            packagePath,
+            info.Exists ? info.Length : 0,
+            info.Exists ? info.LastWriteTimeUtc : DateTime.UtcNow,
+            resources,
+            diagnostics);
+    }
+
+    private static ResourceMetadata[] EnumerateResourcesSequential(
+        DataSourceDefinition source,
+        string packagePath,
+        IReadOnlyList<ResourceKey> keys,
+        IProgress<PackageScanProgress>? progress,
+        Stopwatch stopwatch,
+        int reportEveryResources,
+        ref TimeSpan lastReportAt,
+        CancellationToken cancellationToken)
+    {
+        var resources = new ResourceMetadata[keys.Count];
         for (var index = 0; index < keys.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var key = keys[index];
-
-            var resourceKey = ToCoreKey(key);
-            var previewKind = ResourceTypeHints.GetPreviewKind(resourceKey.TypeName);
-            resources.Add(new ResourceMetadata(
-                StableEntityIds.ForResource(source.Id, packagePath, resourceKey),
-                source.Id,
-                source.Kind,
-                packagePath,
-                resourceKey,
-                null,
-                null,
-                null,
-                null,
-                previewKind,
-                previewKind is not PreviewKind.Unsupported,
-                true,
-                ResourceTypeHints.GetAssetLinkageSummary(resourceKey.TypeName),
-                string.Empty));
+            resources[index] = CreateResourceMetadata(source, packagePath, keys[index]);
 
             var processed = index + 1;
             var elapsed = stopwatch.Elapsed;
@@ -87,17 +105,93 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
                     $"{Path.GetFileName(packagePath)}: extracting metadata {processed:N0} / {keys.Count:N0} resources"));
             }
         }
-        progress?.Report(new PackageScanProgress("finalizing package", keys.Count, keys.Count, 0, stopwatch.Elapsed));
 
-        return new PackageScanResult(
+        return resources;
+    }
+
+    private static ResourceMetadata[] EnumerateResourcesParallel(
+        DataSourceDefinition source,
+        string packagePath,
+        IReadOnlyList<ResourceKey> keys,
+        IProgress<PackageScanProgress>? progress,
+        Stopwatch stopwatch,
+        int reportEveryResources,
+        ref TimeSpan lastReportAt,
+        CancellationToken cancellationToken)
+    {
+        var resources = new ResourceMetadata[keys.Count];
+        var processedCount = 0;
+        var reportSync = new object();
+        var lastReported = lastReportAt;
+
+        Parallel.ForEach(
+            Partitioner.Create(0, keys.Count, EnumerationRangeSize),
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = GetEnumerationParallelism(),
+                CancellationToken = cancellationToken
+            },
+            range =>
+            {
+                for (var index = range.Item1; index < range.Item2; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    resources[index] = CreateResourceMetadata(source, packagePath, keys[index]);
+                }
+
+                var processed = Interlocked.Add(ref processedCount, range.Item2 - range.Item1);
+                var elapsed = stopwatch.Elapsed;
+                if (processed == keys.Count || processed % reportEveryResources == 0 || elapsed - lastReported >= TimeSpan.FromSeconds(1))
+                {
+                    lock (reportSync)
+                    {
+                        elapsed = stopwatch.Elapsed;
+                        if (processed == keys.Count || processed % reportEveryResources == 0 || elapsed - lastReported >= TimeSpan.FromSeconds(1))
+                        {
+                            lastReported = elapsed;
+                            progress?.Report(new PackageScanProgress(
+                                "extracting metadata",
+                                keys.Count,
+                                processed,
+                                0,
+                                elapsed,
+                                $"{Path.GetFileName(packagePath)}: extracting metadata {processed:N0} / {keys.Count:N0} resources"));
+                        }
+                    }
+                }
+            });
+
+        lastReportAt = lastReported;
+        return resources;
+    }
+
+    private static ResourceMetadata CreateResourceMetadata(DataSourceDefinition source, string packagePath, ResourceKey key)
+    {
+        var resourceKey = ToCoreKey(key);
+        var previewKind = ResourceTypeHints.GetPreviewKind(resourceKey.TypeName);
+        return new ResourceMetadata(
+            StableEntityIds.ForResource(source.Id, packagePath, resourceKey),
             source.Id,
             source.Kind,
             packagePath,
-            info.Exists ? info.Length : 0,
-            info.Exists ? info.LastWriteTimeUtc : DateTime.UtcNow,
-            resources,
-            diagnostics);
+            resourceKey,
+            null,
+            null,
+            null,
+            null,
+            previewKind,
+            previewKind is not PreviewKind.Unsupported,
+            true,
+            ResourceTypeHints.GetAssetLinkageSummary(resourceKey.TypeName),
+            string.Empty);
     }
+
+    private static bool ShouldParallelizeEnumeration(int resourceCount) =>
+        resourceCount >= ParallelEnumerationThreshold &&
+        GetEnumerationParallelism() > 1;
+
+    private static int GetEnumerationParallelism() =>
+        Math.Clamp(Environment.ProcessorCount, 1, 16);
 
     public async Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken)
     {
@@ -146,13 +240,17 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         };
     }
 
-    public async Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken)
+    public async Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null)
     {
+        progress?.Report(new ResourceReadProgress("Opening package...", 0.08));
         await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
         var llamaKey = ToLlamaKey(key);
-        return raw
-            ? await ReadWithDeletedFallbackAsync(force => package.GetRawAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false)
-            : await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+        progress?.Report(new ResourceReadProgress(raw ? "Reading raw resource bytes..." : "Reading resource bytes...", 0.35));
+        byte[] bytes = raw
+            ? await ReadWithDeletedFallbackAsync(force => package.GetRawAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false)
+            : await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+        progress?.Report(new ResourceReadProgress("Resource bytes ready.", 1.0));
+        return bytes;
     }
 
     public async Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken)
@@ -178,47 +276,61 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         }
     }
 
-    public async Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken)
+    public async Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null)
     {
+        progress?.Report(new ResourceReadProgress("Opening package...", 0.08));
         await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
         var llamaKey = ToLlamaKey(key);
 
         if (key.TypeName is nameof(ResourceType.PNGImage) or nameof(ResourceType.PNGImage2))
         {
-            return await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+            progress?.Report(new ResourceReadProgress("Reading PNG image bytes...", 0.35));
+            var bytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+            progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+            return bytes;
         }
 
         if (key.TypeName is nameof(ResourceType.BuyBuildThumbnail) or nameof(ResourceType.BodyPartThumbnail) or nameof(ResourceType.CASPartThumbnail))
         {
-            return await ReadWithDeletedFallbackAsync(force => package.GetTranslucentJpegAsPngAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+            progress?.Report(new ResourceReadProgress("Reading thumbnail bytes...", 0.35));
+            var bytes = await ReadWithDeletedFallbackAsync(force => package.GetTranslucentJpegAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+            progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+            return bytes;
         }
 
         if (ResourceTypeHints.IsDdsFamily(key.TypeName))
         {
-            return await ReadWithDeletedFallbackAsync(force => package.GetDdsAsPngAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+            progress?.Report(new ResourceReadProgress("Reading DDS texture bytes...", 0.35));
+            var bytes = await ReadWithDeletedFallbackAsync(force => package.GetDdsAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+            progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+            return bytes;
         }
 
+        progress?.Report(new ResourceReadProgress("Texture type is not previewable as PNG.", 1.0));
         return null;
     }
 
     private static async Task<byte[]> ReadWithDeletedFallbackAsync(
         Func<bool, Task<ReadOnlyMemory<byte>>> readAsync,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<ResourceReadProgress>? progress = null)
     {
-        var memory = await ReadWithDeletedFallbackAsyncCore(readAsync, cancellationToken).ConfigureAwait(false);
+        var memory = await ReadWithDeletedFallbackAsyncCore(readAsync, cancellationToken, progress).ConfigureAwait(false);
         return memory.ToArray();
     }
 
     private static async Task<T> ReadWithDeletedFallbackAsync<T>(
         Func<bool, Task<T>> readAsync,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<ResourceReadProgress>? progress = null)
     {
-        return await ReadWithDeletedFallbackAsyncCore(readAsync, cancellationToken).ConfigureAwait(false);
+        return await ReadWithDeletedFallbackAsyncCore(readAsync, cancellationToken, progress).ConfigureAwait(false);
     }
 
     private static async Task<T> ReadWithDeletedFallbackAsyncCore<T>(
         Func<bool, Task<T>> readAsync,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<ResourceReadProgress>? progress = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try
@@ -227,6 +339,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         }
         catch (Exception ex) when (LooksLikeDeletedResource(ex))
         {
+            progress?.Report(new ResourceReadProgress("Retrying deleted-resource fallback...", 0.72));
             return await readAsync(true).ConfigureAwait(false);
         }
     }

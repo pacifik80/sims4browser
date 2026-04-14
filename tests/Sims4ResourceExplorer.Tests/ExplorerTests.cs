@@ -75,6 +75,46 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void AssetGraphBuilder_BuildBuySummary_PrefersObjectCatalogDisplayNameOverObjectDefinitionTechnicalName()
+    {
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var packagePath = Path.Combine(tempRoot, "localized.package");
+        var sourceId = Guid.NewGuid();
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1, "Unpolished Geode"),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1, "collectGeode_EP01GENrough"),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "collectGeode_EP01GENrough"),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+        };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.BuildBuy);
+
+        Assert.Equal("Unpolished Geode", summary.DisplayName);
+    }
+
+    [Fact]
+    public void AssetGraphBuilder_BuildBuySummary_CarriesObjectCatalogDescription()
+    {
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var packagePath = Path.Combine(tempRoot, "described.package");
+        var sourceId = Guid.NewGuid();
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1, "Unpolished Geode") with { Description = "What lies beneath the surface of this alien space rock?" },
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1, "collectGeode_EP01GENrough"),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "collectGeode_EP01GENrough"),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+        };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.BuildBuy);
+
+        Assert.Equal("What lies beneath the surface of this alien space rock?", summary.Description);
+    }
+
+    [Fact]
     public void AssetGraphBuilder_MarksBuildBuySummaryPartialWhenExactLodCoverageIsMissing()
     {
         var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
@@ -125,6 +165,245 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_IncludesParsedObjectDefinitionInternalName()
+    {
+        var packagePath = Path.Combine(tempRoot, "objectdefinition.package");
+        var sourceId = Guid.NewGuid();
+        var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "Chair");
+        var objectDefinition = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1);
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1),
+            objectDefinition,
+            model,
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 1)
+        };
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [model.Key.FullTgi] = [],
+                [objectDefinition.Key.FullTgi] = CreateSyntheticObjectDefinitionBytes("ArchEP03_DockApartment_6_01", 2, 173, 0x8EA7CE98u, 0x84911568u)
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.Contains(graph.Diagnostics, message => message.Contains("ObjectDefinition internal name: ArchEP03_DockApartment_6_01", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_IncludesObjectDefinitionReferenceCandidateDiagnostics()
+    {
+        var packagePath = Path.Combine(tempRoot, "objectdefinition-refs.package");
+        var sourceId = Guid.NewGuid();
+        var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "Chair");
+        var objectDefinition = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1);
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1),
+            objectDefinition,
+            model,
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 1)
+        };
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [model.Key.FullTgi] = [],
+                [objectDefinition.Key.FullTgi] = CreateSyntheticObjectDefinitionBytes(
+                    "collectGeode_EP01GENrough",
+                    2,
+                    227,
+                    0x00000004u,
+                    0x915EFC3Bu,
+                    0x177C9B5Fu,
+                    0x01661233u,
+                    0x00000000u,
+                    0x00000004u,
+                    0x86C5F3A5u,
+                    0x18A66232u,
+                    0xD382BF57u,
+                    0x00000000u)
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.Contains(graph.Diagnostics, message => message.Contains("ObjectDefinition reference candidates:", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Model raw=01661233:00000000:177C9B5F915EFC3B", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("swap32=01661233:00000000:915EFC3B177C9B5F", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_IncludesSwap32ResolvedCrossPackageReferences()
+    {
+        var packagePath = Path.Combine(tempRoot, "objectdefinition-cross.package");
+        var sourceId = Guid.NewGuid();
+        var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "Chair");
+        var objectDefinition = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1);
+        var resolvedModel = new ResourceMetadata(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            Path.Combine(tempRoot, "external.package"),
+            new ResourceKeyRecord(0x01661233u, 0, 0x915EFC3B177C9B5Ful, "Model"),
+            "ResolvedModel",
+            1,
+            1,
+            false,
+            PreviewKind.Scene,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1),
+            objectDefinition,
+            model,
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 1)
+        };
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [model.Key.FullTgi] = [],
+                [objectDefinition.Key.FullTgi] = CreateSyntheticObjectDefinitionBytes(
+                    "collectGeode_EP01GENrough",
+                    2,
+                    227,
+                    0x00000004u,
+                    0x915EFC3Bu,
+                    0x177C9B5Fu,
+                    0x01661233u,
+                    0x00000000u)
+            },
+            new Dictionary<string, string?>());
+        var indexStore = new FakeGraphIndexStore([resolvedModel]);
+        var builder = new ExplicitAssetGraphBuilder(catalog, indexStore);
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.Contains(graph.Diagnostics, message => message.Contains("ObjectDefinition swap32-resolved references:", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Model -> 01661233:00000000:915EFC3B177C9B5F @ external.package", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_UsesSwap32ResolvedModelRootWhenExactPathIsWeak()
+    {
+        var packagePath = Path.Combine(tempRoot, "objectdefinition-altmodel.package");
+        var sourceId = Guid.NewGuid();
+        var weakModel = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "WeakModel");
+        var objectDefinition = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1);
+        var resolvedModel = new ResourceMetadata(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            Path.Combine(tempRoot, "external.package"),
+            new ResourceKeyRecord(0x01661233u, 0, 0x915EFC3B177C9B5Ful, "Model"),
+            "ResolvedModel",
+            1,
+            1,
+            false,
+            PreviewKind.Scene,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+        var resolvedModelLod = new ResourceMetadata(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            resolvedModel.PackagePath,
+            new ResourceKeyRecord((uint)Enum.Parse<LlamaLogic.Packages.ResourceType>("ModelLOD"), 0, resolvedModel.Key.FullInstance, "ModelLOD"),
+            "ResolvedModelLod",
+            1,
+            1,
+            false,
+            PreviewKind.Scene,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1),
+            objectDefinition,
+            weakModel
+        };
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [weakModel.Key.FullTgi] = [],
+                [objectDefinition.Key.FullTgi] = CreateSyntheticObjectDefinitionBytes(
+                    "collectGeode_EP01GENrough",
+                    2,
+                    227,
+                    0x00000004u,
+                    0x915EFC3Bu,
+                    0x177C9B5Fu,
+                    0x01661233u,
+                    0x00000000u)
+            },
+            new Dictionary<string, string?>());
+        var indexStore = new FakeGraphIndexStore([resolvedModel, resolvedModelLod]);
+        var builder = new ExplicitAssetGraphBuilder(catalog, indexStore);
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.Equal(resolvedModel.Key.FullTgi, graph.BuildBuyGraph!.ModelResource.Key.FullTgi);
+        Assert.Contains(graph.BuildBuyGraph.ModelLodResources, resource => resource.Key.FullTgi == resolvedModelLod.Key.FullTgi);
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Using swap32-resolved ObjectDefinition model root:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_IncludesObjectCatalogHeuristicDiagnostics()
+    {
+        var packagePath = Path.Combine(tempRoot, "objectcatalog.package");
+        var sourceId = Guid.NewGuid();
+        var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "Chair");
+        var objectCatalog = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1);
+        var resources = new[]
+        {
+            objectCatalog,
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1),
+            model,
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 1)
+        };
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [model.Key.FullTgi] = [],
+                [objectCatalog.Key.FullTgi] = CreateSyntheticObjectCatalogBytes(0x00000019u, 0x0000000Bu, 0x00000000u, 0xA141F327u, 0x9BCAEA4Cu, 0x00010000u)
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.Contains(graph.Diagnostics, message => message.Contains("ObjectCatalog word count:", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("ObjectCatalog heuristic tail qwords:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AssetGraphBuilder_BuildsExplicitCasGraphForSupportedSubset()
     {
         var packagePath = Path.Combine(tempRoot, "cas-supported.package");
@@ -159,6 +438,199 @@ public sealed class ExplorerTests : IDisposable
         Assert.Single(graph.CasGraph.GeometryResources);
         Assert.Single(graph.CasGraph.RigResources);
         Assert.NotEmpty(graph.CasGraph.TextureResources);
+    }
+
+    [Fact]
+    public void Ts4ObjectDefinition_Parse_ReturnsConfirmedHeaderFields()
+    {
+        var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
+        var objectDefinitionType = RequireType(assetsAssembly, "Sims4ResourceExplorer.Assets.Ts4ObjectDefinition");
+        var payload = CreateSyntheticObjectDefinitionBytes("ArchEP03_DockApartment_6_01", 2, 173, 0x8EA7CE98u, 0x84911568u, 0x01661233u);
+
+        var parsed = objectDefinitionType
+            .GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [payload])!;
+
+        Assert.Equal((ushort)2, (ushort)objectDefinitionType.GetProperty("Version")!.GetValue(parsed)!);
+        Assert.Equal(173u, (uint)objectDefinitionType.GetProperty("DeclaredSize")!.GetValue(parsed)!);
+        Assert.Equal("ArchEP03_DockApartment_6_01", (string)objectDefinitionType.GetProperty("InternalName")!.GetValue(parsed)!);
+        Assert.Equal(12, (int)objectDefinitionType.GetProperty("RemainingByteCount")!.GetValue(parsed)!);
+
+        var remainingWords = ((IReadOnlyList<uint>)objectDefinitionType.GetProperty("RemainingWords")!.GetValue(parsed)!).ToArray();
+        Assert.Equal([0x8EA7CE98u, 0x84911568u, 0x01661233u], remainingWords);
+        var referenceCandidates = ((System.Collections.IEnumerable)objectDefinitionType.GetProperty("ReferenceCandidates")!.GetValue(parsed)!).Cast<object>().ToArray();
+        Assert.Empty(referenceCandidates);
+    }
+
+    [Fact]
+    public void Ts4ObjectDefinition_Parse_ExtractsReferenceCandidatesAndSwap32Keys()
+    {
+        var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
+        var objectDefinitionType = RequireType(assetsAssembly, "Sims4ResourceExplorer.Assets.Ts4ObjectDefinition");
+        var payload = CreateSyntheticObjectDefinitionBytes(
+            "collectGeode_EP01GENrough",
+            2,
+            227,
+            0x00000004u,
+            0x8681F0A5u,
+            0x186C903Au,
+            0x8EAF13DEu,
+            0x00000000u,
+            0x00000004u,
+            0x915EFC3Bu,
+            0x177C9B5Fu,
+            0x01661233u,
+            0x00000000u,
+            0x00000004u,
+            0x86C5F3A5u,
+            0x18A66232u,
+            0xD382BF57u,
+            0x00000000u);
+
+        var parsed = objectDefinitionType
+            .GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [payload])!;
+
+        var referenceCandidates = ((System.Collections.IEnumerable)objectDefinitionType.GetProperty("ReferenceCandidates")!.GetValue(parsed)!)
+            .Cast<object>()
+            .ToArray();
+        Assert.Equal(3, referenceCandidates.Length);
+
+        var candidateType = referenceCandidates[0].GetType();
+        var rawKeyType = candidateType.GetProperty("RawKey")!.PropertyType;
+        var swap32KeyType = candidateType.GetProperty("Swap32Key")!.PropertyType;
+
+        var rigCandidate = referenceCandidates.Single(candidate =>
+            string.Equals((string)rawKeyType.GetProperty("TypeName")!.GetValue(candidateType.GetProperty("RawKey")!.GetValue(candidate)!)!, "Rig", StringComparison.Ordinal));
+        Assert.Equal("8EAF13DE:00000000:186C903A8681F0A5", (string)rawKeyType.GetProperty("FullTgi")!.GetValue(candidateType.GetProperty("RawKey")!.GetValue(rigCandidate)!)!);
+        Assert.Equal("8EAF13DE:00000000:8681F0A5186C903A", (string)swap32KeyType.GetProperty("FullTgi")!.GetValue(candidateType.GetProperty("Swap32Key")!.GetValue(rigCandidate)!)!);
+
+        var modelCandidate = referenceCandidates.Single(candidate =>
+            string.Equals((string)rawKeyType.GetProperty("TypeName")!.GetValue(candidateType.GetProperty("RawKey")!.GetValue(candidate)!)!, "Model", StringComparison.Ordinal));
+        Assert.Equal("01661233:00000000:177C9B5F915EFC3B", (string)rawKeyType.GetProperty("FullTgi")!.GetValue(candidateType.GetProperty("RawKey")!.GetValue(modelCandidate)!)!);
+        Assert.Equal("01661233:00000000:915EFC3B177C9B5F", (string)swap32KeyType.GetProperty("FullTgi")!.GetValue(candidateType.GetProperty("Swap32Key")!.GetValue(modelCandidate)!)!);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_ExtractsCasPartTechnicalName()
+    {
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var bytes = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "ymShoes_AnkleWork_Brown");
+        var resource = new ResourceMetadata(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            SourceKind.Game,
+            "cas.package",
+            new ResourceKeyRecord(0x034AEECB, 0, 4, "CASPart"),
+            null,
+            null,
+            null,
+            null,
+            PreviewKind.Hex,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+
+        var technicalName = Ts4SeedMetadataExtractor.TryExtractTechnicalName(resource, bytes);
+
+        Assert.Equal("ymShoes_AnkleWork_Brown", technicalName);
+    }
+
+    [Fact]
+    public void Ts4ObjectCatalog_Parse_ExtractsConfirmedLocalizationHashes()
+    {
+        var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
+        var objectCatalogType = RequireType(assetsAssembly, "Sims4ResourceExplorer.Assets.Ts4ObjectCatalog");
+        var payload = CreateSyntheticObjectCatalogBytes(0x0000001Au, 0x0000000Bu, 0xA517377Au, 0x12552F9Bu, 0x00000005u, 0, 0, 176, 768, 0, 0, 2560, 0x000D0300u, 0x000D1B00u);
+
+        var parsed = objectCatalogType
+            .GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [payload])!;
+
+        Assert.Equal(0xA517377Au, (uint?)objectCatalogType.GetProperty("NameHash")!.GetValue(parsed));
+        Assert.Equal(0x12552F9Bu, (uint?)objectCatalogType.GetProperty("DescriptionHash")!.GetValue(parsed));
+        Assert.Equal(0x00000300u, (uint?)objectCatalogType.GetProperty("Word0020")!.GetValue(parsed));
+        Assert.Equal(0x00000A00u, (uint?)objectCatalogType.GetProperty("Word002C")!.GetValue(parsed));
+        Assert.Equal(0x000D0300u, (uint?)objectCatalogType.GetProperty("Word0030")!.GetValue(parsed));
+        Assert.Equal(0x000D1B00u, (uint?)objectCatalogType.GetProperty("Word0034")!.GetValue(parsed));
+        Assert.Contains("+0x002C=0x00000A00", (string?)objectCatalogType.GetProperty("RawCategorySignalSummary")!.GetValue(parsed), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_ExtractsObjectCatalogNameHash()
+    {
+        var payload = CreateSyntheticObjectCatalogBytes(0x0000001Au, 0x0000000Bu, 0xA517377Au, 0x12552F9Bu, 0x00000005u);
+
+        var nameHash = Ts4SeedMetadataExtractor.TryExtractObjectCatalogNameHash(payload);
+
+        Assert.Equal(0xA517377Au, nameHash);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_ExtractsObjectCatalogDescriptionHash()
+    {
+        var payload = CreateSyntheticObjectCatalogBytes(0x0000001Au, 0x0000000Bu, 0xA517377Au, 0x12552F9Bu, 0x00000005u);
+
+        var descriptionHash = Ts4SeedMetadataExtractor.TryExtractObjectCatalogDescriptionHash(payload);
+
+        Assert.Equal(0x12552F9Bu, descriptionHash);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_IncludesObjectCatalogRawCategorySignals()
+    {
+        var packagePath = Path.Combine(tempRoot, "objectcatalog-signals.package");
+        var sourceId = Guid.NewGuid();
+        var objectCatalog = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 1);
+        var objectDefinition = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 1);
+        var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1);
+        var modelLod = CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1);
+        var resources = new[] { objectCatalog, objectDefinition, model, modelLod };
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [objectCatalog.Key.FullTgi] = CreateSyntheticObjectCatalogBytes(0x0000001Au, 0x0000000Bu, 0xA517377Au, 0x12552F9Bu, 0x00000005u, 0, 0, 176, 768, 0, 0, 2560, 0x000D0300u, 0x000D1B00u),
+                [objectDefinition.Key.FullTgi] = CreateSyntheticObjectDefinitionBytes("collectGeode_EP01GENrough", 2, 173)
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, [])).Single();
+
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.Contains(graph.Diagnostics, message => message.Contains("ObjectCatalog raw category signals:", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("+0x002C=0x00000A00", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Ts4ObjectCatalog_Parse_ReturnsHeuristicWordAndTailViews()
+    {
+        var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
+        var objectCatalogType = RequireType(assetsAssembly, "Sims4ResourceExplorer.Assets.Ts4ObjectCatalog");
+        var payload = CreateSyntheticObjectCatalogBytes(
+            0x00000019u,
+            0x0000000Bu,
+            0x00000000u,
+            0x00000081u,
+            0xA141F327u,
+            0x9BCAEA4Cu,
+            0x00010000u,
+            0x00000000u);
+
+        var parsed = objectCatalogType
+            .GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [payload])!;
+
+        var words = ((IReadOnlyList<uint>)objectCatalogType.GetProperty("Words")!.GetValue(parsed)!).ToArray();
+        var tailQwords = ((IReadOnlyList<ulong>)objectCatalogType.GetProperty("TailQwordCandidates")!.GetValue(parsed)!).ToArray();
+        var note = (string)objectCatalogType.GetProperty("ApproximationNote")!.GetValue(parsed)!;
+
+        Assert.Equal([0x00000019u, 0x0000000Bu, 0x00000000u, 0x00000081u, 0xA141F327u, 0x9BCAEA4Cu, 0x00010000u, 0x00000000u], words);
+        Assert.Equal([0x0000000B00000019ul, 0x0000008100000000ul, 0x9BCAEA4CA141F327ul, 0x0000000000010000ul], tailQwords);
+        Assert.Contains("Category and tag fields remain heuristic", note, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -866,7 +1338,7 @@ public sealed class ExplorerTests : IDisposable
         var representation = decoded.GetType().GetProperty("Representation")!.GetValue(decoded)!;
         var summary = (string?)decoded.GetType().GetProperty("Summary")!.GetValue(decoded);
 
-        Assert.Equal(Enum.Parse(representationType, "ResourceKey"), representation);
+        Assert.Equal(Enum.Parse(representationType, "PackedUInt32"), representation);
         Assert.Contains("00B2D882", summary, StringComparison.Ordinal);
     }
 
@@ -907,8 +1379,8 @@ public sealed class ExplorerTests : IDisposable
         var bytes = CreateMinimalMatd(
             0x11111111u,
             0xB9105A6Du,
-            (0x1B9D3AC5u, 2u, 1u, CreateEmbeddedResourceKeyBytes(0x00B2D882u, 0u, 0x111ul)),
-            (0xB95C43EBu, 1u, 4u, CreatePackedTextureLikePayload(0x00B2D882u, 0u, 0xFFFFFFFFFFFFFFFFul)));
+            (0x1B9D3AC5u, 2u, 1u, CreateEmbeddedResourceKeyBytes(0x00B2D882u, 0u, 0x0115AAEAD51B0391ul)),
+            (0xB95C43EBu, 1u, 4u, CreatePackedTextureLikePayload(0x00B2D882u, 0u, 0x018AD2B576C4802Cul)));
 
         var chunk = parse(bytes);
         var textureReferences = ((System.Collections.IEnumerable)matdType.GetProperty("TextureReferences")!.GetValue(chunk)!)
@@ -1721,7 +2193,7 @@ public sealed class ExplorerTests : IDisposable
 
         var instruction = decoderType.GetMethod("CreateSyntheticSamplingInstruction", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(
             null,
-            [material, "material-color", Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!, "SeasonalFoliage", "SeasonalFoliage", Enum.Parse(coverageTierType, "StaticReady")])!;
+            [material, "material-color", Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!, "SeasonalFoliage", "SeasonalFoliage", Enum.Parse(coverageTierType, "StaticReady"), null])!;
 
         var source = (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!;
         var slot = (string)instruction.GetType().GetProperty("Slot")!.GetValue(instruction)!;
@@ -2298,7 +2770,7 @@ public sealed class ExplorerTests : IDisposable
             materialPropertyType,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             binder: null,
-            args: [0x420520E9u, "uvMapping", 1u, 1u, 4u, uvCategory, packedRepresentation, "packed32=[...]", null, new uint[] { 0x34003800, 0x3A003C00 }, null],
+            args: [0x420520E9u, "uvMapping", 1u, 1u, 4u, uvCategory, packedRepresentation, "packed32=[...]", null, new uint[] { 0x34003800, 0x3A003400 }, null],
             culture: null)!;
         var mapping = Activator.CreateInstance(
             uvMappingType,
@@ -2317,7 +2789,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.Contains("half-float", (string)args[3]!, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0.5f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(args[2])!, 3);
         Assert.Equal(0.25f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(args[2])!, 3);
-        Assert.Equal(1f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(args[2])!, 3);
+        Assert.Equal(0.25f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(args[2])!, 3);
         Assert.Equal(0.75f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(args[2])!, 3);
     }
 
@@ -2581,9 +3053,9 @@ public sealed class ExplorerTests : IDisposable
         var notes = string.Join(" | ", ((System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!).Cast<object>());
         var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
 
-        Assert.Equal(Enum.Parse(coverageTierType, "Approximate"), coverageTier);
+        Assert.Equal(Enum.Parse(coverageTierType, "StaticReady"), coverageTier);
         Assert.DoesNotContain("Projective or world-space", notes, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("animated-still-frame", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.Equal("diffuse-material-path", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
     }
 
     [Fact]
@@ -2763,10 +3235,10 @@ public sealed class ExplorerTests : IDisposable
 
         var instruction = decoderType
             .GetMethod("CreateSyntheticSamplingInstruction", BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, [material, "diffuse", mapping, "WorldToDepthMapSpaceMatrix", "WorldToDepthMapSpaceMatrix", coverageTier])!;
+            .Invoke(null, [material, "diffuse", mapping, "WorldToDepthMapSpaceMatrix", "WorldToDepthMapSpaceMatrix", coverageTier, null])!;
 
-        Assert.Equal("animated-still-frame", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
-        Assert.True((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
+        Assert.Equal("diffuse-material-path", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.False((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
     }
 
     [Fact]
@@ -3249,12 +3721,69 @@ public sealed class ExplorerTests : IDisposable
         var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
         var coverageTier = decoded.GetType().GetProperty("CoverageTier")!.GetValue(decoded);
 
-        Assert.Equal("projective-static-atlas-path", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
-        Assert.False((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
-        Assert.Equal(0.846f, (float)instruction.GetType().GetProperty("UvScaleU")!.GetValue(instruction)!, 3);
-        Assert.Equal(0.003f, (float)instruction.GetType().GetProperty("UvScaleV")!.GetValue(instruction)!, 3);
-        Assert.Equal(0.65f, (float)instruction.GetType().GetProperty("UvOffsetV")!.GetValue(instruction)!, 3);
-        Assert.Equal(Enum.Parse(coverageTierType, "StaticReady"), coverageTier);
+        var notes = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!).Cast<string>().ToArray();
+
+        Assert.Equal("diffuse-material-path", (string)instruction.GetType().GetProperty("Source")!.GetValue(instruction)!);
+        Assert.True((bool)instruction.GetType().GetProperty("IsApproximate")!.GetValue(instruction)!);
+        Assert.Equal(1f, (float)instruction.GetType().GetProperty("UvScaleU")!.GetValue(instruction)!, 3);
+        Assert.Equal(1f, (float)instruction.GetType().GetProperty("UvScaleV")!.GetValue(instruction)!, 3);
+        Assert.Equal(0f, (float)instruction.GetType().GetProperty("UvOffsetV")!.GetValue(instruction)!, 3);
+        Assert.Equal(Enum.Parse(coverageTierType, "Approximate"), coverageTier);
+        Assert.Contains(notes, static note => note.Contains("rejected as implausibly thin", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void MaterialDecoder_RejectsPackedNormalizedUvMapping_WhenWindowFallsOutsideUnitSquare()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var categoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var uvCategory = Enum.Parse(categoryType, "UvMapping");
+        var packedRepresentation = Enum.Parse(representationType, "PackedUInt32");
+        var uvProperty = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 1u, 4u, 4u, uvCategory, packedRepresentation, "packed32", null, new uint[] { 0x451EC082u, 0xF3F74395u }, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(uvProperty, 0);
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x018AD2B576C4802Cul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 1);
+        textureRefs.SetValue(diffuseRef, 0);
+
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_B9105A6D",
+                properties,
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(shaderProfileType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0xB9105A6Du, "colorMap7", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)], null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var instruction = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("SamplingInstructions")!.GetValue(decoded)!).Cast<object>().Single();
+
+        Assert.Equal(1f, (float)instruction.GetType().GetProperty("UvScaleU")!.GetValue(instruction)!, 3);
+        Assert.Equal(1f, (float)instruction.GetType().GetProperty("UvScaleV")!.GetValue(instruction)!, 3);
+        Assert.Equal(0f, (float)instruction.GetType().GetProperty("UvOffsetU")!.GetValue(instruction)!, 3);
+        Assert.Equal(0f, (float)instruction.GetType().GetProperty("UvOffsetV")!.GetValue(instruction)!, 3);
     }
 
     [Fact]
@@ -3898,7 +4427,7 @@ public sealed class ExplorerTests : IDisposable
             .ToArray();
     }
 
-    private static byte[] CreateSyntheticCasPartBytes(ResourceKeyRecord geometryKey, ResourceKeyRecord thumbnailKey, ResourceKeyRecord textureKey)
+    private static byte[] CreateSyntheticCasPartBytes(ResourceKeyRecord geometryKey, ResourceKeyRecord thumbnailKey, ResourceKeyRecord textureKey, string internalName = "Short Hair")
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.BigEndianUnicode, leaveOpen: true);
@@ -3907,7 +4436,7 @@ public sealed class ExplorerTests : IDisposable
         var tgiOffsetPosition = stream.Position;
         writer.Write(0u);
         writer.Write(0u);
-        writer.Write("Short Hair");
+        writer.Write(internalName);
         writer.Write(0f);
         writer.Write((ushort)0);
         writer.Write(0u);
@@ -3965,6 +4494,38 @@ public sealed class ExplorerTests : IDisposable
         WriteResourceKey(writer, geometryKey);
         WriteResourceKey(writer, thumbnailKey);
         WriteResourceKey(writer, textureKey);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticObjectDefinitionBytes(string internalName, ushort version, uint declaredSize, params uint[] remainingWords)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+        var nameBytes = Encoding.ASCII.GetBytes(internalName);
+
+        writer.Write(version);
+        writer.Write(declaredSize);
+        writer.Write((uint)nameBytes.Length);
+        writer.Write(nameBytes);
+        foreach (var word in remainingWords)
+        {
+            writer.Write(word);
+        }
+
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticObjectCatalogBytes(params uint[] words)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+        foreach (var word in words)
+        {
+            writer.Write(word);
+        }
+
         writer.Flush();
         return stream.ToArray();
     }
@@ -4125,20 +4686,49 @@ public sealed class ExplorerTests : IDisposable
         public Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken) =>
             Task.FromResult(resource);
 
-        public Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken) =>
+        public Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null) =>
             Task.FromResult(bytesByTgi[key.FullTgi]);
 
         public Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken) =>
             Task.FromResult(textByTgi.TryGetValue(key.FullTgi, out var value) ? value : null);
 
-        public Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken) =>
+        public Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null) =>
             Task.FromResult<byte[]?>(bytesByTgi[key.FullTgi]);
     }
 
     private sealed class FakeSceneBuildService(SceneBuildResult result) : ISceneBuildService
     {
-        public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken) =>
+        public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null) =>
             Task.FromResult(result);
+    }
+
+    private sealed class FakeGraphIndexStore : IIndexStore
+    {
+        private readonly IReadOnlyList<ResourceMetadata> resources;
+
+        public FakeGraphIndexStore(IReadOnlyList<ResourceMetadata> resources)
+        {
+            this.resources = resources;
+        }
+
+        public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task UpsertDataSourcesAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<IReadOnlyDictionary<string, PackageFingerprint>> LoadPackageFingerprintsAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyDictionary<string, PackageFingerprint>>(new Dictionary<string, PackageFingerprint>());
+        public Task<bool> NeedsRescanAsync(Guid dataSourceId, string packagePath, long fileSize, DateTimeOffset lastWriteTimeUtc, CancellationToken cancellationToken) => Task.FromResult(false);
+        public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken) => Task.FromResult(resource);
+        public Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<DataSourceDefinition>>([]);
+        public Task<AssetFacetOptions> GetAssetFacetOptionsAsync(AssetKind assetKind, CancellationToken cancellationToken) => Task.FromResult(new AssetFacetOptions([], [], [], [], []));
+        public Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<IndexedPackageRecord>>([]);
+        public Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
+        public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => resource.PackagePath == packagePath && resource.Key.FullInstance == fullInstance).ToArray());
+        public Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
+        public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => string.Equals(resource.Key.FullTgi, fullTgi, StringComparison.OrdinalIgnoreCase)).ToArray());
+        public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private static Type RequireType(Assembly assembly, string fullName) =>

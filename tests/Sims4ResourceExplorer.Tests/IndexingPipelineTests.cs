@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Core;
 using Sims4ResourceExplorer.Indexing;
+using System.Buffers.Binary;
+using System.Text;
 
 namespace Sims4ResourceExplorer.Tests;
 
@@ -360,6 +363,62 @@ public sealed class IndexingPipelineTests
     }
 
     [Fact]
+    public async Task PackageIndexCoordinator_EnrichesSeedTechnicalNamesBeforeBuildingAssetSummaries()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var packagePaths = CreatePackageFiles(root, "identity.package");
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var scanner = new FakePackageScanner(source, packagePaths);
+            var store = new FakeIndexStore();
+            var objectDefinition = new ResourceMetadata(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                packagePaths[0],
+                new ResourceKeyRecord(0xC0DB5AE7, 0x00000000, 0x0000000000000001, "ObjectDefinition"),
+                null,
+                null,
+                null,
+                null,
+                PreviewKind.Hex,
+                true,
+                true,
+                "Build/Buy seed",
+                string.Empty);
+            var catalog = new TrackingResourceCatalogService(TimeSpan.FromMilliseconds(5), 1)
+            {
+                ScanResourceFactory = _ => objectDefinition,
+                ResourceBytesFactory = resource => resource.Key.TypeName == "ObjectDefinition"
+                    ? CreateSyntheticObjectDefinitionBytes("Chair_Internal")
+                    : throw new NotSupportedException()
+            };
+
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new ExplicitAssetGraphBuilder(catalog),
+                store,
+                new IndexingRunOptions(1, 1, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(60)));
+
+            await coordinator.RunAsync([source], progress: null, CancellationToken.None);
+
+            Assert.Equal(0, catalog.EnrichCalls);
+            Assert.Equal(1, catalog.ResourceBytesCalls);
+            var persisted = store.PersistedScans.Single().Resources.Single();
+            Assert.Equal("Chair_Internal", persisted.Name);
+            var asset = store.PersistedAssets[packagePaths[0]].Single();
+            Assert.Equal("Chair_Internal", asset.DisplayName);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
     public async Task PackageIndexCoordinator_KeepsWorkerSlotsStableAndBoundsRecentEvents()
     {
         var root = CreatePackageRoot();
@@ -402,6 +461,41 @@ public sealed class IndexingPipelineTests
         }
     }
 
+    [Fact]
+    public async Task PackageIndexCoordinator_ReportsByteWeightedProgressAndSummary()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var packagePaths = CreateSizedPackageFiles(root, ("small.package", 1024), ("medium.package", 3 * 1024), ("large.package", 5 * 1024));
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var scanner = new FakePackageScanner(source, packagePaths);
+            var store = new FakeIndexStore();
+            var catalog = new TrackingResourceCatalogService(delayPerPackage: TimeSpan.Zero, progressBursts: 1);
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new FakeAssetGraphBuilder(),
+                store,
+                new IndexingRunOptions(1, 4, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(40)));
+
+            var progressEvents = new List<IndexingProgress>();
+            await coordinator.RunAsync([source], new Progress<IndexingProgress>(progressEvents.Add), CancellationToken.None);
+
+            var finalSnapshot = progressEvents.Last(progress => progress.Summary is not null);
+            Assert.Equal(9 * 1024, finalSnapshot.PackageBytesTotal);
+            Assert.Equal(9 * 1024, finalSnapshot.PackageBytesProcessed);
+            Assert.NotNull(finalSnapshot.Summary);
+            Assert.Equal(9 * 1024, finalSnapshot.Summary!.PackageBytesDiscovered);
+            Assert.Equal(9 * 1024, finalSnapshot.Summary.PackageBytesProcessed);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
     private static ResourceMetadata CreateResource(Guid sourceId, string packagePath, int index) =>
         new(
             Guid.NewGuid(),
@@ -433,6 +527,19 @@ public sealed class IndexingPipelineTests
         {
             var path = Path.Combine(root, name);
             File.WriteAllText(path, string.Empty);
+            results.Add(path);
+        }
+
+        return results;
+    }
+
+    private static IReadOnlyList<string> CreateSizedPackageFiles(string root, params (string Name, int Size)[] packages)
+    {
+        var results = new List<string>(packages.Length);
+        foreach (var (name, size) in packages)
+        {
+            var path = Path.Combine(root, name);
+            File.WriteAllBytes(path, new byte[size]);
             results.Add(path);
         }
 
@@ -501,8 +608,10 @@ public sealed class IndexingPipelineTests
 
         public int MaxConcurrency { get; private set; }
         public int EnrichCalls { get; private set; }
+        public int ResourceBytesCalls { get; private set; }
         public Func<string, ResourceMetadata>? ScanResourceFactory { get; init; }
         public Func<ResourceMetadata, ResourceMetadata>? EnrichedResourceFactory { get; init; }
+        public Func<ResourceMetadata, byte[]>? ResourceBytesFactory { get; init; }
 
         public async Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken)
         {
@@ -557,13 +666,36 @@ public sealed class IndexingPipelineTests
             return Task.FromResult(EnrichedResourceFactory?.Invoke(resource) ?? resource);
         }
 
-        public Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null)
+        {
+            ResourceBytesCalls++;
+            if (ResourceBytesFactory is null)
+            {
+                throw new NotSupportedException();
+            }
+
+            var resource = new ResourceMetadata(
+                Guid.NewGuid(),
+                Guid.Empty,
+                SourceKind.Game,
+                packagePath,
+                key,
+                null,
+                null,
+                null,
+                null,
+                PreviewKind.Hex,
+                true,
+                true,
+                string.Empty,
+                string.Empty);
+            return Task.FromResult(ResourceBytesFactory(resource));
+        }
 
         public Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken) =>
+        public Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null) =>
             throw new NotSupportedException();
     }
 
@@ -609,6 +741,7 @@ public sealed class IndexingPipelineTests
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
+        public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
@@ -641,13 +774,16 @@ public sealed class IndexingPipelineTests
             PersistedAssets[packageScan.PackagePath] = assets;
         }
 
-        private sealed class FakeWriteSession(FakeIndexStore store) : IIndexWriteSession
+        private sealed class FakeWriteSession(FakeIndexStore store) : IIndexWriteSession, IIndexWriteSessionMetricsProvider
         {
+            private IndexWriteMetrics? lastMetrics;
+
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
             public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
             {
                 store.Persist(packageScan, assets);
+                lastMetrics = new IndexWriteMetrics(TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, packageScan.Resources.Count, assets.Count, 1);
                 return Task.CompletedTask;
             }
 
@@ -658,10 +794,18 @@ public sealed class IndexingPipelineTests
                     store.Persist(item.PackageScan, item.Assets);
                 }
 
+                lastMetrics = new IndexWriteMetrics(TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, batch.Sum(static item => item.PackageScan.Resources.Count), batch.Sum(static item => item.Assets.Count), batch.Count);
                 return Task.CompletedTask;
             }
 
             public Task FinalizeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+            public IndexWriteMetrics? ConsumeLastMetrics()
+            {
+                var metrics = lastMetrics;
+                lastMetrics = null;
+                return metrics;
+            }
         }
     }
 
@@ -678,5 +822,16 @@ public sealed class IndexingPipelineTests
             Directory.CreateDirectory(CacheRoot);
             Directory.CreateDirectory(ExportRoot);
         }
+    }
+
+    private static byte[] CreateSyntheticObjectDefinitionBytes(string internalName)
+    {
+        var nameBytes = Encoding.ASCII.GetBytes(internalName);
+        var bytes = new byte[10 + nameBytes.Length];
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(0, 2), 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(2, 4), (uint)bytes.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(6, 4), (uint)nameBytes.Length);
+        nameBytes.CopyTo(bytes.AsSpan(10));
+        return bytes;
     }
 }

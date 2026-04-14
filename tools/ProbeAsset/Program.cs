@@ -1,10 +1,13 @@
+using LlamaLogic.Packages;
 using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Core;
 using Sims4ResourceExplorer.Indexing;
 using Sims4ResourceExplorer.Packages;
 using Sims4ResourceExplorer.Preview;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 
 if (args.Length > 0 && string.Equals(args[0], "--find-root", StringComparison.OrdinalIgnoreCase))
@@ -19,6 +22,21 @@ if (args.Length > 0 && string.Equals(args[0], "--find-resource", StringCompariso
     var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
     var resourceTgiToFind = args.Length > 2 ? args[2] : "00B2D882:00000000:02B59E39A0F574BE";
     return await FindResourceAsync(searchRoot, resourceTgiToFind);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--inspect-resource", StringComparison.OrdinalIgnoreCase))
+{
+    var packagePathToInspect = args.Length > 1 ? args[1] : string.Empty;
+    var resourceTgiToInspect = args.Length > 2 ? args[2] : string.Empty;
+    return await InspectResourceAsync(packagePathToInspect, resourceTgiToInspect);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--find-stbl-hash", StringComparison.OrdinalIgnoreCase))
+{
+    var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var hashText = args.Length > 2 ? args[2] : string.Empty;
+    var maxPackages = args.Length > 3 && int.TryParse(args[3], out var parsedMaxPackages) ? parsedMaxPackages : 0;
+    return await FindStringTableHashAsync(searchRoot, hashText, maxPackages);
 }
 
 if (args.Length > 0 && string.Equals(args[0], "--batch-coverage", StringComparison.OrdinalIgnoreCase))
@@ -59,6 +77,49 @@ if (args.Length > 0 && string.Equals(args[0], "--find-complex-buildbuy", StringC
     var assetsPerPackage = args.Length > 3 && int.TryParse(args[3], out var parsedAssetsPerPackage) ? parsedAssetsPerPackage : 6;
     var maxMatches = args.Length > 4 && int.TryParse(args[4], out var parsedMaxMatches) ? parsedMaxMatches : 10;
     return await FindComplexBuildBuyAsync(searchRoot, maxPackages, assetsPerPackage, maxMatches);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--survey-3d", StringComparison.OrdinalIgnoreCase))
+{
+    var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var maxPackages = args.Length > 2 && int.TryParse(args[2], out var parsedMaxPackages) ? parsedMaxPackages : 24;
+    var nameSamplesPerType = args.Length > 3 && int.TryParse(args[3], out var parsedNameSamplesPerType) ? parsedNameSamplesPerType : 5;
+    var outputPath = args.Length > 4 ? args[4] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_3d_survey.json");
+    return await RunThreeDimensionalSurveyAsync(searchRoot, maxPackages, nameSamplesPerType, outputPath);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--survey-buildbuy-identity", StringComparison.OrdinalIgnoreCase))
+{
+    var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var maxPackages = args.Length > 2 && int.TryParse(args[2], out var parsedMaxPackages) ? parsedMaxPackages : 12;
+    var pairsPerPackage = args.Length > 3 && int.TryParse(args[3], out var parsedPairsPerPackage) ? parsedPairsPerPackage : 6;
+    var outputPath = args.Length > 4 ? args[4] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_buildbuy_identity_survey.json");
+    return await RunBuildBuyIdentitySurveyAsync(searchRoot, maxPackages, pairsPerPackage, outputPath);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--resolve-buildbuy-candidates", StringComparison.OrdinalIgnoreCase))
+{
+    var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var surveyPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_buildbuy_identity_survey.json");
+    var outputPath = args.Length > 3 ? args[3] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_buildbuy_candidate_resolution.json");
+    var maxPackages = args.Length > 4 && int.TryParse(args[4], out var parsedMaxPackages) ? parsedMaxPackages : 0;
+    return await ResolveBuildBuyCandidatesAsync(searchRoot, surveyPath, outputPath, maxPackages);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--survey-cobj-fields", StringComparison.OrdinalIgnoreCase))
+{
+    var surveyPath = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_buildbuy_identity_survey.json");
+    var outputPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "probe_cobj_field_summary.json");
+    return await SummarizeObjectCatalogFieldsAsync(surveyPath, outputPath);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--profile-index", StringComparison.OrdinalIgnoreCase))
+{
+    var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var maxPackages = args.Length > 2 && int.TryParse(args[2], out var parsedMaxPackages) ? parsedMaxPackages : 48;
+    var workerCount = args.Length > 3 && int.TryParse(args[3], out var parsedWorkerCount) ? parsedWorkerCount : 16;
+    var packageOrder = args.Length > 4 ? args[4] : "largest";
+    return await RunIndexProfileAsync(searchRoot, maxPackages, workerCount, packageOrder);
 }
 
 var packagePath = args.Length > 0 ? args[0] : @"C:\GAMES\The Sims 4\EP10\ClientFullBuild0.package";
@@ -297,6 +358,190 @@ static async Task<int> FindResourceAsync(string searchRoot, string fullTgi)
     Console.WriteLine();
     Console.WriteLine("No matching resource found.");
     return 3;
+}
+
+static async Task<int> InspectResourceAsync(string packagePath, string fullTgi)
+{
+    if (string.IsNullOrWhiteSpace(packagePath) || !File.Exists(packagePath))
+    {
+        Console.Error.WriteLine($"Package not found: {packagePath}");
+        return 1;
+    }
+
+    if (!TryParseTgi(fullTgi, out var key))
+    {
+        Console.Error.WriteLine($"Invalid TGI: {fullTgi}");
+        return 2;
+    }
+
+    var catalog = new LlamaResourceCatalogService();
+    var source = new DataSourceDefinition(
+        Guid.Parse("77777777-7777-7777-7777-777777777777"),
+        "ProbeInspectResource",
+        Path.GetDirectoryName(packagePath) ?? packagePath,
+        SourceKind.Game);
+
+    var scan = await catalog.ScanPackageAsync(source, packagePath, progress: null, CancellationToken.None);
+    var resource = scan.Resources.FirstOrDefault(candidate =>
+        candidate.Key.Type == key.Type &&
+        candidate.Key.Group == key.Group &&
+        candidate.Key.FullInstance == key.FullInstance);
+
+    if (resource is null)
+    {
+        Console.Error.WriteLine($"Resource not found in package: {fullTgi}");
+        return 3;
+    }
+
+    var enriched = await catalog.EnrichResourceAsync(resource, CancellationToken.None);
+    var decodedBytes = await catalog.GetResourceBytesAsync(packagePath, resource.Key, raw: false, CancellationToken.None);
+    var rawBytes = await catalog.GetResourceBytesAsync(packagePath, resource.Key, raw: true, CancellationToken.None);
+    var text = await catalog.GetTextAsync(packagePath, resource.Key, CancellationToken.None);
+
+    Console.WriteLine("== Resource ==");
+    Console.WriteLine($"Package: {packagePath}");
+    Console.WriteLine($"TGI: {resource.Key.FullTgi}");
+    Console.WriteLine($"Type: {resource.Key.TypeName}");
+    Console.WriteLine($"PreviewKind: {resource.PreviewKind}");
+    Console.WriteLine($"Name: {enriched.Name ?? "(null)"}");
+    Console.WriteLine($"CompressedSize: {enriched.CompressedSize?.ToString() ?? "(null)"}");
+    Console.WriteLine($"UncompressedSize: {enriched.UncompressedSize?.ToString() ?? "(null)"}");
+    Console.WriteLine($"IsCompressed: {enriched.IsCompressed?.ToString() ?? "(null)"}");
+    Console.WriteLine($"Diagnostics: {enriched.Diagnostics}");
+    try
+    {
+        var stblKey = SmartSimUtilities.GetStringTableResourceKey(new System.Globalization.CultureInfo("en-US"), resource.Key.Group, resource.Key.FullInstance);
+        Console.WriteLine($"SuggestedEnUsStbl: {((uint)stblKey.Type):X8}:{stblKey.Group:X8}:{stblKey.FullInstance:X16}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"SuggestedEnUsStbl: (unavailable: {ex.Message})");
+    }
+    Console.WriteLine();
+
+    if (!string.IsNullOrWhiteSpace(text))
+    {
+        Console.WriteLine("== Text ==");
+        WriteTrimmedText(text, 4000);
+        Console.WriteLine();
+    }
+
+    if (resource.Key.TypeName == nameof(ResourceType.StringTable))
+    {
+        await DumpStringTableAsync(packagePath, resource.Key);
+        Console.WriteLine();
+    }
+
+    if (resource.Key.TypeName == "ObjectDefinition")
+    {
+        Console.WriteLine("== Object Definition Decode ==");
+        DumpObjectDefinitionDecode(decodedBytes);
+        Console.WriteLine();
+    }
+
+    if (resource.Key.TypeName == "ObjectCatalog")
+    {
+        Console.WriteLine("== Object Catalog Decode ==");
+        DumpObjectCatalogDecode(decodedBytes);
+        Console.WriteLine();
+    }
+
+    if (resource.Key.TypeName == "CASPart")
+    {
+        Console.WriteLine("== CAS Part Decode ==");
+        DumpCasPartDecode(decodedBytes);
+        Console.WriteLine();
+    }
+
+    Console.WriteLine("== Decoded Bytes ==");
+    DumpHex(decodedBytes, 256);
+    Console.WriteLine();
+    Console.WriteLine("== Raw Bytes ==");
+    DumpHex(rawBytes, 256);
+    return 0;
+}
+
+static async Task<int> FindStringTableHashAsync(string searchRoot, string hashText, int maxPackages)
+{
+    if (!Directory.Exists(searchRoot))
+    {
+        Console.Error.WriteLine($"Directory not found: {searchRoot}");
+        return 1;
+    }
+
+    hashText = hashText.Trim().Replace("0x", string.Empty, StringComparison.OrdinalIgnoreCase);
+    if (!uint.TryParse(hashText, System.Globalization.NumberStyles.HexNumber, null, out var hash))
+    {
+        Console.Error.WriteLine($"Invalid hash: {hashText}");
+        return 2;
+    }
+
+    var packages = Directory
+        .EnumerateFiles(searchRoot, "Strings_ENG_US.package", SearchOption.AllDirectories)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (maxPackages > 0 && packages.Length > maxPackages)
+    {
+        packages = packages.Take(maxPackages).ToArray();
+    }
+
+    if (packages.Length == 0)
+    {
+        Console.Error.WriteLine("No Strings_ENG_US.package files found.");
+        return 3;
+    }
+
+    var matches = new List<(string PackagePath, string Tgi, string Value)>();
+    for (var index = 0; index < packages.Length; index++)
+    {
+        var packagePath = packages[index];
+        Console.WriteLine($"[{index + 1}/{packages.Length}] {packagePath}");
+
+        await using var stream = new FileStream(
+            packagePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 131072,
+            options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var package = await DataBasePackedFile.FromStreamAsync(stream, CancellationToken.None);
+
+        foreach (var key in package.Keys)
+        {
+            if ((uint)key.Type != 0x220557DA)
+            {
+                continue;
+            }
+
+            try
+            {
+                var table = await package.GetStringTableAsync(key, false, CancellationToken.None);
+                var value = table.Get(hash);
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                var tgi = $"{(uint)key.Type:X8}:{key.Group:X8}:{key.FullInstance:X16}";
+                matches.Add((packagePath, tgi, value));
+                Console.WriteLine($"  MATCH {tgi} => {value}");
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    Console.WriteLine();
+    if (matches.Count == 0)
+    {
+        Console.WriteLine($"No STBL entries found for hash 0x{hash:X8}.");
+        return 0;
+    }
+
+    Console.WriteLine($"Found {matches.Count} STBL entr{(matches.Count == 1 ? "y" : "ies")} for hash 0x{hash:X8}.");
+    return 0;
 }
 
 static async Task<int> RunBatchCoverageAsync(string inputPath)
@@ -902,6 +1147,276 @@ static async Task<int> FindComplexBuildBuyAsync(string searchRoot, int maxPackag
     return 0;
 }
 
+static async Task<int> RunThreeDimensionalSurveyAsync(string searchRoot, int maxPackages, int nameSamplesPerType, string outputPath)
+{
+    if (!Directory.Exists(searchRoot))
+    {
+        Console.Error.WriteLine($"Directory not found: {searchRoot}");
+        return 1;
+    }
+
+    nameSamplesPerType = Math.Max(1, nameSamplesPerType);
+
+    var packagePaths = Directory
+        .EnumerateFiles(searchRoot, "*.package", SearchOption.AllDirectories)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (packagePaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No package files found under: {searchRoot}");
+        return 2;
+    }
+
+    var totalPackageCount = packagePaths.Length;
+    if (maxPackages > 0 && packagePaths.Length > maxPackages)
+    {
+        packagePaths = SelectRepresentativePackagePaths(searchRoot, packagePaths, maxPackages);
+    }
+
+    var source = new DataSourceDefinition(
+        Guid.Parse("66666666-6666-6666-6666-666666666666"),
+        "Probe3DSurvey",
+        searchRoot,
+        SourceKind.Game);
+
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+    var resourceTypeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var threeDimensionalComponentCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var cooccurringTypeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var groupPatternCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var assetKindCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var currentAssetDisplaySamples = new List<SurveyAssetDisplaySample>();
+    var packageRows = new List<SurveyPackageRow>();
+    var nameProbeStates = new Dictionary<string, SurveyNameProbeState>(StringComparer.OrdinalIgnoreCase);
+    var threeDimensionalGroupCount = 0;
+
+    for (var index = 0; index < packagePaths.Length; index++)
+    {
+        var packagePath = packagePaths[index];
+        Console.WriteLine($"[{index + 1}/{packagePaths.Length}] {packagePath}");
+
+        PackageScanResult scan;
+        try
+        {
+            scan = await catalog.ScanPackageAsync(source, packagePath, progress: null, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Scan failed: {ex.Message}");
+            packageRows.Add(new SurveyPackageRow(
+                packagePath,
+                RelativeToRoot(searchRoot, packagePath),
+                ResourceCount: 0,
+                ThreeDimensionalGroupCount: 0,
+                AssetCounts: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+                ThreeDimensionalTypes: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+                Error: ex.Message));
+            continue;
+        }
+
+        var package3dTypes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var resource in scan.Resources)
+        {
+            IncrementNamed(resourceTypeCounts, resource.Key.TypeName);
+            if (IsThreeDimensionalStructuralType(resource.Key.TypeName))
+            {
+                IncrementNamed(threeDimensionalComponentCounts, resource.Key.TypeName);
+                IncrementNamed(package3dTypes, resource.Key.TypeName);
+            }
+        }
+
+        foreach (var resource in scan.Resources.Where(resource => ShouldProbeGlobalNameType(resource.Key.TypeName)))
+        {
+            var state = GetOrCreateNameProbeState(nameProbeStates, resource.Key.TypeName);
+            if (state.Sampled >= nameSamplesPerType)
+            {
+                continue;
+            }
+
+            state.Sampled++;
+            try
+            {
+                var enriched = await catalog.EnrichResourceAsync(resource, CancellationToken.None);
+                if (string.IsNullOrWhiteSpace(enriched.Name))
+                {
+                    state.Empty++;
+                }
+                else
+                {
+                    state.Named++;
+                    if (state.Examples.Count < nameSamplesPerType)
+                    {
+                        state.Examples.Add($"{resource.Key.FullTgi} => {enriched.Name}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                state.Failed++;
+                if (state.Failures.Count < 3)
+                {
+                    state.Failures.Add(ex.Message);
+                }
+            }
+        }
+
+        var assets = graphBuilder.BuildAssetSummaries(scan);
+        var packageAssetCounts = assets
+            .GroupBy(static asset => asset.AssetKind.ToString(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in packageAssetCounts)
+        {
+            IncrementNamed(assetKindCounts, pair.Key, pair.Value);
+        }
+
+        foreach (var sample in assets
+            .OrderBy(static asset => asset.AssetKind.ToString(), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static asset => asset.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Take(4))
+        {
+            if (currentAssetDisplaySamples.Count >= 40)
+            {
+                break;
+            }
+
+            currentAssetDisplaySamples.Add(new SurveyAssetDisplaySample(
+                sample.AssetKind.ToString(),
+                RelativeToRoot(searchRoot, sample.PackagePath),
+                sample.RootKey.FullTgi,
+                sample.DisplayName,
+                sample.Category));
+        }
+
+        var sameInstanceGroups = scan.Resources
+            .GroupBy(static resource => resource.Key.FullInstance)
+            .Select(static group => group.ToArray())
+            .ToArray();
+
+        var packageThreeDimensionalGroupCount = 0;
+        foreach (var group in sameInstanceGroups)
+        {
+            if (!group.Any(resource => IsThreeDimensionalStructuralType(resource.Key.TypeName)))
+            {
+                continue;
+            }
+
+            packageThreeDimensionalGroupCount++;
+            threeDimensionalGroupCount++;
+
+            var groupTypes = group
+                .Select(static resource => resource.Key.TypeName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static typeName => typeName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            IncrementNamed(groupPatternCounts, string.Join(" + ", groupTypes));
+            foreach (var typeName in groupTypes)
+            {
+                IncrementNamed(cooccurringTypeCounts, typeName);
+            }
+
+            foreach (var typeGroup in group
+                .GroupBy(static resource => resource.Key.TypeName, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var state = GetOrCreateNameProbeState(nameProbeStates, typeGroup.Key);
+                if (state.Sampled >= nameSamplesPerType)
+                {
+                    continue;
+                }
+
+                foreach (var resource in typeGroup)
+                {
+                    if (state.Sampled >= nameSamplesPerType)
+                    {
+                        break;
+                    }
+
+                    state.Sampled++;
+                    try
+                    {
+                        var enriched = await catalog.EnrichResourceAsync(resource, CancellationToken.None);
+                        if (string.IsNullOrWhiteSpace(enriched.Name))
+                        {
+                            state.Empty++;
+                        }
+                        else
+                        {
+                            state.Named++;
+                            if (state.Examples.Count < nameSamplesPerType)
+                            {
+                                state.Examples.Add($"{resource.Key.FullTgi} => {enriched.Name}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        state.Failed++;
+                        if (state.Failures.Count < 3)
+                        {
+                            state.Failures.Add(ex.Message);
+                        }
+                    }
+                }
+            }
+        }
+
+        packageRows.Add(new SurveyPackageRow(
+            packagePath,
+            RelativeToRoot(searchRoot, packagePath),
+            scan.Resources.Count,
+            packageThreeDimensionalGroupCount,
+            packageAssetCounts,
+            package3dTypes,
+            Error: null));
+
+        Console.WriteLine(
+            $"  resources={scan.Resources.Count:N0} | 3d-groups={packageThreeDimensionalGroupCount:N0} | " +
+            $"3d-types={FormatCoverageMap(package3dTypes)} | assets={FormatCoverageMap(packageAssetCounts)}");
+    }
+
+    var report = new ThreeDimensionalSurveyReport(
+        searchRoot,
+        totalPackageCount,
+        packagePaths.Length,
+        nameSamplesPerType,
+        DateTimeOffset.UtcNow,
+        threeDimensionalGroupCount,
+        packageRows,
+        assetKindCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(),
+        resourceTypeCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(),
+        threeDimensionalComponentCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(),
+        cooccurringTypeCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(static pair => new SurveyCountRow(pair.Key, pair.Value)).Take(80).ToArray(),
+        groupPatternCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(static pair => new SurveyCountRow(pair.Key, pair.Value)).Take(80).ToArray(),
+        nameProbeStates
+            .OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(static pair => pair.Value.ToSummary())
+            .ToArray(),
+        currentAssetDisplaySamples);
+
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+    File.WriteAllText(
+        outputPath,
+        JsonSerializer.Serialize(report, new JsonSerializerOptions
+        {
+            WriteIndented = true
+        }));
+
+    Console.WriteLine();
+    Console.WriteLine($"Survey written to {outputPath}");
+    Console.WriteLine($"Packages processed: {packagePaths.Length}/{totalPackageCount}");
+    Console.WriteLine($"3D groups: {threeDimensionalGroupCount:N0}");
+    Console.WriteLine($"Current asset kinds: {FormatCoverageMap(assetKindCounts)}");
+    Console.WriteLine($"3D component types: {FormatCoverageMap(threeDimensionalComponentCounts)}");
+    Console.WriteLine($"Top 3D co-occurring types: {FormatCoverageRows(report.ThreeDimensionalCooccurringTypes.Take(12))}");
+    Console.WriteLine($"Top 3D group patterns: {FormatCoverageRows(report.ThreeDimensionalGroupPatterns.Take(8))}");
+    Console.WriteLine($"Name lookup summary: {FormatNameProbeSummary(report.NameLookupByType)}");
+
+    return 0;
+}
+
 static string[] SelectRepresentativePackagePaths(string searchRoot, string[] packagePaths, int maxPackages)
 {
     if (packagePaths.Length <= maxPackages)
@@ -912,9 +1427,9 @@ static string[] SelectRepresentativePackagePaths(string searchRoot, string[] pac
     var grouped = packagePaths
         .GroupBy(path => GetPackageBucket(searchRoot, path), StringComparer.OrdinalIgnoreCase)
         .Select(group => new Queue<string>(group
-            .OrderBy(static path => GetPackagePriority(path))
+            .OrderBy(path => GetPackagePriority(path))
             .ThenBy(static path => path, StringComparer.OrdinalIgnoreCase)))
-        .OrderBy(static queue => GetBucketPriority(queue.Peek()))
+        .OrderBy(queue => GetBucketPriority(queue.Peek()))
         .ThenBy(queue => GetPackageBucket(searchRoot, queue.Peek()), StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
@@ -951,6 +1466,686 @@ static string GetPackageBucket(string searchRoot, string packagePath)
     var relativePath = Path.GetRelativePath(searchRoot, packagePath);
     var parts = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     return parts.Length > 1 ? parts[0] : "(root)";
+}
+
+static bool IsThreeDimensionalStructuralType(string typeName) =>
+    typeName is "Model" or "ModelLOD" or "Geometry" or "BlendGeometry" or "Rig" or "MaterialDefinition";
+
+static bool ShouldProbeGlobalNameType(string typeName) =>
+    typeName is "ObjectCatalog"
+        or "ObjectDefinition"
+        or "CASPart"
+        or "CASPartThumbnail"
+        or "BodyPartThumbnail"
+        or "BuyBuildThumbnail"
+        or "StringTable";
+
+static SurveyNameProbeState GetOrCreateNameProbeState(IDictionary<string, SurveyNameProbeState> states, string typeName)
+{
+    if (states.TryGetValue(typeName, out var existing))
+    {
+        return existing;
+    }
+
+    var created = new SurveyNameProbeState(typeName);
+    states[typeName] = created;
+    return created;
+}
+
+static string RelativeToRoot(string root, string path)
+{
+    try
+    {
+        return Path.GetRelativePath(root, path);
+    }
+    catch
+    {
+        return path;
+    }
+}
+
+static string FormatCoverageRows(IEnumerable<SurveyCountRow> rows) =>
+    string.Join(", ", rows.Select(static row => $"{row.Label}={row.Count}"));
+
+static string FormatNameProbeSummary(IEnumerable<SurveyNameLookupSummary> summaries) =>
+    string.Join(
+        ", ",
+        summaries
+            .Where(static summary => summary.Sampled > 0)
+            .Select(static summary => $"{summary.TypeName}: named={summary.Named}/{summary.Sampled}, empty={summary.Empty}, failed={summary.Failed}"));
+
+static async Task<int> ResolveBuildBuyCandidatesAsync(string searchRoot, string surveyPath, string outputPath, int maxPackages)
+{
+    if (!Directory.Exists(searchRoot))
+    {
+        Console.Error.WriteLine($"Directory not found: {searchRoot}");
+        return 2;
+    }
+
+    if (!File.Exists(surveyPath))
+    {
+        Console.Error.WriteLine($"Survey file not found: {surveyPath}");
+        return 3;
+    }
+
+    var report = JsonSerializer.Deserialize<BuildBuyIdentitySurveyReport>(await File.ReadAllTextAsync(surveyPath, CancellationToken.None));
+    if (report is null)
+    {
+        Console.Error.WriteLine($"Survey file could not be parsed: {surveyPath}");
+        return 4;
+    }
+
+    var baseCandidateMap = report.Samples
+        .SelectMany(
+            static sample => sample.ObjectDefinitionReferenceCandidates,
+            static (sample, candidate) => new BuildBuyCandidateSource(
+                sample.PackagePath,
+                sample.ObjectDefinitionInternalName,
+                candidate.Offset,
+                candidate.Marker,
+                candidate.TypeName,
+                candidate.FullTgi))
+        .GroupBy(static candidate => candidate.FullTgi, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(
+            static group => group.Key,
+            static group => group.ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+    if (baseCandidateMap.Count == 0)
+    {
+        Console.Error.WriteLine("No candidate references were found in the survey.");
+        return 5;
+    }
+
+    var lookupMap = new Dictionary<string, List<BuildBuyCandidateLookup>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var (fullTgi, sources) in baseCandidateMap)
+    {
+        if (!TryParseTgi(fullTgi, out var key))
+        {
+            continue;
+        }
+
+        AddCandidateLookup(lookupMap, "exact", key, fullTgi, sources);
+        AddCandidateLookup(lookupMap, "instance-byte-reversed", key with { FullInstance = ReverseBytes(key.FullInstance) }, fullTgi, sources);
+        AddCandidateLookup(lookupMap, "instance-swap32", key with { FullInstance = SwapUInt32Halves(key.FullInstance) }, fullTgi, sources);
+        AddCandidateLookup(lookupMap, "instance-swap32-byte-reversed", key with { FullInstance = ReverseBytes(SwapUInt32Halves(key.FullInstance)) }, fullTgi, sources);
+    }
+
+    var packagePaths = Directory
+        .EnumerateFiles(searchRoot, "*.package", SearchOption.AllDirectories)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (maxPackages > 0)
+    {
+        packagePaths = SelectRepresentativePackagePaths(searchRoot, packagePaths, maxPackages);
+    }
+
+    var matchesByTgi = new Dictionary<string, List<BuildBuyCandidateMatch>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var tgi in baseCandidateMap.Keys)
+    {
+        matchesByTgi[tgi] = [];
+    }
+
+    for (var index = 0; index < packagePaths.Length; index++)
+    {
+        var packagePath = packagePaths[index];
+        Console.WriteLine($"[{index + 1}/{packagePaths.Length}] {packagePath}");
+        try
+        {
+            await using var stream = new FileStream(
+                packagePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 131072,
+                options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var package = await DataBasePackedFile.FromStreamAsync(stream, CancellationToken.None);
+
+            foreach (var key in package.Keys)
+            {
+                var fullTgi = $"{(uint)key.Type:X8}:{key.Group:X8}:{key.FullInstance:X16}";
+                if (!lookupMap.TryGetValue(fullTgi, out var lookups))
+                {
+                    continue;
+                }
+
+                foreach (var lookup in lookups)
+                {
+                    matchesByTgi[lookup.SourceFullTgi].Add(new BuildBuyCandidateMatch(
+                        RelativeToRoot(searchRoot, packagePath),
+                        key.Type.ToString(),
+                        fullTgi,
+                        lookup.TransformName,
+                        lookup.SourceCount));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  failed: {ex.Message}");
+        }
+    }
+
+    var resolved = baseCandidateMap
+        .OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+        .Select(pair => new BuildBuyCandidateResolution(
+            pair.Key,
+            pair.Value.Select(static source => source).ToArray(),
+            matchesByTgi[pair.Key].ToArray()))
+        .ToArray();
+
+    var resolutionReport = new BuildBuyCandidateResolutionReport(
+        searchRoot,
+        surveyPath,
+        packagePaths.Length,
+        DateTimeOffset.UtcNow,
+        resolved,
+        resolved.Count(static item => item.Matches.Count > 0),
+        resolved.Count(static item => item.Matches.Count == 0));
+
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+    await File.WriteAllTextAsync(
+        outputPath,
+        JsonSerializer.Serialize(resolutionReport, new JsonSerializerOptions { WriteIndented = true }),
+        CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine($"Candidate resolution written to {outputPath}");
+    Console.WriteLine($"Candidates: {resolved.Length}");
+    Console.WriteLine($"Resolved: {resolutionReport.ResolvedCandidateCount}");
+    Console.WriteLine($"Unresolved: {resolutionReport.UnresolvedCandidateCount}");
+
+    return 0;
+}
+
+static void AddCandidateLookup(
+    IDictionary<string, List<BuildBuyCandidateLookup>> lookupMap,
+    string transformName,
+    ResourceKeyRecord key,
+    string sourceFullTgi,
+    IReadOnlyList<BuildBuyCandidateSource> sources)
+{
+    var lookupTgi = key.FullTgi;
+    if (!lookupMap.TryGetValue(lookupTgi, out var lookups))
+    {
+        lookups = [];
+        lookupMap[lookupTgi] = lookups;
+    }
+
+    lookups.Add(new BuildBuyCandidateLookup(transformName, sourceFullTgi, sources.Count));
+}
+
+static ulong ReverseBytes(ulong value) => BinaryPrimitives.ReverseEndianness(value);
+
+static ulong SwapUInt32Halves(ulong value) =>
+    ((value & 0xFFFFFFFFUL) << 32) | (value >> 32);
+
+static async Task<int> RunBuildBuyIdentitySurveyAsync(string searchRoot, int maxPackages, int pairsPerPackage, string outputPath)
+{
+    if (!Directory.Exists(searchRoot))
+    {
+        Console.Error.WriteLine($"Directory not found: {searchRoot}");
+        return 2;
+    }
+
+    var packagePaths = Directory
+        .EnumerateFiles(searchRoot, "*.package", SearchOption.AllDirectories)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (packagePaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No package files found under: {searchRoot}");
+        return 3;
+    }
+
+    packagePaths = SelectRepresentativePackagePaths(searchRoot, packagePaths, Math.Max(1, maxPackages));
+
+    var source = new DataSourceDefinition(
+        Guid.Parse("66666666-6666-6666-6666-666666666666"),
+        "BuildBuyIdentitySurvey",
+        searchRoot,
+        SourceKind.Game);
+    var catalog = new LlamaResourceCatalogService();
+
+    var sampledPairs = new List<BuildBuyIdentitySample>();
+    var packageRows = new List<BuildBuyIdentityPackageRow>();
+    var catalogLengthCounts = new Dictionary<int, int>();
+    var definitionLengthCounts = new Dictionary<int, int>();
+    var firstCatalogWordCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var objectDefinitionTypeHitCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    for (var index = 0; index < packagePaths.Length; index++)
+    {
+        var packagePath = packagePaths[index];
+        Console.WriteLine($"[{index + 1}/{packagePaths.Length}] {packagePath}");
+        try
+        {
+            var scan = await catalog.ScanPackageAsync(source, packagePath, progress: null, CancellationToken.None);
+            var sameInstanceGroups = scan.Resources
+                .GroupBy(static resource => resource.Key.FullInstance)
+                .Select(static group => group.ToArray())
+                .Where(static group =>
+                    group.Any(static resource => resource.Key.TypeName == "ObjectCatalog") &&
+                    group.Any(static resource => resource.Key.TypeName == "ObjectDefinition"))
+                .OrderBy(static group => group[0].Key.FullInstance)
+                .Take(Math.Max(1, pairsPerPackage))
+                .ToArray();
+
+            var localSamples = new List<BuildBuyIdentitySample>();
+            foreach (var group in sameInstanceGroups)
+            {
+                var objectCatalog = group.First(static resource => resource.Key.TypeName == "ObjectCatalog");
+                var objectDefinition = group.First(static resource => resource.Key.TypeName == "ObjectDefinition");
+
+                var objectCatalogBytes = await catalog.GetResourceBytesAsync(objectCatalog.PackagePath, objectCatalog.Key, raw: false, CancellationToken.None);
+                var objectDefinitionBytes = await catalog.GetResourceBytesAsync(objectDefinition.PackagePath, objectDefinition.Key, raw: false, CancellationToken.None);
+
+                var catalogView = CreateObjectCatalogSurveyView(objectCatalogBytes);
+                var definitionView = CreateObjectDefinitionSurveyView(objectDefinitionBytes, scan.Resources);
+
+                IncrementCount(catalogLengthCounts, objectCatalogBytes.Length);
+                IncrementCount(definitionLengthCounts, objectDefinitionBytes.Length);
+                if (catalogView.FirstWords.Count > 0)
+                {
+                    IncrementNamed(firstCatalogWordCounts, $"0x{catalogView.FirstWords[0]:X8}");
+                }
+
+                foreach (var typeHit in definitionView.TypeHits.Select(static hit => hit.TypeName).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    IncrementNamed(objectDefinitionTypeHitCounts, typeHit);
+                }
+
+                var sample = new BuildBuyIdentitySample(
+                    RelativeToRoot(searchRoot, packagePath),
+                    objectCatalog.Key.FullInstance.ToString("X16"),
+                    objectDefinition.Key.FullTgi,
+                    objectCatalog.Key.FullTgi,
+                    definitionView.InternalName,
+                    objectDefinitionBytes.Length,
+                    objectCatalogBytes.Length,
+                    definitionView.HeaderVersion,
+                    definitionView.DeclaredSize,
+                    definitionView.InternalNameByteLength,
+                    catalogView.FirstWords,
+                    catalogView.NonZeroWordOffsets,
+                    catalogView.TailQwordCandidates,
+                    definitionView.TypeHits,
+                    definitionView.ReferenceCandidates,
+                    definitionView.TailQwordCandidates,
+                    definitionView.Note,
+                    catalogView.Note);
+
+                sampledPairs.Add(sample);
+                localSamples.Add(sample);
+            }
+
+            packageRows.Add(new BuildBuyIdentityPackageRow(
+                RelativeToRoot(searchRoot, packagePath),
+                scan.Resources.Count,
+                sameInstanceGroups.Length,
+                localSamples));
+
+            Console.WriteLine($"  objd/cobj-pairs={sameInstanceGroups.Length} | sampled={localSamples.Count}");
+        }
+        catch (Exception ex)
+        {
+            packageRows.Add(new BuildBuyIdentityPackageRow(
+                RelativeToRoot(searchRoot, packagePath),
+                0,
+                0,
+                [],
+                ex.Message));
+            Console.WriteLine($"  failed: {ex.Message}");
+        }
+    }
+
+    var report = new BuildBuyIdentitySurveyReport(
+        searchRoot,
+        packagePaths.Length,
+        pairsPerPackage,
+        DateTimeOffset.UtcNow,
+        packageRows,
+        sampledPairs,
+        catalogLengthCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key).Select(static pair => new SurveyCountRow(pair.Key.ToString(), pair.Value)).ToArray(),
+        definitionLengthCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key).Select(static pair => new SurveyCountRow(pair.Key.ToString(), pair.Value)).ToArray(),
+        firstCatalogWordCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(static pair => new SurveyCountRow(pair.Key, pair.Value)).Take(16).ToArray(),
+        objectDefinitionTypeHitCounts.OrderByDescending(static pair => pair.Value).ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(static pair => new SurveyCountRow(pair.Key, pair.Value)).ToArray());
+
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+    File.WriteAllText(
+        outputPath,
+        JsonSerializer.Serialize(report, new JsonSerializerOptions
+        {
+            WriteIndented = true
+        }));
+
+    Console.WriteLine();
+    Console.WriteLine($"Build/Buy identity survey written to {outputPath}");
+    Console.WriteLine($"Packages processed: {packagePaths.Length}");
+    Console.WriteLine($"Sampled pairs: {sampledPairs.Count}");
+    Console.WriteLine($"Catalog lengths: {FormatCoverageRows(report.ObjectCatalogLengths.Take(8))}");
+    Console.WriteLine($"Definition lengths: {FormatCoverageRows(report.ObjectDefinitionLengths.Take(8))}");
+    Console.WriteLine($"Catalog first-word frequencies: {FormatCoverageRows(report.ObjectCatalogFirstWordFrequencies.Take(8))}");
+    Console.WriteLine($"OBJD embedded type hits: {FormatCoverageRows(report.ObjectDefinitionEmbeddedTypeHits.Take(12))}");
+
+    return 0;
+}
+
+static async Task<int> SummarizeObjectCatalogFieldsAsync(string surveyPath, string outputPath)
+{
+    if (!File.Exists(surveyPath))
+    {
+        Console.Error.WriteLine($"Survey file not found: {surveyPath}");
+        return 2;
+    }
+
+    BuildBuyIdentitySurveyReport? survey;
+    await using (var stream = File.OpenRead(surveyPath))
+    {
+        survey = await JsonSerializer.DeserializeAsync<BuildBuyIdentitySurveyReport>(stream);
+    }
+
+    if (survey is null)
+    {
+        Console.Error.WriteLine($"Failed to read survey JSON: {surveyPath}");
+        return 3;
+    }
+
+    var offsets = new[]
+    {
+        0x0000, 0x0004, 0x0008, 0x000C, 0x0010, 0x001C, 0x0020, 0x002C,
+        0x0030, 0x0034, 0x0038, 0x003C, 0x0040, 0x0044, 0x0048, 0x004C,
+        0x0050, 0x0054, 0x0058, 0x005C, 0x0068, 0x006C, 0x0074, 0x0078,
+        0x007C, 0x0080, 0x0084, 0x0088, 0x0090, 0x0098, 0x00A8, 0x00AC, 0x00B0, 0x00B8, 0x00BC
+    };
+
+    var perOffset = new List<ObjectCatalogFieldSummaryRow>();
+    foreach (var offset in offsets)
+    {
+        var hits = new List<(uint Value, string Name)>();
+        foreach (var sample in survey.Samples)
+        {
+            var value = TryGetWordAtOffset(sample.ObjectCatalogNonZeroWordOffsets, offset);
+            if (value.HasValue)
+            {
+                hits.Add((value.Value, sample.ObjectDefinitionInternalName ?? sample.FullInstance));
+            }
+        }
+
+        if (hits.Count == 0)
+        {
+            continue;
+        }
+
+        var topValues = hits
+            .GroupBy(static hit => hit.Value)
+            .OrderByDescending(static group => group.Count())
+            .ThenBy(static group => group.Key)
+            .Take(8)
+            .Select(group => new SurveyCountRow($"0x{group.Key:X8}", group.Count()))
+            .ToArray();
+        var examples = hits
+            .Take(8)
+            .Select(static hit => $"0x{hit.Value:X8} => {hit.Name}")
+            .ToArray();
+
+        perOffset.Add(new ObjectCatalogFieldSummaryRow(
+            $"+0x{offset:X4}",
+            hits.Count,
+            hits.Select(static hit => hit.Value).Distinct().Count(),
+            topValues,
+            examples));
+    }
+
+    var report = new ObjectCatalogFieldSummaryReport(
+        survey.SearchRoot,
+        surveyPath,
+        DateTimeOffset.UtcNow,
+        survey.Samples.Count,
+        perOffset);
+
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+    await File.WriteAllTextAsync(
+        outputPath,
+        JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }),
+        CancellationToken.None);
+
+    Console.WriteLine($"ObjectCatalog field summary written to {outputPath}");
+    foreach (var row in perOffset.Take(16))
+    {
+        Console.WriteLine($"{row.Offset}: samples={row.SampleCount}, distinct={row.DistinctValueCount}, top={FormatCoverageRows(row.TopValues)}");
+    }
+
+    return 0;
+}
+
+static async Task<int> RunIndexProfileAsync(string searchRoot, int maxPackages, int workerCount, string packageOrder)
+{
+    if (!Directory.Exists(searchRoot))
+    {
+        Console.Error.WriteLine($"Search root not found: {searchRoot}");
+        return 1;
+    }
+
+    var profileRoot = Path.Combine(Environment.CurrentDirectory, "tmp", "profile-index-cache");
+    if (Directory.Exists(profileRoot))
+    {
+        Directory.Delete(profileRoot, recursive: true);
+    }
+
+    var cache = new ProbeCacheService(profileRoot);
+    cache.EnsureCreated();
+
+    var scanner = new ProfilingPackageScanner(searchRoot, maxPackages, packageOrder);
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+    var store = new SqliteIndexStore(cache);
+    await store.InitializeAsync(CancellationToken.None);
+
+    var coordinator = new PackageIndexCoordinator(scanner, catalog, graphBuilder, store);
+    var source = new DataSourceDefinition(
+        Guid.Parse("22222222-2222-2222-2222-222222222222"),
+        "ProfileSource",
+        searchRoot,
+        SourceKind.Game);
+
+    var progress = new Progress<IndexingProgress>(snapshot =>
+    {
+        if (snapshot.Summary is not null)
+        {
+            Console.WriteLine($"SUMMARY elapsed={snapshot.Summary.TotalElapsed:hh\\:mm\\:ss} packages={snapshot.Summary.PackagesProcessed} resources={snapshot.Summary.ResourcesProcessed}");
+            foreach (var phase in snapshot.Summary.PhaseBreakdown)
+            {
+                Console.WriteLine($"PHASE {phase}");
+            }
+        }
+    });
+
+    var stopwatch = Stopwatch.StartNew();
+    await coordinator.RunAsync([source], progress, CancellationToken.None, workerCount);
+    stopwatch.Stop();
+    Console.WriteLine($"PROFILE complete in {stopwatch.Elapsed:hh\\:mm\\:ss} root={searchRoot} maxPackages={maxPackages} workers={workerCount} order={packageOrder}");
+    return 0;
+}
+
+static uint? TryGetWordAtOffset(IReadOnlyList<string> nonZeroOffsets, int offset)
+{
+    var prefix = $"+0x{offset:X4}=";
+    foreach (var entry in nonZeroOffsets)
+    {
+        if (!entry.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var hex = entry[prefix.Length..];
+        if (hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            hex = hex[2..];
+        }
+
+        if (uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var value))
+        {
+            return value;
+        }
+    }
+
+    return null;
+}
+
+static ObjectCatalogSurveyView CreateObjectCatalogSurveyView(byte[] bytes)
+{
+    var firstWords = new List<uint>();
+    for (var offset = 0; offset + 4 <= bytes.Length && firstWords.Count < 12; offset += 4)
+    {
+        firstWords.Add(BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4)));
+    }
+
+    var nonZeroWordOffsets = new List<string>();
+    for (var offset = 0; offset + 4 <= bytes.Length && nonZeroWordOffsets.Count < 24; offset += 4)
+    {
+        var value = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
+        if (value != 0)
+        {
+            nonZeroWordOffsets.Add($"+0x{offset:X4}=0x{value:X8}");
+        }
+    }
+
+    var tailQwordCandidates = new List<string>();
+    for (var offset = Math.Max(0, bytes.Length - 32); offset + 8 <= bytes.Length; offset += 8)
+    {
+        var value = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset, 8));
+        tailQwordCandidates.Add($"+0x{offset:X4}=0x{value:X16}");
+    }
+
+    return new ObjectCatalogSurveyView(
+        firstWords,
+        nonZeroWordOffsets,
+        tailQwordCandidates,
+        "Heuristic only. These are stable binary views, not confirmed display-name/category fields.");
+}
+
+static ObjectDefinitionSurveyView CreateObjectDefinitionSurveyView(byte[] bytes, IReadOnlyList<ResourceMetadata> packageResources)
+{
+    if (bytes.Length < 10)
+    {
+        return new ObjectDefinitionSurveyView(0, 0, 0, null, [], [], [], "Too small to decode confirmed ObjectDefinition header.");
+    }
+
+    var version = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0, 2));
+    var declaredSize = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(2, 4));
+    var nameByteLength = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(6, 4));
+    var internalName = nameByteLength > 0 && 10 + nameByteLength <= bytes.Length
+        ? TryReadAscii(bytes, 10, (int)nameByteLength)
+        : null;
+
+    var typeHits = FindEmbeddedResourceTypeHits(bytes).ToArray();
+                var referenceCandidates = ExtractObjectDefinitionReferenceCandidates(bytes, packageResources).ToArray();
+    var tailQwordCandidates = new List<string>();
+    for (var offset = Math.Max(0, bytes.Length - 64); offset + 8 <= bytes.Length; offset += 8)
+    {
+        var value = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset, 8));
+        tailQwordCandidates.Add($"+0x{offset:X4}=0x{value:X16}");
+    }
+
+    return new ObjectDefinitionSurveyView(
+        version,
+        declaredSize,
+        nameByteLength,
+        internalName,
+        typeHits,
+        referenceCandidates,
+        tailQwordCandidates,
+        "Header/internal name are confirmed. Embedded resource-type hits are byte-pattern candidates only, not decoded field semantics.");
+}
+
+static IEnumerable<ObjectDefinitionReferenceCandidate> ExtractObjectDefinitionReferenceCandidates(byte[] bytes, IReadOnlyList<ResourceMetadata> packageResources)
+{
+    var byTgi = packageResources.ToDictionary(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase);
+    var yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var yieldedByOffset = new HashSet<int>();
+
+    for (var offset = 0; offset + 20 <= bytes.Length; offset++)
+    {
+        var marker = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
+        if (marker is not 4u and not 9u and not 12u)
+        {
+            continue;
+        }
+
+        var instance = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset + 4, 8));
+        var type = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset + 12, 4));
+        var group = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset + 16, 4));
+        if (type == 0 || !Enum.IsDefined(typeof(ResourceType), type))
+        {
+            continue;
+        }
+
+        var key = new ResourceKeyRecord(type, group, instance, ((ResourceType)type).ToString());
+        var isPackageLocalMatch = byTgi.TryGetValue(key.FullTgi, out var resource);
+        if (!yieldedByOffset.Add(offset))
+        {
+            continue;
+        }
+
+        var dedupeKey = $"{offset}:{key.FullTgi}";
+        if (!yielded.Add(dedupeKey))
+        {
+            continue;
+        }
+
+        yield return new ObjectDefinitionReferenceCandidate(
+            offset,
+            marker,
+            key.FullTgi,
+            key.TypeName,
+            isPackageLocalMatch,
+            isPackageLocalMatch ? resource!.PackagePath : null);
+    }
+}
+
+static IEnumerable<EmbeddedTypeHit> FindEmbeddedResourceTypeHits(byte[] bytes)
+{
+    var typeMap = new (uint TypeId, string TypeName)[]
+    {
+        ((uint)ResourceType.Model, "Model"),
+        ((uint)ResourceType.ModelLOD, "ModelLOD"),
+        ((uint)ResourceType.ObjectCatalog, "ObjectCatalog"),
+        ((uint)ResourceType.ObjectDefinition, "ObjectDefinition"),
+        ((uint)ResourceType.MaterialDefinition, "MaterialDefinition"),
+        ((uint)ResourceType.Rig, "Rig"),
+        ((uint)ResourceType.Footprint, "Footprint"),
+        ((uint)ResourceType.Slot, "Slot"),
+        ((uint)ResourceType.Light, "Light"),
+    };
+
+    foreach (var (typeId, typeName) in typeMap)
+    {
+        var pattern = BitConverter.GetBytes(typeId);
+        for (var offset = 0; offset <= bytes.Length - pattern.Length; offset++)
+        {
+            if (!bytes.AsSpan(offset, pattern.Length).SequenceEqual(pattern))
+            {
+                continue;
+            }
+
+            yield return new EmbeddedTypeHit(
+                typeName,
+                $"0x{typeId:X8}",
+                offset,
+                BuildHexWindow(bytes, Math.Max(0, offset - 8), Math.Min(bytes.Length - Math.Max(0, offset - 8), 24)));
+        }
+    }
+}
+
+static string BuildHexWindow(byte[] bytes, int offset, int length)
+{
+    if (length <= 0)
+    {
+        return string.Empty;
+    }
+
+    var slice = bytes.AsSpan(offset, length).ToArray();
+    return string.Join(" ", slice.Select(static value => value.ToString("X2")));
 }
 
 static int GetBucketPriority(string packagePath)
@@ -1107,8 +2302,14 @@ static Dictionary<string, int> ParseNamedCountLine(IReadOnlyList<string> diagnos
 static void Increment(Dictionary<SceneBuildStatus, int> counts, SceneBuildStatus status) =>
     counts[status] = counts.TryGetValue(status, out var current) ? current + 1 : 1;
 
+static void IncrementNamed(Dictionary<string, int> counts, string key, int amount = 1) =>
+    counts[key] = counts.TryGetValue(key, out var current) ? current + amount : amount;
+
+static void IncrementCount(Dictionary<int, int> counts, int key, int amount = 1) =>
+    counts[key] = counts.TryGetValue(key, out var current) ? current + amount : amount;
+
 static void Add(Dictionary<string, int> counts, string key, int value) =>
-    counts[key] = counts.TryGetValue(key, out var current) ? current + value : value;
+    IncrementNamed(counts, key, value);
 
 static void AddPayloadByFamily(
     Dictionary<string, int> counts,
@@ -1128,6 +2329,205 @@ static string FormatCoverageMap(IReadOnlyDictionary<string, int> coverage) =>
     coverage.Count == 0
         ? "(none)"
         : string.Join(", ", coverage.OrderBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(static pair => $"{pair.Key}={pair.Value}"));
+
+static void WriteTrimmedText(string text, int maxCharacters)
+{
+    if (text.Length <= maxCharacters)
+    {
+        Console.WriteLine(text);
+        return;
+    }
+
+    Console.WriteLine(text[..maxCharacters]);
+    Console.WriteLine($"... ({text.Length - maxCharacters:N0} more characters)");
+}
+
+static async Task DumpStringTableAsync(string packagePath, ResourceKeyRecord key)
+{
+    await using var stream = new FileStream(
+        packagePath,
+        FileMode.Open,
+        FileAccess.Read,
+        FileShare.ReadWrite | FileShare.Delete,
+        bufferSize: 131072,
+        options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+    await using var package = await DataBasePackedFile.FromStreamAsync(stream, CancellationToken.None);
+    var table = await package.GetStringTableAsync(new ResourceKey((ResourceType)key.Type, key.Group, key.FullInstance), false, CancellationToken.None);
+
+    Console.WriteLine("== String Table ==");
+    Console.WriteLine($"Count: {table.Count}");
+    var shown = 0;
+    foreach (var hash in table.KeyHashes)
+    {
+        Console.WriteLine($"  0x{hash:X8} => {table.Get(hash)}");
+        shown++;
+        if (shown >= 12)
+        {
+            break;
+        }
+    }
+}
+
+static void DumpHex(byte[] bytes, int maxLength)
+{
+    var limit = Math.Min(bytes.Length, maxLength);
+    Console.WriteLine($"Length: {bytes.Length:N0}");
+    for (var offset = 0; offset < limit; offset += 16)
+    {
+        var slice = bytes.AsSpan(offset, Math.Min(16, limit - offset));
+        var hex = string.Join(" ", slice.ToArray().Select(static b => b.ToString("X2")));
+        var ascii = new string(slice.ToArray().Select(static b => b is >= 32 and <= 126 ? (char)b : '.').ToArray());
+        Console.WriteLine($"{offset:X8}  {hex,-47}  {ascii}");
+    }
+
+    if (limit < bytes.Length)
+    {
+        Console.WriteLine($"... ({bytes.Length - limit:N0} more bytes)");
+    }
+}
+
+static void DumpObjectDefinitionDecode(byte[] bytes)
+{
+    if (bytes.Length < 10)
+    {
+        Console.WriteLine("Too small to decode.");
+        return;
+    }
+
+    var version = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0, 2));
+    var declaredSize = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(2, 4));
+    var nameByteLength = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(6, 4));
+    var name = TryReadAscii(bytes, 10, (int)nameByteLength);
+    var cursor = 10 + (int)nameByteLength;
+
+    Console.WriteLine($"Confirmed internal name: {name ?? "(unreadable)"}");
+    Console.WriteLine($"Header version(u16): {version}");
+    Console.WriteLine($"Header declared-size(u32): {declaredSize}");
+    Console.WriteLine($"Internal-name byte length(u32): {nameByteLength}");
+    Console.WriteLine($"Remaining payload bytes after name: {Math.Max(0, bytes.Length - cursor)}");
+
+    Console.WriteLine("Remaining payload as uint32 words:");
+    DumpUInt32Table(bytes, cursor);
+
+    if (bytes.Length - cursor >= 32)
+    {
+        Console.WriteLine("Tail qword candidates:");
+        for (var offset = Math.Max(cursor, bytes.Length - 64); offset + 8 <= bytes.Length; offset += 8)
+        {
+            var value = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset, 8));
+            Console.WriteLine($"  +0x{offset:X4} = 0x{value:X16}");
+        }
+    }
+}
+
+static void DumpObjectCatalogDecode(byte[] bytes)
+{
+    if (bytes.Length < 16)
+    {
+        Console.WriteLine("Too small to decode.");
+        return;
+    }
+
+    Console.WriteLine("Heuristic decode only. Human-readable display-name fields are not confirmed yet.");
+    DumpUInt32Table(bytes, 0);
+
+    if (bytes.Length >= 16)
+    {
+        Console.WriteLine("Tail qword candidates:");
+        for (var offset = Math.Max(0, bytes.Length - 32); offset + 8 <= bytes.Length; offset += 8)
+        {
+            var value = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset, 8));
+            Console.WriteLine($"  +0x{offset:X4} = 0x{value:X16}");
+        }
+    }
+}
+
+static void DumpCasPartDecode(byte[] bytes)
+{
+    try
+    {
+        var internalName = TryReadBigEndianUnicodeString(bytes);
+        var version = bytes.Length >= 4 ? BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(0, 4)) : 0u;
+        Console.WriteLine($"Confirmed internal name: {internalName ?? "(unreadable)"}");
+        Console.WriteLine($"Header version(u32): {version}");
+        Console.WriteLine("Heuristic decode only. Full CASP semantics still come from the dedicated parser in Assets.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"CASPart decode failed: {ex.Message}");
+    }
+}
+
+static void DumpUInt32Table(byte[] bytes, int startOffset)
+{
+    var alignedStart = Math.Max(0, startOffset);
+    for (var offset = alignedStart; offset + 4 <= bytes.Length; offset += 4)
+    {
+        var value = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
+        Console.WriteLine($"  +0x{offset:X4} = 0x{value:X8} ({value})");
+    }
+}
+
+static string? TryReadAscii(byte[] bytes, int offset, int byteLength)
+{
+    if (offset < 0 || byteLength < 0 || offset + byteLength > bytes.Length)
+    {
+        return null;
+    }
+
+    try
+    {
+        return Encoding.ASCII.GetString(bytes, offset, byteLength);
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static string? TryReadBigEndianUnicodeString(byte[] bytes)
+{
+    if (bytes.Length < 13)
+    {
+        return null;
+    }
+
+    try
+    {
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
+        _ = reader.ReadUInt32();
+        _ = reader.ReadUInt32();
+        _ = reader.ReadUInt32();
+        var byteLength = Read7BitEncodedInt(reader);
+        if (byteLength <= 0 || stream.Position + byteLength > bytes.Length)
+        {
+            return null;
+        }
+
+        return Encoding.BigEndianUnicode.GetString(reader.ReadBytes(byteLength));
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static int Read7BitEncodedInt(BinaryReader reader)
+{
+    var count = 0;
+    var shift = 0;
+    byte currentByte;
+    do
+    {
+        currentByte = reader.ReadByte();
+        count |= (currentByte & 0x7F) << shift;
+        shift += 7;
+    }
+    while ((currentByte & 0x80) != 0);
+
+    return count;
+}
 
 static bool TryParseTgi(string fullTgi, out ResourceKeyRecord key)
 {
@@ -1375,7 +2775,7 @@ static string DescribePng(byte[] pngBytes)
         var width = BinaryPrimitives.ReadInt32BigEndian(pngBytes.AsSpan(16, 4));
         var height = BinaryPrimitives.ReadInt32BigEndian(pngBytes.AsSpan(20, 4));
         using var source = new MemoryStream(pngBytes, writable: false);
-        using var png = new GZipStream(source, CompressionMode.Decompress, leaveOpen: true);
+        using var png = new GZipStream(source, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true);
         return $"bytes={pngBytes.Length} size={width}x{height}";
     }
     catch
@@ -1936,3 +3336,229 @@ file sealed record BatchCoverageSummary(
     TimeSpan? EstimatedRemaining);
 
 file sealed record ProbeProcessResult(BatchCoverageRow? Row, bool TimedOut);
+
+file sealed record BuildBuyCandidateSource(
+    string SourcePackagePath,
+    string? ObjectDefinitionInternalName,
+    int Offset,
+    uint Marker,
+    string TypeName,
+    string FullTgi);
+
+file sealed record BuildBuyCandidateMatch(
+    string PackagePath,
+    string TypeName,
+    string FullTgi,
+    string TransformName,
+    int SourceCount);
+
+file sealed record BuildBuyCandidateLookup(
+    string TransformName,
+    string SourceFullTgi,
+    int SourceCount);
+
+file sealed record BuildBuyCandidateResolution(
+    string FullTgi,
+    IReadOnlyList<BuildBuyCandidateSource> Sources,
+    IReadOnlyList<BuildBuyCandidateMatch> Matches);
+
+file sealed record BuildBuyCandidateResolutionReport(
+    string SearchRoot,
+    string SurveyPath,
+    int ProcessedPackageCount,
+    DateTimeOffset GeneratedUtc,
+    IReadOnlyList<BuildBuyCandidateResolution> Candidates,
+    int ResolvedCandidateCount,
+    int UnresolvedCandidateCount);
+
+file sealed record ThreeDimensionalSurveyReport(
+    string SearchRoot,
+    int TotalPackageCount,
+    int ProcessedPackageCount,
+    int NameSamplesPerType,
+    DateTimeOffset GeneratedUtc,
+    int ThreeDimensionalGroupCount,
+    IReadOnlyList<SurveyPackageRow> Packages,
+    IReadOnlyDictionary<string, int> AssetKindCounts,
+    IReadOnlyDictionary<string, int> ResourceTypeCounts,
+    IReadOnlyDictionary<string, int> ThreeDimensionalComponentCounts,
+    IReadOnlyList<SurveyCountRow> ThreeDimensionalCooccurringTypes,
+    IReadOnlyList<SurveyCountRow> ThreeDimensionalGroupPatterns,
+    IReadOnlyList<SurveyNameLookupSummary> NameLookupByType,
+    IReadOnlyList<SurveyAssetDisplaySample> CurrentAssetDisplaySamples);
+
+file sealed record BuildBuyIdentitySurveyReport(
+    string SearchRoot,
+    int ProcessedPackageCount,
+    int PairsPerPackage,
+    DateTimeOffset GeneratedUtc,
+    IReadOnlyList<BuildBuyIdentityPackageRow> Packages,
+    IReadOnlyList<BuildBuyIdentitySample> Samples,
+    IReadOnlyList<SurveyCountRow> ObjectCatalogLengths,
+    IReadOnlyList<SurveyCountRow> ObjectDefinitionLengths,
+    IReadOnlyList<SurveyCountRow> ObjectCatalogFirstWordFrequencies,
+    IReadOnlyList<SurveyCountRow> ObjectDefinitionEmbeddedTypeHits);
+
+file sealed record BuildBuyIdentityPackageRow(
+    string RelativePath,
+    int ResourceCount,
+    int SameInstancePairCount,
+    IReadOnlyList<BuildBuyIdentitySample> Samples,
+    string? Error = null);
+
+file sealed record BuildBuyIdentitySample(
+    string PackagePath,
+    string FullInstance,
+    string ObjectDefinitionTgi,
+    string ObjectCatalogTgi,
+    string? ObjectDefinitionInternalName,
+    int ObjectDefinitionLength,
+    int ObjectCatalogLength,
+    ushort ObjectDefinitionVersion,
+    uint ObjectDefinitionDeclaredSize,
+    uint ObjectDefinitionInternalNameByteLength,
+    IReadOnlyList<uint> ObjectCatalogFirstWords,
+    IReadOnlyList<string> ObjectCatalogNonZeroWordOffsets,
+    IReadOnlyList<string> ObjectCatalogTailQwordCandidates,
+    IReadOnlyList<EmbeddedTypeHit> ObjectDefinitionEmbeddedTypeHits,
+    IReadOnlyList<ObjectDefinitionReferenceCandidate> ObjectDefinitionReferenceCandidates,
+    IReadOnlyList<string> ObjectDefinitionTailQwordCandidates,
+    string ObjectDefinitionNote,
+    string ObjectCatalogNote);
+
+file sealed record EmbeddedTypeHit(
+    string TypeName,
+    string TypeIdHex,
+    int Offset,
+    string HexWindow);
+
+file sealed record ObjectCatalogSurveyView(
+    IReadOnlyList<uint> FirstWords,
+    IReadOnlyList<string> NonZeroWordOffsets,
+    IReadOnlyList<string> TailQwordCandidates,
+    string Note);
+
+file sealed record ObjectDefinitionSurveyView(
+    ushort HeaderVersion,
+    uint DeclaredSize,
+    uint InternalNameByteLength,
+    string? InternalName,
+    IReadOnlyList<EmbeddedTypeHit> TypeHits,
+    IReadOnlyList<ObjectDefinitionReferenceCandidate> ReferenceCandidates,
+    IReadOnlyList<string> TailQwordCandidates,
+    string Note);
+
+file sealed record ObjectDefinitionReferenceCandidate(
+    int Offset,
+    uint Marker,
+    string FullTgi,
+    string TypeName,
+    bool IsPackageLocalMatch,
+    string? PackagePath);
+
+file sealed record SurveyPackageRow(
+    string PackagePath,
+    string RelativePath,
+    int ResourceCount,
+    int ThreeDimensionalGroupCount,
+    IReadOnlyDictionary<string, int> AssetCounts,
+    IReadOnlyDictionary<string, int> ThreeDimensionalTypes,
+    string? Error);
+
+file sealed record SurveyCountRow(string Label, int Count);
+
+file sealed record ObjectCatalogFieldSummaryReport(
+    string SearchRoot,
+    string SurveyPath,
+    DateTimeOffset GeneratedUtc,
+    int SampleCount,
+    IReadOnlyList<ObjectCatalogFieldSummaryRow> Fields);
+
+file sealed record ObjectCatalogFieldSummaryRow(
+    string Offset,
+    int SampleCount,
+    int DistinctValueCount,
+    IReadOnlyList<SurveyCountRow> TopValues,
+    IReadOnlyList<string> Examples);
+
+file sealed class ProfilingPackageScanner(string rootPath, int maxPackages, string packageOrder) : IPackageScanner
+{
+    public async IAsyncEnumerable<DiscoveredPackage> DiscoverPackagesAsync(IEnumerable<DataSourceDefinition> sources, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var source = sources.FirstOrDefault();
+        if (source is null || !Directory.Exists(rootPath))
+        {
+            yield break;
+        }
+
+        var orderedPackages = Directory
+            .EnumerateFiles(rootPath, "*.package", SearchOption.AllDirectories)
+            .Select(path =>
+            {
+                var info = new FileInfo(path);
+                return new { Path = path, Info = info };
+            })
+            .Where(static item => item.Info.Exists)
+            .OrderByDescending(item => string.Equals(packageOrder, "largest", StringComparison.OrdinalIgnoreCase) ? item.Info.Length : 0L)
+            .ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(1, maxPackages))
+            .ToArray();
+
+        Console.WriteLine($"PROFILE selected {orderedPackages.Length} package(s) from {rootPath}");
+        foreach (var package in orderedPackages)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Console.WriteLine($"PROFILE package {package.Info.Length,12:N0} bytes  {package.Path}");
+            yield return new DiscoveredPackage(source, package.Path, package.Info.Length, package.Info.LastWriteTimeUtc);
+            await Task.Yield();
+        }
+    }
+}
+
+file sealed record SurveyAssetDisplaySample(
+    string AssetKind,
+    string PackagePath,
+    string RootTgi,
+    string DisplayName,
+    string? Category);
+
+file sealed record SurveyNameLookupSummary(
+    string TypeName,
+    int Sampled,
+    int Named,
+    int Empty,
+    int Failed,
+    IReadOnlyList<string> Examples,
+    IReadOnlyList<string> Failures);
+
+file sealed class SurveyNameProbeState
+{
+    public SurveyNameProbeState(string typeName)
+    {
+        TypeName = typeName;
+    }
+
+    public string TypeName { get; }
+
+    public int Sampled { get; set; }
+
+    public int Named { get; set; }
+
+    public int Empty { get; set; }
+
+    public int Failed { get; set; }
+
+    public List<string> Examples { get; } = [];
+
+    public List<string> Failures { get; } = [];
+
+    public SurveyNameLookupSummary ToSummary() =>
+        new(
+            TypeName,
+            Sampled,
+            Named,
+            Empty,
+            Failed,
+            Examples.ToArray(),
+            Failures.ToArray());
+}

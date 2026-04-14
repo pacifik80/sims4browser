@@ -7,10 +7,12 @@ namespace Sims4ResourceExplorer.Assets;
 public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
 {
     private readonly IResourceCatalogService resourceCatalogService;
+    private readonly IIndexStore? indexStore;
 
-    public ExplicitAssetGraphBuilder(IResourceCatalogService resourceCatalogService)
+    public ExplicitAssetGraphBuilder(IResourceCatalogService resourceCatalogService, IIndexStore? indexStore = null)
     {
         this.resourceCatalogService = resourceCatalogService;
+        this.indexStore = indexStore;
     }
 
     public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan)
@@ -40,30 +42,104 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         IReadOnlyList<ResourceMetadata> resources,
         IReadOnlyDictionary<ulong, ResourceMetadata[]> sameInstanceLookup)
     {
-        foreach (var model in resources.Where(static resource => resource.Key.TypeName == "Model"))
+        var emittedInstances = new HashSet<ulong>();
+
+        foreach (var group in sameInstanceLookup
+                     .OrderBy(static pair => pair.Key)
+                     .Select(static pair => pair.Value))
+        {
+            var objectDefinition = group.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectDefinition");
+            var objectCatalog = group.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectCatalog");
+            if (objectDefinition is null && objectCatalog is null)
+            {
+                continue;
+            }
+
+            var root = objectDefinition ?? objectCatalog!;
+            var model = group.FirstOrDefault(static resource => resource.Key.TypeName == "Model");
+            var modelLods = group.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
+            var materials = group.Where(static resource => resource.Key.TypeName == "MaterialDefinition").ToArray();
+            var textures = group.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
+            var thumbnail = group.FirstOrDefault(static resource => resource.Key.TypeName == "BuyBuildThumbnail")
+                ?? textures.FirstOrDefault();
+
+            var displayName = objectCatalog?.Name
+                ?? objectDefinition?.Name
+                ?? model?.Name
+                ?? $"Build/Buy Object {root.Key.FullInstance:X16}";
+
+            var diagnostics = new List<string>();
+            if (model is null)
+            {
+                diagnostics.Add("No exact-instance Model resource was indexed for this Build/Buy identity root.");
+            }
+
+            if (modelLods.Length == 0)
+            {
+                diagnostics.Add("No exact-instance ModelLOD resources were indexed for this Build/Buy identity.");
+            }
+
+            if (textures.Length == 0)
+            {
+                diagnostics.Add("No exact-instance texture resources were indexed for this Build/Buy identity.");
+            }
+
+            emittedInstances.Add(root.Key.FullInstance);
+            yield return new AssetSummary(
+                StableEntityIds.ForAsset(root.DataSourceId, AssetKind.BuildBuy, root.PackagePath, root.Key),
+                root.DataSourceId,
+                root.SourceKind,
+                AssetKind.BuildBuy,
+                displayName,
+                "Build/Buy",
+                root.PackagePath,
+                root.Key,
+                thumbnail?.Key.FullTgi,
+                1,
+                Math.Max(0, group.Length - 1),
+                string.Join(" ", diagnostics),
+                new AssetCapabilitySnapshot(
+                    HasSceneRoot: true,
+                    HasExactGeometryCandidate: modelLods.Length > 0,
+                    HasMaterialReferences: materials.Length > 0,
+                    HasTextureReferences: textures.Length > 0,
+                    HasThumbnail: thumbnail is not null,
+                    HasVariants: false,
+                    HasIdentityMetadata: true,
+                    HasRigReference: false,
+                    HasGeometryReference: modelLods.Length > 0 || model is not null,
+                    HasMaterialResourceCandidate: materials.Length > 0,
+                    HasTextureResourceCandidate: textures.Length > 0,
+                    IsPackageLocalGraph: true,
+                    HasDiagnostics: diagnostics.Count > 0),
+                PackageName: Path.GetFileName(root.PackagePath),
+                RootTypeName: root.Key.TypeName,
+                ThumbnailTypeName: thumbnail?.Key.TypeName,
+                PrimaryGeometryType: modelLods.Length > 0 ? "ModelLOD" : model?.Key.TypeName,
+                IdentityType: objectDefinition?.Key.TypeName ?? objectCatalog?.Key.TypeName,
+                CategoryNormalized: "buildbuy",
+                Description: objectCatalog?.Description,
+                CatalogSignal0020: objectCatalog?.CatalogSignal0020,
+                CatalogSignal002C: objectCatalog?.CatalogSignal002C,
+                CatalogSignal0030: objectCatalog?.CatalogSignal0030,
+                CatalogSignal0034: objectCatalog?.CatalogSignal0034);
+        }
+
+        foreach (var model in resources.Where(resource => resource.Key.TypeName == "Model" && !emittedInstances.Contains(resource.Key.FullInstance)))
         {
             sameInstanceLookup.TryGetValue(model.Key.FullInstance, out var related);
             related ??= [];
 
-            var objectDefinition = related.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectDefinition");
-            var objectCatalog = related.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectCatalog");
             var modelLods = related.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
             var materials = related.Where(static resource => resource.Key.TypeName == "MaterialDefinition").ToArray();
             var textures = related.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
             var thumbnail = related.FirstOrDefault(static resource => resource.Key.TypeName == "BuyBuildThumbnail")
                 ?? textures.FirstOrDefault();
 
-            var displayName = objectDefinition?.Name
-                ?? objectCatalog?.Name
-                ?? model.Name
-                ?? $"Build/Buy Model {model.Key.FullInstance:X16}";
-
-            var diagnostics = new List<string>();
-            if (objectCatalog is null && objectDefinition is null)
+            var diagnostics = new List<string>
             {
-                diagnostics.Add("Catalog metadata could not be matched by exact instance; using a model-rooted Build/Buy asset identity.");
-            }
-
+                "Catalog metadata could not be matched by exact instance; using a model-rooted Build/Buy asset identity."
+            };
             if (modelLods.Length == 0)
             {
                 diagnostics.Add("No exact-instance ModelLOD resources were indexed for this model.");
@@ -79,7 +155,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 model.DataSourceId,
                 model.SourceKind,
                 AssetKind.BuildBuy,
-                displayName,
+                model.Name ?? $"Build/Buy Model {model.Key.FullInstance:X16}",
                 "Build/Buy",
                 model.PackagePath,
                 model.Key,
@@ -94,7 +170,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     HasTextureReferences: textures.Length > 0,
                     HasThumbnail: thumbnail is not null,
                     HasVariants: false,
-                    HasIdentityMetadata: objectCatalog is not null || objectDefinition is not null,
+                    HasIdentityMetadata: false,
                     HasRigReference: false,
                     HasGeometryReference: modelLods.Length > 0,
                     HasMaterialResourceCandidate: materials.Length > 0,
@@ -105,7 +181,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 RootTypeName: model.Key.TypeName,
                 ThumbnailTypeName: thumbnail?.Key.TypeName,
                 PrimaryGeometryType: modelLods.Length > 0 ? "ModelLOD" : null,
-                IdentityType: objectDefinition?.Key.TypeName ?? objectCatalog?.Key.TypeName,
+                IdentityType: null,
                 CategoryNormalized: "buildbuy");
         }
     }
@@ -181,34 +257,170 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 .OrderBy(static resource => BuildBuyLinkOrder(resource.Key.TypeName))
                 .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
                 .ToArray();
+        var effectiveRoot = root!;
+        var linkedResources = linked.ToList();
 
         var diagnostics = new List<string>();
         if (root is null)
         {
-            diagnostics.Add("The model root resource is not available in the currently loaded package metadata.");
+            diagnostics.Add("The Build/Buy root resource is not available in the currently loaded package metadata.");
             return new AssetGraph(summary, linked, diagnostics);
         }
 
-        var embeddedLodLabels = Array.Empty<string>();
-        try
+        if (root.Key.TypeName is "ObjectDefinition" or "ObjectCatalog")
         {
-            var rootBytes = await resourceCatalogService
-                .GetResourceBytesAsync(root.PackagePath, root.Key, raw: false, cancellationToken)
-                .ConfigureAwait(false);
-            embeddedLodLabels = ParseEmbeddedLodLabels(rootBytes).ToArray();
-        }
-        catch
-        {
-            // Asset graph construction should stay resilient even when the root bytes
-            // use a MODL flavor we do not fully understand yet.
+            var exactModel = linkedResources.FirstOrDefault(static resource => resource.Key.TypeName == "Model");
+            if (exactModel is not null)
+            {
+                effectiveRoot = exactModel;
+                diagnostics.Add($"Using exact-instance identity-linked model root: {exactModel.Key.FullTgi}.");
+            }
+            else
+            {
+                diagnostics.Add("Build/Buy asset is rooted at identity metadata; resolving model root from linked references.");
+            }
         }
 
-        var identityResources = linked.Where(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition").ToArray();
+        var embeddedLodLabels = Array.Empty<string>();
+        if (effectiveRoot.Key.TypeName == "Model")
+        {
+            try
+            {
+                var rootBytes = await resourceCatalogService
+                    .GetResourceBytesAsync(effectiveRoot.PackagePath, effectiveRoot.Key, raw: false, cancellationToken)
+                    .ConfigureAwait(false);
+                embeddedLodLabels = ParseEmbeddedLodLabels(rootBytes).ToArray();
+            }
+            catch
+            {
+                // Asset graph construction should stay resilient even when the root bytes
+                // use a MODL flavor we do not fully understand yet.
+            }
+        }
+
+        var identityResources = (root.Key.TypeName is "ObjectCatalog" or "ObjectDefinition"
+                ? new[] { root }
+                : Array.Empty<ResourceMetadata>())
+            .Concat(linkedResources.Where(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition"))
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
         var hasObjectIdentity = identityResources.Length > 0;
-        var modelLods = linked.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
-        var textures = linked.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
-        var materialResources = linked.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
-        var materialManifest = textures.Length == 0
+        var modelLods = linkedResources.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
+        var textures = linkedResources.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
+        var materialResources = linkedResources.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
+        var objectDefinition = identityResources.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectDefinition");
+        var objectCatalog = identityResources.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectCatalog");
+        var materialManifest = Array.Empty<MaterialManifestEntry>();
+
+        if (!hasObjectIdentity)
+        {
+            diagnostics.Add("Exact-instance ObjectCatalog/ObjectDefinition metadata was not found for this model; the asset remains usable through its model-rooted identity.");
+        }
+
+        if (modelLods.Length == 0)
+        {
+            diagnostics.Add("No exact-instance ModelLOD resources were indexed for this model. The scene builder may still succeed if the model contains an embedded MLOD.");
+        }
+
+        if (materialResources.Length == 0)
+        {
+            diagnostics.Add("No exact-instance MaterialDefinition resources were indexed for this model. Scene reconstruction will rely on embedded chunks or texture approximation.");
+        }
+
+        if (objectDefinition is not null)
+        {
+            try
+            {
+                var objectDefinitionBytes = await resourceCatalogService
+                    .GetResourceBytesAsync(objectDefinition.PackagePath, objectDefinition.Key, raw: false, cancellationToken)
+                    .ConfigureAwait(false);
+                var parsedObjectDefinition = Ts4ObjectDefinition.Parse(objectDefinitionBytes);
+                diagnostics.Add($"ObjectDefinition internal name: {parsedObjectDefinition.InternalName}");
+                var referenceSummary = parsedObjectDefinition.ReferenceCandidates
+                    .Where(static candidate => candidate.RawKey.TypeName is "Model" or "Footprint" or "Rig" or "Slot")
+                    .Take(6)
+                    .Select(static candidate => $"{candidate.RawKey.TypeName} raw={candidate.RawKey.FullTgi} swap32={candidate.Swap32Key.FullTgi}")
+                    .ToArray();
+                if (referenceSummary.Length > 0)
+                {
+                    diagnostics.Add($"ObjectDefinition reference candidates: {string.Join("; ", referenceSummary)}");
+                }
+
+                if (indexStore is not null)
+                {
+                    var resolvedReferenceResources = await ResolveCrossPackageObjectDefinitionResourcesAsync(parsedObjectDefinition, cancellationToken).ConfigureAwait(false);
+                    var resolvedReferenceSummary = resolvedReferenceResources
+                        .Take(8)
+                        .Select(static match => $"{match.Key.TypeName} -> {match.Key.FullTgi} @ {Path.GetFileName(match.PackagePath)}")
+                        .ToArray();
+                    if (resolvedReferenceSummary.Length > 0)
+                    {
+                        diagnostics.Add($"ObjectDefinition swap32-resolved references: {string.Join("; ", resolvedReferenceSummary)}");
+                    }
+
+                    var resolvedModelRoot = resolvedReferenceResources
+                        .FirstOrDefault(static resource => resource.Key.TypeName == "Model");
+                    if (resolvedModelRoot is not null &&
+                        effectiveRoot.Key.FullTgi != resolvedModelRoot.Key.FullTgi &&
+                        modelLods.Length == 0 &&
+                        embeddedLodLabels.Length == 0)
+                    {
+                        effectiveRoot = resolvedModelRoot;
+                        var resolvedLinked = await indexStore
+                            .GetResourcesByInstanceAsync(resolvedModelRoot.PackagePath, resolvedModelRoot.Key.FullInstance, cancellationToken)
+                            .ConfigureAwait(false);
+                        linkedResources = linkedResources
+                            .Concat(resolvedLinked.Where(resource => resource.Key.FullTgi != resolvedModelRoot.Key.FullTgi))
+                            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+                            .Select(static group => group.First())
+                            .OrderBy(static resource => BuildBuyLinkOrder(resource.Key.TypeName))
+                            .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
+                            .ToList();
+
+                        modelLods = linkedResources.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
+                        textures = linkedResources.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
+                        materialResources = linkedResources.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
+                        diagnostics.Add($"Using swap32-resolved ObjectDefinition model root: {resolvedModelRoot.Key.FullTgi} from {Path.GetFileName(resolvedModelRoot.PackagePath)}.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"ObjectDefinition parsing failed: {ex.Message}");
+            }
+        }
+
+        if (objectCatalog is not null)
+        {
+            try
+            {
+                var objectCatalogBytes = await resourceCatalogService
+                    .GetResourceBytesAsync(objectCatalog.PackagePath, objectCatalog.Key, raw: false, cancellationToken)
+                    .ConfigureAwait(false);
+                var parsedObjectCatalog = Ts4ObjectCatalog.Parse(objectCatalogBytes);
+                diagnostics.Add($"ObjectCatalog word count: {parsedObjectCatalog.Words.Count}");
+                if (!string.IsNullOrWhiteSpace(parsedObjectCatalog.RawCategorySignalSummary))
+                {
+                    diagnostics.Add($"ObjectCatalog raw category signals: {parsedObjectCatalog.RawCategorySignalSummary}");
+                }
+                if (parsedObjectCatalog.TailQwordCandidates.Count > 0)
+                {
+                    diagnostics.Add($"ObjectCatalog heuristic tail qwords: {string.Join(", ", parsedObjectCatalog.TailQwordCandidates.Select(static value => $"0x{value:X16}"))}");
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"ObjectCatalog parsing failed: {ex.Message}");
+            }
+        }
+
+        if (effectiveRoot.Key.TypeName != "Model")
+        {
+            diagnostics.Add($"No supported Model root could be resolved for Build/Buy identity root {root.Key.FullTgi}.");
+        }
+
+        materialManifest = textures.Length == 0
             ? []
             : new[]
             {
@@ -230,27 +442,12 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     CanonicalMaterialSourceKind.FallbackCandidate)
             };
 
-        if (!hasObjectIdentity)
-        {
-            diagnostics.Add("Exact-instance ObjectCatalog/ObjectDefinition metadata was not found for this model; the asset remains usable through its model-rooted identity.");
-        }
-
-        if (modelLods.Length == 0)
-        {
-            diagnostics.Add("No exact-instance ModelLOD resources were indexed for this model. The scene builder may still succeed if the model contains an embedded MLOD.");
-        }
-
-        if (materialResources.Length == 0)
-        {
-            diagnostics.Add("No exact-instance MaterialDefinition resources were indexed for this model. Scene reconstruction will rely on embedded chunks or texture approximation.");
-        }
-
         return new AssetGraph(
             summary,
-            linked,
+            linkedResources,
             diagnostics,
             new BuildBuyAssetGraph(
-                root,
+                effectiveRoot,
                 identityResources,
                 modelLods,
                 embeddedLodLabels,
@@ -259,7 +456,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 [],
                 materialManifest,
                 diagnostics,
-                true,
+                effectiveRoot.Key.TypeName == "Model",
                 "Static Build/Buy furniture/decor objects with a model root, triangle-list MLOD geometry, no skinning/animation path, and package-local texture candidates."));
     }
 
@@ -602,6 +799,123 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         "LRLEImage" or
         "RLE2Image" or
         "RLESImage";
+
+    private async Task<string[]> ResolveCrossPackageObjectDefinitionReferencesAsync(
+        Ts4ObjectDefinition objectDefinition,
+        CancellationToken cancellationToken)
+    {
+        var resources = await ResolveCrossPackageObjectDefinitionResourcesAsync(objectDefinition, cancellationToken).ConfigureAwait(false);
+        return resources
+            .Select(static match => $"{match.Key.TypeName} -> {match.Key.FullTgi} @ {Path.GetFileName(match.PackagePath)}")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private async Task<ResourceMetadata[]> ResolveCrossPackageObjectDefinitionResourcesAsync(
+        Ts4ObjectDefinition objectDefinition,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return [];
+        }
+
+        var resources = new List<ResourceMetadata>();
+        foreach (var candidate in objectDefinition.ReferenceCandidates
+                     .Where(static candidate => candidate.Swap32Key.TypeName is "Model" or "Footprint")
+                     .Take(8))
+        {
+            var matches = await indexStore.GetResourcesByTgiAsync(candidate.Swap32Key.FullTgi, cancellationToken).ConfigureAwait(false);
+            resources.AddRange(matches);
+        }
+
+        return resources
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+    }
+}
+
+public static class Ts4SeedMetadataExtractor
+{
+    public static string? TryExtractTechnicalName(ResourceMetadata resource, byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        try
+        {
+            return resource.Key.TypeName switch
+            {
+                "ObjectDefinition" => Ts4ObjectDefinition.Parse(bytes).InternalName,
+                "CASPart" => Ts4CasPart.Parse(bytes).InternalName,
+                _ => null
+            };
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (EndOfStreamException)
+        {
+            return null;
+        }
+    }
+
+    public static uint? TryExtractObjectCatalogNameHash(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        try
+        {
+            return Ts4ObjectCatalog.Parse(bytes).NameHash;
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (EndOfStreamException)
+        {
+            return null;
+        }
+    }
+
+    public static uint? TryExtractObjectCatalogDescriptionHash(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        try
+        {
+            return Ts4ObjectCatalog.Parse(bytes).DescriptionHash;
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (EndOfStreamException)
+        {
+            return null;
+        }
+    }
+
+    public static (uint? Signal0020, uint? Signal002C, uint? Signal0030, uint? Signal0034) TryExtractObjectCatalogSignals(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        try
+        {
+            var parsed = Ts4ObjectCatalog.Parse(bytes);
+            return (parsed.Word0020, parsed.Word002C, parsed.Word0030, parsed.Word0034);
+        }
+        catch (InvalidDataException)
+        {
+            return (null, null, null, null);
+        }
+        catch (EndOfStreamException)
+        {
+            return (null, null, null, null);
+        }
+    }
 }
 
 internal sealed class Ts4CasPart
@@ -613,6 +927,7 @@ internal sealed class Ts4CasPart
 
     public required int BodyType { get; init; }
     public required uint AgeGenderFlags { get; init; }
+    public required string? InternalName { get; init; }
     public required IReadOnlyList<ResourceKeyRecord> TgiList { get; init; }
     public required IReadOnlyList<Ts4CasLod> Lods { get; init; }
     public required IReadOnlyList<byte> TextureKeyIndices { get; init; }
@@ -629,7 +944,7 @@ internal sealed class Ts4CasPart
         var version = reader.ReadUInt32();
         var tgiOffset = reader.ReadUInt32() + 8;
         _ = reader.ReadUInt32();
-        _ = ReadBigEndianUnicodeString(reader);
+        var internalName = ReadBigEndianUnicodeString(reader);
         _ = reader.ReadSingle();
         _ = reader.ReadUInt16();
         _ = reader.ReadUInt32();
@@ -722,6 +1037,7 @@ internal sealed class Ts4CasPart
         {
             BodyType = bodyType,
             AgeGenderFlags = ageGender,
+            InternalName = string.IsNullOrWhiteSpace(internalName) ? null : internalName,
             TgiList = tgiList,
             Lods = lods,
             TextureKeyIndices = BuildTextureKeyIndices(diffuseShadowKey, shadowKey, normalMapKey, specularMapKey, variantThumbnailKey, nakedKey, parentKey),
@@ -775,3 +1091,196 @@ internal sealed class Ts4CasPart
 }
 
 internal readonly record struct Ts4CasLod(byte Level, IReadOnlyList<byte> KeyIndices);
+
+internal sealed class Ts4ObjectDefinition
+{
+    public required ushort Version { get; init; }
+    public required uint DeclaredSize { get; init; }
+    public required string InternalName { get; init; }
+    public required IReadOnlyList<uint> RemainingWords { get; init; }
+    public required int RemainingByteCount { get; init; }
+    public required IReadOnlyList<Ts4ObjectDefinitionReferenceCandidate> ReferenceCandidates { get; init; }
+
+    public static Ts4ObjectDefinition Parse(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        if (bytes.Length < 10)
+        {
+            throw new InvalidDataException("ObjectDefinition payload is too small to contain the confirmed header.");
+        }
+
+        var version = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0, 2));
+        var declaredSize = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(2, 4));
+        var nameByteLength = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(6, 4));
+        if (nameByteLength == 0)
+        {
+            throw new InvalidDataException("ObjectDefinition internal name length is zero.");
+        }
+
+        if (nameByteLength > int.MaxValue || 10 + nameByteLength > bytes.Length)
+        {
+            throw new InvalidDataException("ObjectDefinition internal name extends beyond the payload.");
+        }
+
+        var nameOffset = 10;
+        var internalName = Encoding.ASCII.GetString(bytes, nameOffset, (int)nameByteLength);
+        var remainingOffset = nameOffset + (int)nameByteLength;
+        var remainingByteCount = bytes.Length - remainingOffset;
+        var remainingWords = new List<uint>(remainingByteCount / 4);
+        for (var offset = remainingOffset; offset + 4 <= bytes.Length; offset += 4)
+        {
+            remainingWords.Add(BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4)));
+        }
+
+        var referenceCandidates = ParseReferenceCandidates(bytes);
+
+        return new Ts4ObjectDefinition
+        {
+            Version = version,
+            DeclaredSize = declaredSize,
+            InternalName = internalName,
+            RemainingWords = remainingWords,
+            RemainingByteCount = remainingByteCount,
+            ReferenceCandidates = referenceCandidates
+        };
+    }
+
+    private static IReadOnlyList<Ts4ObjectDefinitionReferenceCandidate> ParseReferenceCandidates(byte[] bytes)
+    {
+        var candidates = new List<Ts4ObjectDefinitionReferenceCandidate>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (var offset = 0; offset + 20 <= bytes.Length; offset++)
+        {
+            var marker = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
+            if (marker is not 4u and not 9u and not 12u)
+            {
+                continue;
+            }
+
+            var rawInstance = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset + 4, 8));
+            var type = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset + 12, 4));
+            var group = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset + 16, 4));
+            var typeName = GuessTypeName(type);
+            if (type == 0 || typeName.StartsWith("0x", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var rawKey = new ResourceKeyRecord(type, group, rawInstance, typeName);
+            var swappedInstanceKey = rawKey with { FullInstance = SwapUInt32Halves(rawKey.FullInstance) };
+            var candidate = new Ts4ObjectDefinitionReferenceCandidate(
+                offset,
+                marker,
+                rawKey,
+                swappedInstanceKey);
+            if (!seen.Add($"{candidate.Offset}:{candidate.RawKey.FullTgi}:{candidate.Swap32Key.FullTgi}"))
+            {
+                continue;
+            }
+
+            candidates.Add(candidate);
+        }
+
+        return candidates;
+    }
+
+    private static ulong SwapUInt32Halves(ulong value) =>
+        ((value & 0xFFFFFFFFUL) << 32) | (value >> 32);
+
+    private static string GuessTypeName(uint type) => type switch
+    {
+        0x01661233 => "Model",
+        0xD382BF57 => "Footprint",
+        0xD3044521 => "Slot",
+        0x8EAF13DE => "Rig",
+        0x319E4F1D => "ObjectCatalog",
+        0xC0DB5AE7 => "ObjectDefinition",
+        _ => $"0x{type:X8}"
+    };
+}
+
+internal readonly record struct Ts4ObjectDefinitionReferenceCandidate(
+    int Offset,
+    uint Marker,
+    ResourceKeyRecord RawKey,
+    ResourceKeyRecord Swap32Key);
+
+internal sealed class Ts4ObjectCatalog
+{
+    public required uint? NameHash { get; init; }
+    public required uint? DescriptionHash { get; init; }
+    public required uint? Word0020 { get; init; }
+    public required uint? Word002C { get; init; }
+    public required uint? Word0030 { get; init; }
+    public required uint? Word0034 { get; init; }
+    public required IReadOnlyList<uint> Words { get; init; }
+    public required IReadOnlyList<ulong> TailQwordCandidates { get; init; }
+    public required string? RawCategorySignalSummary { get; init; }
+    public required string ApproximationNote { get; init; }
+
+    public static Ts4ObjectCatalog Parse(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        if (bytes.Length < 16)
+        {
+            throw new InvalidDataException("ObjectCatalog payload is too small for the current heuristic survey.");
+        }
+
+        var words = new List<uint>(bytes.Length / 4);
+        for (var offset = 0; offset + 4 <= bytes.Length; offset += 4)
+        {
+            words.Add(BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4)));
+        }
+
+        var tailQwordCandidates = new List<ulong>();
+        for (var offset = Math.Max(0, bytes.Length - 32); offset + 8 <= bytes.Length; offset += 8)
+        {
+            tailQwordCandidates.Add(BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset, 8)));
+        }
+
+        return new Ts4ObjectCatalog
+        {
+            NameHash = words.Count > 2 && words[2] != 0 ? words[2] : null,
+            DescriptionHash = words.Count > 3 && words[3] != 0 ? words[3] : null,
+            Word0020 = GetWord(words, 0x0020),
+            Word002C = GetWord(words, 0x002C),
+            Word0030 = GetWord(words, 0x0030),
+            Word0034 = GetWord(words, 0x0034),
+            Words = words,
+            TailQwordCandidates = tailQwordCandidates,
+            RawCategorySignalSummary = BuildRawCategorySignalSummary(words),
+            ApproximationNote = "NameHash (+0x08) and DescriptionHash (+0x0C) are confirmed raw localization hashes. Category and tag fields remain heuristic."
+        };
+    }
+
+    private static uint? GetWord(IReadOnlyList<uint> words, int byteOffset)
+    {
+        var index = byteOffset / 4;
+        return index < words.Count && words[index] != 0
+            ? words[index]
+            : null;
+    }
+
+    private static string? BuildRawCategorySignalSummary(IReadOnlyList<uint> words)
+    {
+        var parts = new List<string>(4);
+        AppendSignal(parts, "+0x0020", GetWord(words, 0x0020));
+        AppendSignal(parts, "+0x002C", GetWord(words, 0x002C));
+        AppendSignal(parts, "+0x0030", GetWord(words, 0x0030));
+        AppendSignal(parts, "+0x0034", GetWord(words, 0x0034));
+        return parts.Count == 0 ? null : string.Join(", ", parts);
+    }
+
+    private static void AppendSignal(List<string> parts, string label, uint? value)
+    {
+        if (!value.HasValue)
+        {
+            return;
+        }
+
+        parts.Add($"{label}=0x{value.Value:X8}");
+    }
+}

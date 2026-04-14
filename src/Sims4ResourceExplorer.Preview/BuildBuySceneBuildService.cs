@@ -59,7 +59,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     private Task<byte[]?> GetTexturePngAsync(
         string packagePath,
         ResourceKeyRecord key,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<ResourceReadProgress>? progress = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return texturePngCache.GetOrAdd(
@@ -67,13 +68,15 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             static (cacheKey, state) => state.ResourceCatalogService.GetTexturePngAsync(
                 cacheKey.PackagePath,
                 state.ResourceKey,
-                CancellationToken.None),
-            (ResourceCatalogService: resourceCatalogService, ResourceKey: key));
+                CancellationToken.None,
+                state.Progress),
+            (ResourceCatalogService: resourceCatalogService, ResourceKey: key, Progress: progress));
     }
 
-    public async Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    public async Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ReportProgress(progress, "Resolving scene root...", 0.02);
 
         if (resource.Key.TypeName is not ("Model" or "ModelLOD" or "Geometry"))
         {
@@ -88,9 +91,9 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         {
             return resource.Key.TypeName switch
             {
-                "Model" => await BuildModelSceneAsync(resource, cancellationToken),
-                "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken),
-                "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken),
+                "Model" => await BuildModelSceneAsync(resource, cancellationToken, progress),
+                "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken, progress),
+                "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken, progress),
                 _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."], SceneBuildStatus.Unsupported)
             };
         }
@@ -100,14 +103,29 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         }
     }
 
-    private async Task<SceneBuildResult> BuildModelSceneAsync(ResourceMetadata modelResource, CancellationToken cancellationToken)
+    private async Task<SceneBuildResult> BuildModelSceneAsync(ResourceMetadata modelResource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress)
     {
         Ts4RcolResource root;
         Ts4ModlChunk modl;
         try
         {
-            var resolvedModelResource = await ResolveSceneResourceMetadataAsync(modelResource, cancellationToken).ConfigureAwait(false);
-            var bytes = await resourceCatalogService.GetResourceBytesAsync(resolvedModelResource.PackagePath, resolvedModelResource.Key, raw: false, cancellationToken);
+            ReportProgress(progress, "Resolving model resource...", 0.06);
+            var resolvedModelResource = await ResolveSceneResourceMetadataAsync(
+                modelResource,
+                cancellationToken,
+                progress,
+                0.06,
+                0.10,
+                "model").ConfigureAwait(false);
+            var modelPackageName = Path.GetFileName(resolvedModelResource.PackagePath);
+            ReportProgress(progress, $"Loading model bytes from {modelPackageName}...", 0.10);
+            var bytes = await resourceCatalogService.GetResourceBytesAsync(
+                resolvedModelResource.PackagePath,
+                resolvedModelResource.Key,
+                raw: false,
+                cancellationToken,
+                CreateReadProgressReporter(progress, 0.10, 0.14, modelPackageName)).ConfigureAwait(false);
+            ReportProgress(progress, $"Parsing model root from {modelPackageName}...", 0.14);
             root = Ts4RcolResource.Parse(bytes);
             var modlChunk = root.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MODL");
             if (modlChunk is null)
@@ -155,11 +173,12 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         {
             try
             {
-                var result = await TryResolveModelLodAsync(modelResource, root, lod.Reference, cancellationToken);
+                ReportProgress(progress, $"Resolving LOD {lod.DisplayName}...", 0.24);
+                var result = await TryResolveModelLodAsync(modelResource, root, lod.Reference, cancellationToken, progress, 0.24, 0.30, lod.DisplayName);
                 diagnostics.AddRange(result.Diagnostics);
                 if (result.Resource is not null)
                 {
-                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken);
+                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken, progress);
                     if (sceneResult.Success)
                     {
                         return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray(), sceneResult.Status);
@@ -194,11 +213,12 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         {
             try
             {
-                var result = await TryResolveModelLodAsync(modelResource, root, lod.Reference, cancellationToken);
+                ReportProgress(progress, $"Resolving shadow LOD {lod.DisplayName}...", 0.28);
+                var result = await TryResolveModelLodAsync(modelResource, root, lod.Reference, cancellationToken, progress, 0.28, 0.32, $"shadow {lod.DisplayName}");
                 diagnostics.AddRange(result.Diagnostics);
                 if (result.Resource is not null)
                 {
-                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken);
+                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken, progress);
                     if (sceneResult.Success)
                     {
                         return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray(), sceneResult.Status);
@@ -219,7 +239,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     private async Task<SceneBuildResult> TryIndexedModelLodFallbackAsync(
         ResourceMetadata modelResource,
         IEnumerable<string> existingDiagnostics,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null)
     {
         var diagnostics = existingDiagnostics
             .Where(static message => !string.IsNullOrWhiteSpace(message))
@@ -241,7 +262,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         diagnostics.Add($"Falling back to {indexedCandidates.Length} exact-instance indexed ModelLOD candidate(s).");
         foreach (var candidate in indexedCandidates)
         {
-            var candidateResult = await BuildModelLodSceneAsync(candidate, modelResource, cancellationToken).ConfigureAwait(false);
+            var candidateResult = await BuildModelLodSceneAsync(candidate, modelResource, cancellationToken, progress).ConfigureAwait(false);
             if (candidateResult.Success)
             {
                 return new SceneBuildResult(true, candidateResult.Scene, diagnostics.Concat(candidateResult.Diagnostics).ToArray(), candidateResult.Status);
@@ -257,7 +278,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata modelResource,
         Ts4RcolResource root,
         IEnumerable<string> existingDiagnostics,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null)
     {
         var diagnostics = existingDiagnostics
             .Where(static message => !string.IsNullOrWhiteSpace(message))
@@ -301,7 +323,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 mlod,
                 syntheticResource,
                 modelResource,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                progress).ConfigureAwait(false);
 
             if (candidateResult.Success)
             {
@@ -317,14 +340,30 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     private async Task<SceneBuildResult> BuildModelLodSceneAsync(
         ResourceMetadata modelLodResource,
         ResourceMetadata logicalRootResource,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress)
     {
         Ts4RcolResource rcol;
         Ts4MlodChunk mlod;
         try
         {
-            var resolvedModelLodResource = await ResolveSceneResourceMetadataAsync(modelLodResource, cancellationToken).ConfigureAwait(false);
-            var bytes = await resourceCatalogService.GetResourceBytesAsync(resolvedModelLodResource.PackagePath, resolvedModelLodResource.Key, raw: false, cancellationToken);
+            ReportProgress(progress, "Resolving LOD resource...", 0.30);
+            var resolvedModelLodResource = await ResolveSceneResourceMetadataAsync(
+                modelLodResource,
+                cancellationToken,
+                progress,
+                0.30,
+                0.34,
+                "LOD").ConfigureAwait(false);
+            var lodPackageName = Path.GetFileName(resolvedModelLodResource.PackagePath);
+            ReportProgress(progress, $"Loading LOD bytes from {lodPackageName}...", 0.34);
+            var bytes = await resourceCatalogService.GetResourceBytesAsync(
+                resolvedModelLodResource.PackagePath,
+                resolvedModelLodResource.Key,
+                raw: false,
+                cancellationToken,
+                CreateReadProgressReporter(progress, 0.34, 0.40, lodPackageName)).ConfigureAwait(false);
+            ReportProgress(progress, $"Parsing LOD data from {lodPackageName}...", 0.40);
             rcol = Ts4RcolResource.Parse(bytes);
             var mlodChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag == "MLOD");
             if (mlodChunk is null)
@@ -340,7 +379,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} could not be parsed cleanly: {ex.Message}"], SceneBuildStatus.Unsupported);
         }
 
-        return await BuildParsedModelLodSceneAsync(rcol, mlod, modelLodResource, logicalRootResource, cancellationToken).ConfigureAwait(false);
+        return await BuildParsedModelLodSceneAsync(rcol, mlod, modelLodResource, logicalRootResource, cancellationToken, progress).ConfigureAwait(false);
     }
 
     private async Task<SceneBuildResult> BuildParsedModelLodSceneAsync(
@@ -348,7 +387,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         Ts4MlodChunk mlod,
         ResourceMetadata modelLodResource,
         ResourceMetadata logicalRootResource,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress)
     {
         var diagnostics = new List<string>();
         var meshes = new List<CanonicalMesh>();
@@ -361,8 +401,13 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         var materialVisualPayloadKinds = new List<string>();
         var textureCache = new Dictionary<string, CanonicalTexture?>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var mesh in mlod.Meshes)
+        for (var meshIndex = 0; meshIndex < mlod.Meshes.Count; meshIndex++)
         {
+            var mesh = mlod.Meshes[meshIndex];
+            var meshStart = 0.45 + ((double)meshIndex / Math.Max(1, mlod.Meshes.Count) * 0.40);
+            var meshSpan = 0.40 / Math.Max(1, mlod.Meshes.Count);
+            var meshLabel = $"mesh {meshIndex + 1}/{mlod.Meshes.Count} (0x{mesh.Name:X8})";
+            ReportProgress(progress, $"Building {meshLabel}: preparing...", meshStart);
             if (mesh.IsSkinned)
             {
                 diagnostics.Add($"Mesh 0x{mesh.Name:X8} references skin/static-blend data; rendering it in bind-pose approximation for preview.");
@@ -376,6 +421,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
             try
             {
+                ReportProgress(progress, $"Building {meshLabel}: resolving buffers...", meshStart + (meshSpan * 0.08));
                 var vertexBufferChunk = rcol.ResolveChunk(mesh.VertexBufferReference);
                 var indexBufferChunk = rcol.ResolveChunk(mesh.IndexBufferReference);
                 if (vertexBufferChunk is null || indexBufferChunk is null)
@@ -385,6 +431,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 }
 
                 Ts4VrtfChunk vrtf;
+                ReportProgress(progress, $"Building {meshLabel}: resolving vertex format...", meshStart + (meshSpan * 0.18));
                 var vrtfChunk = rcol.ResolveChunk(mesh.VertexFormatReference);
                 if (vrtfChunk is not null)
                 {
@@ -401,9 +448,23 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     continue;
                 }
 
+                ReportProgress(progress, $"Building {meshLabel}: decoding buffers...", meshStart + (meshSpan * 0.30));
                 var vbuf = Ts4VbufChunk.Parse(vertexBufferChunk.Data.Span);
                 var ibuf = Ts4IbufChunk.Parse(indexBufferChunk.Data.Span);
-                var materialInfo = await ResolveMaterialAsync(rcol.ResolveChunk(mesh.MaterialReference), rcol, modelLodResource, logicalRootResource, textureCache, cancellationToken);
+                var materialStageStart = meshStart + (meshSpan * 0.42);
+                var materialStageEnd = meshStart + (meshSpan * 0.60);
+                ReportProgress(progress, $"Building {meshLabel}: resolving materials...", materialStageStart);
+                var materialInfo = await ResolveMaterialAsync(
+                    rcol.ResolveChunk(mesh.MaterialReference),
+                    rcol,
+                    modelLodResource,
+                    logicalRootResource,
+                    textureCache,
+                    cancellationToken,
+                    progress,
+                    materialStageStart,
+                    materialStageEnd,
+                    meshLabel);
                 diagnostics.AddRange(materialInfo.Diagnostics);
 
                 var materialKey = mesh.MaterialReference.Raw;
@@ -434,6 +495,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                             : null));
                 }
 
+                ReportProgress(progress, $"Building {meshLabel}: decoding vertices...", meshStart + (meshSpan * 0.62));
                 var meshWindow = Ts4MeshWindow.From(mesh);
                 var vertices = vbuf.ReadVertices(
                     vrtf,
@@ -463,6 +525,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     continue;
                 }
 
+                ReportProgress(progress, $"Building {meshLabel}: assembling geometry...", meshStart + (meshSpan * 0.82));
                 var uvSelection = SelectPreferredUvCoordinates(vertices, mesh.Name, diagnostics);
                 var uv0 = vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray();
                 var uv1 = vertices.SelectMany(static vertex => vertex.Uv1 ?? []).ToArray();
@@ -484,6 +547,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     indices,
                     materialIndex,
                     []));
+                ReportProgress(progress, $"Built {meshLabel}.", meshStart + (meshSpan * 0.98));
             }
             catch (Exception ex) when (ex is NotSupportedException or InvalidDataException)
             {
@@ -497,6 +561,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
         }
 
+        ReportProgress(progress, "Finalizing scene...", 0.92);
         var scene = new CanonicalScene(
             logicalRootResource.Name ?? modelLodResource.Name ?? $"BuildBuy_{logicalRootResource.Key.FullInstance:X16}",
             meshes,
@@ -540,7 +605,31 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         }
 
         diagnostics.Insert(0, $"Selected LOD root: {modelLodResource.Key.FullTgi}");
+        ReportProgress(progress, "Scene ready.", 1.0);
         return new SceneBuildResult(true, scene, diagnostics, DetermineSceneBuildStatus(scene));
+    }
+
+    private static void ReportProgress(IProgress<PreviewBuildProgress>? progress, string status, double fraction) =>
+        progress?.Report(new PreviewBuildProgress(status, Math.Clamp(fraction, 0d, 1d)));
+
+    private static IProgress<ResourceReadProgress>? CreateReadProgressReporter(
+        IProgress<PreviewBuildProgress>? progress,
+        double start,
+        double end,
+        string packageName)
+    {
+        if (progress is null)
+        {
+            return null;
+        }
+
+        return new Progress<ResourceReadProgress>(readProgress =>
+        {
+            ReportProgress(
+                progress,
+                $"{readProgress.Status.TrimEnd('.')} {packageName}...",
+                LerpProgress(start, end, readProgress.Fraction ?? 0.5));
+        });
     }
 
     private static Ts4MaterialInfo MergeMtstMaterialCandidates(
@@ -580,12 +669,6 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(static slot => slot, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var alphaTextureSlot = !string.IsNullOrWhiteSpace(primary.AlphaTextureSlot)
-            ? primary.AlphaTextureSlot
-            : orderedCandidates
-                .Select(static candidate => candidate.Material.AlphaTextureSlot)
-                .FirstOrDefault(static slot => !string.IsNullOrWhiteSpace(slot));
-
         return primary with
         {
             Textures = texturesBySlot.Values.ToArray(),
@@ -594,7 +677,10 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             LayeredTextureSlots = layeredSlots,
-            AlphaTextureSlot = alphaTextureSlot,
+            // Alternate MTST states may contribute missing layered textures, but they should not
+            // override the primary state's opacity behavior or make an otherwise opaque material
+            // render as transparent in the viewport.
+            AlphaTextureSlot = primary.AlphaTextureSlot,
             Approximation = borrowedSlots.Count == 0
                 ? approximation
                 : $"{approximation} Borrowed slots: {string.Join(", ", borrowedSlots.OrderBy(static slot => slot, StringComparer.OrdinalIgnoreCase))}."
@@ -1024,7 +1110,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata ownerResource,
         ResourceMetadata fallbackTextureOwnerResource,
         Dictionary<string, CanonicalTexture?> textureCache,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string label = "material")
     {
         if (materialChunk is null)
         {
@@ -1033,29 +1123,38 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         if (materialChunk.Tag == "MATD")
         {
+            ReportProgress(progress, $"Building {label}: parsing MATD chunk...", LerpProgress(start, end, 0.08));
             var matd = Ts4MatdChunk.Parse(materialChunk.Data.Span);
-            return await BuildMaterialInfoAsync(matd, ownerResource, fallbackTextureOwnerResource, textureCache, CanonicalMaterialSourceKind.ExplicitMatd, cancellationToken);
+            return await BuildMaterialInfoAsync(matd, ownerResource, fallbackTextureOwnerResource, textureCache, CanonicalMaterialSourceKind.ExplicitMatd, cancellationToken, progress, LerpProgress(start, end, 0.12), LerpProgress(start, end, 0.98), label);
         }
 
         if (materialChunk.Tag == "MTST")
         {
+            ReportProgress(progress, $"Building {label}: parsing MTST chunk...", LerpProgress(start, end, 0.06));
             var mtst = Ts4MtstChunk.Parse(materialChunk.Data.Span);
             var stateCandidates = new List<(Ts4MtstEntry Entry, Ts4MatdChunk Matd, Ts4MaterialInfo Material, int Score)>();
-            foreach (var entry in mtst.Entries
+            var distinctEntries = mtst.Entries
                 .Where(static entry => !entry.Reference.IsNull)
-                .DistinctBy(static entry => (entry.Reference.Raw, entry.StateNameHash)))
+                .DistinctBy(static entry => (entry.Reference.Raw, entry.StateNameHash))
+                .ToArray();
+            for (var entryIndex = 0; entryIndex < distinctEntries.Length; entryIndex++)
             {
+                var entry = distinctEntries[entryIndex];
+                var entryFraction = distinctEntries.Length == 0 ? 0.5 : (double)(entryIndex + 1) / distinctEntries.Length;
+                ReportProgress(progress, $"Building {label}: evaluating MTST state {entryIndex + 1}/{distinctEntries.Length}...", LerpProgress(start, end, 0.10 + (entryFraction * 0.20)));
                 var matdChunk = rcol.ResolveChunk(entry.Reference);
                 if (matdChunk is not null && matdChunk.Tag == "MATD")
                 {
+                    ReportProgress(progress, $"Building {label}: decoding MTST material {entryIndex + 1}/{distinctEntries.Length}...", LerpProgress(start, end, 0.20 + (entryFraction * 0.25)));
                     var matd = Ts4MatdChunk.Parse(matdChunk.Data.Span);
-                    var materialInfo = await BuildMaterialInfoAsync(matd, ownerResource, fallbackTextureOwnerResource, textureCache, CanonicalMaterialSourceKind.MaterialSet, cancellationToken);
+                    var materialInfo = await BuildMaterialInfoAsync(matd, ownerResource, fallbackTextureOwnerResource, textureCache, CanonicalMaterialSourceKind.MaterialSet, cancellationToken, progress, LerpProgress(start, end, 0.26 + (entryFraction * 0.20)), LerpProgress(start, end, 0.72 + (entryFraction * 0.18)), label);
                     stateCandidates.Add((entry, matd, materialInfo, ScoreMaterialCandidate(materialInfo)));
                 }
             }
 
             if (stateCandidates.Count > 0)
             {
+                ReportProgress(progress, $"Building {label}: selecting best MTST state...", LerpProgress(start, end, 0.90));
                 var groupedStates = stateCandidates
                     .GroupBy(static candidate => candidate.Entry.StateNameHash)
                     .Select(static group =>
@@ -1124,15 +1223,21 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata fallbackTextureOwnerResource,
         Dictionary<string, CanonicalTexture?> textureCache,
         CanonicalMaterialSourceKind sourceKind,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string label = "material")
     {
         var diagnostics = new List<string>();
         var textures = new List<CanonicalTexture>();
+        ReportProgress(progress, $"Building {label}: decoding shader semantics...", LerpProgress(start, end, 0.08));
         Ts4ShaderProfileRegistry.Instance.TryGetProfile(matd.ShaderNameHash, out var shaderProfile);
         var materialIr = Ts4ShaderSemantics.BuildMaterialIr(matd);
         var propertiesByHash = materialIr.Properties
             .GroupBy(static property => property.Hash)
             .ToDictionary(static group => group.Key, static group => group.First());
+        ReportProgress(progress, $"Building {label}: decoding material instructions...", LerpProgress(start, end, 0.16));
         var materialDecode = Ts4MaterialDecoder.Decode(materialIr, shaderProfile);
         var effectiveSamplingInstructions = materialDecode.SamplingInstructions.ToList();
         var authoritativeSlots = matd.TextureReferences
@@ -1153,9 +1258,15 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         diagnostics.Add($"Material coverage tier: {materialDecode.CoverageTier}.");
         diagnostics.AddRange(materialDecode.Notes);
 
-        foreach (var reference in matd.TextureReferences)
+        var textureReferences = matd.TextureReferences.ToArray();
+        for (var referenceIndex = 0; referenceIndex < textureReferences.Length; referenceIndex++)
         {
+            var reference = textureReferences[referenceIndex];
+            var referenceFraction = textureReferences.Length == 0 ? 0.5 : (double)(referenceIndex + 1) / textureReferences.Length;
             var resolvedSlot = Ts4ShaderSemantics.ResolveTextureSlotName(reference, shaderProfile);
+            var textureProgressStart = LerpProgress(start, end, 0.24 + (referenceIndex / (double)Math.Max(1, textureReferences.Length) * 0.50));
+            var textureProgressEnd = LerpProgress(start, end, 0.24 + ((referenceIndex + 1) / (double)Math.Max(1, textureReferences.Length) * 0.50));
+            ReportProgress(progress, $"Building {label}: resolving {resolvedSlot} texture {referenceIndex + 1}/{textureReferences.Length}...", textureProgressStart);
             var samplingInstruction = materialDecode.SamplingInstructions
                 .FirstOrDefault(instruction => instruction.Slot.Equals(resolvedSlot, StringComparison.OrdinalIgnoreCase));
             propertiesByHash.TryGetValue(reference.PropertyHash, out var sourceProperty);
@@ -1176,9 +1287,16 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     coreKey,
                     resolvedSlot,
                     textureCache,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    progress,
+                    textureProgressStart,
+                    textureProgressEnd,
+                    label,
+                    referenceIndex + 1,
+                    textureReferences.Length).ConfigureAwait(false);
                 if (cachedTexture is null)
                 {
+                    ReportProgress(progress, $"Building {label}: confirming {resolvedSlot} texture {referenceIndex + 1}/{textureReferences.Length} in index...", LerpProgress(textureProgressStart, textureProgressEnd, 0.92));
                     explicitKeyExistsInIndex = (await GetTextureResourcesByKeyAsync(coreKey, cancellationToken).ConfigureAwait(false)).Count > 0;
                 }
 
@@ -1212,11 +1330,13 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     UvScaleU = samplingInstruction?.UvScaleU ?? cachedTexture.UvScaleU,
                     UvScaleV = samplingInstruction?.UvScaleV ?? cachedTexture.UvScaleV,
                     UvOffsetU = samplingInstruction?.UvOffsetU ?? cachedTexture.UvOffsetU,
-                    UvOffsetV = samplingInstruction?.UvOffsetV ?? cachedTexture.UvOffsetV
+                    UvOffsetV = samplingInstruction?.UvOffsetV ?? cachedTexture.UvOffsetV,
+                    IsApproximateUvTransform = samplingInstruction?.IsApproximate ?? cachedTexture.IsApproximateUvTransform
                 });
             }
         }
 
+        ReportProgress(progress, $"Building {label}: applying fallback textures...", LerpProgress(start, end, 0.82));
         IReadOnlyList<CanonicalTexture>? fallbackTextures = null;
         if (ShouldAddFallbackBaseColor(textures))
         {
@@ -1281,6 +1401,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
+        ReportProgress(progress, $"Building {label}: finalizing material...", LerpProgress(start, end, 0.96));
         var resolvedTextureSlots = new HashSet<string>(textures.Select(static texture => texture.Slot), StringComparer.OrdinalIgnoreCase);
         var effectiveResolvedSamplingInstructions = effectiveSamplingInstructions
             .Where(instruction => resolvedTextureSlots.Contains(instruction.Slot))
@@ -1380,7 +1501,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         var isTransparent = matd.IsTransparent ||
             matd.TextureReferences.Any(static texture => texture.Slot is "alpha" or "opacity" or "mask" or "cutout") ||
             !string.IsNullOrWhiteSpace(materialDecode.AlphaSourceSlot) ||
-            (materialDecode.SuggestsAlphaCutout && (textures.Count > 0 || hasPortableAlphaPayload));
+            (materialDecode.SuggestsAlphaCutout && hasPortableAlphaPayload);
         var usedFallbackTextureApproximation = textures.Count > 0 && matd.TextureReferences.All(static reference => reference.IsHeuristic);
         var hasPortableVisualTexturePayload = textures.Any(static texture => IsVisualColorTextureSlot(texture.Slot));
         var hasOnlyUtilityTexturePayload = textures.Count > 0 && !hasPortableVisualTexturePayload;
@@ -1659,32 +1780,82 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceKeyRecord key,
         string slot,
         Dictionary<string, CanonicalTexture?> textureCache,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string label = "material",
+        int referenceIndex = 1,
+        int referenceCount = 1)
     {
         var semantic = ClassifyTextureSemantic(slot);
-        var localTexture = await TryDecodeTextureAsync(ownerResource.PackagePath, key, slot, semantic, CanonicalTextureSourceKind.ExplicitLocal, cancellationToken).ConfigureAwait(false);
+        var textureLabel = $"{slot} texture {referenceIndex}/{referenceCount}";
+        ReportProgress(progress, $"Building {label}: checking local {textureLabel}...", LerpProgress(start, end, 0.06));
+        var localTexture = await TryDecodeTextureAsync(
+            ownerResource.PackagePath,
+            key,
+            slot,
+            semantic,
+            CanonicalTextureSourceKind.ExplicitLocal,
+            cancellationToken,
+            progress,
+            LerpProgress(start, end, 0.08),
+            LerpProgress(start, end, 0.24),
+            $"Building {label}: local {textureLabel}").ConfigureAwait(false);
         if (localTexture is not null)
         {
             return localTexture;
         }
 
-        foreach (var companionPackagePath in EnumerateCompanionPackagePaths(ownerResource.PackagePath))
+        var companionPackagePaths = EnumerateCompanionPackagePaths(ownerResource.PackagePath).ToArray();
+        for (var companionIndex = 0; companionIndex < companionPackagePaths.Length; companionIndex++)
         {
-            var companionTexture = await TryDecodeTextureAsync(companionPackagePath, key, slot, semantic, CanonicalTextureSourceKind.ExplicitCompanion, cancellationToken).ConfigureAwait(false);
+            var companionPackagePath = companionPackagePaths[companionIndex];
+            var companionFraction = companionPackagePaths.Length == 0 ? 1d : (double)(companionIndex + 1) / companionPackagePaths.Length;
+            ReportProgress(progress, $"Building {label}: checking companion {textureLabel} {companionIndex + 1}/{companionPackagePaths.Length}...", LerpProgress(start, end, 0.26 + (companionFraction * 0.12)));
+            var companionTexture = await TryDecodeTextureAsync(
+                companionPackagePath,
+                key,
+                slot,
+                semantic,
+                CanonicalTextureSourceKind.ExplicitCompanion,
+                cancellationToken,
+                progress,
+                LerpProgress(start, end, 0.28 + ((companionFraction - (1d / Math.Max(1, companionPackagePaths.Length))) * 0.10)),
+                LerpProgress(start, end, 0.30 + (companionFraction * 0.10)),
+                $"Building {label}: companion {textureLabel}").ConfigureAwait(false);
             if (companionTexture is not null)
             {
                 return companionTexture;
             }
         }
 
+        ReportProgress(progress, $"Building {label}: scanning index for {textureLabel}...", LerpProgress(start, end, 0.42));
         var matches = await GetTextureResourcesByKeyAsync(key, cancellationToken).ConfigureAwait(false);
-        foreach (var match in matches)
+        for (var matchIndex = 0; matchIndex < matches.Count; matchIndex++)
         {
+            var match = matches[matchIndex];
+            var matchFraction = matches.Count == 0 ? 1d : (double)(matchIndex + 1) / matches.Count;
             var cacheKey = match.Key.FullTgi;
             if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
             {
-                cachedTexture = await TryDecodeTextureAsync(match.PackagePath, match.Key, slot, semantic, CanonicalTextureSourceKind.ExplicitIndexed, cancellationToken).ConfigureAwait(false);
+                ReportProgress(progress, $"Building {label}: reading indexed {textureLabel} {matchIndex + 1}/{matches.Count}...", LerpProgress(start, end, 0.46 + (matchFraction * 0.18)));
+                cachedTexture = await TryDecodeTextureAsync(
+                    match.PackagePath,
+                    match.Key,
+                    slot,
+                    semantic,
+                    CanonicalTextureSourceKind.ExplicitIndexed,
+                    cancellationToken,
+                    progress,
+                    LerpProgress(start, end, 0.48 + ((matchFraction - (1d / Math.Max(1, matches.Count))) * 0.14)),
+                    LerpProgress(start, end, 0.50 + (matchFraction * 0.14)),
+                    $"Building {label}: indexed {textureLabel}").ConfigureAwait(false);
                 textureCache[cacheKey] = cachedTexture;
+            }
+            else
+            {
+                ReportProgress(progress, $"Building {label}: reusing cached indexed {textureLabel} {matchIndex + 1}/{matches.Count}...", LerpProgress(start, end, 0.46 + (matchFraction * 0.18)));
             }
 
             if (cachedTexture is not null)
@@ -1693,15 +1864,30 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
-        foreach (var globalClientPackagePath in EnumerateGlobalClientPackagePaths(ownerResource.PackagePath))
+        var globalClientPackagePaths = EnumerateGlobalClientPackagePaths(ownerResource.PackagePath).ToArray();
+        for (var globalIndex = 0; globalIndex < globalClientPackagePaths.Length; globalIndex++)
         {
-            var globalClientTexture = await TryDecodeTextureAsync(globalClientPackagePath, key, slot, semantic, CanonicalTextureSourceKind.ExplicitIndexed, cancellationToken).ConfigureAwait(false);
+            var globalClientPackagePath = globalClientPackagePaths[globalIndex];
+            var globalFraction = globalClientPackagePaths.Length == 0 ? 1d : (double)(globalIndex + 1) / globalClientPackagePaths.Length;
+            ReportProgress(progress, $"Building {label}: checking global package {globalIndex + 1}/{globalClientPackagePaths.Length} for {textureLabel}...", LerpProgress(start, end, 0.70 + (globalFraction * 0.18)));
+            var globalClientTexture = await TryDecodeTextureAsync(
+                globalClientPackagePath,
+                key,
+                slot,
+                semantic,
+                CanonicalTextureSourceKind.ExplicitIndexed,
+                cancellationToken,
+                progress,
+                LerpProgress(start, end, 0.72 + ((globalFraction - (1d / Math.Max(1, globalClientPackagePaths.Length))) * 0.14)),
+                LerpProgress(start, end, 0.74 + (globalFraction * 0.14)),
+                $"Building {label}: global {textureLabel}").ConfigureAwait(false);
             if (globalClientTexture is not null)
             {
                 return globalClientTexture;
             }
         }
 
+        ReportProgress(progress, $"Building {label}: no portable {textureLabel} found.", LerpProgress(start, end, 0.96));
         return null;
     }
 
@@ -1819,24 +2005,66 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         return null;
     }
 
-    private async Task<ResourceMetadata> ResolveSceneResourceMetadataAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    private async Task<ResourceMetadata> ResolveSceneResourceMetadataAsync(
+        ResourceMetadata resource,
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string label = "resource")
     {
-        var bytes = await resourceCatalogService.GetResourceBytesAsync(resource.PackagePath, resource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+        var packageName = Path.GetFileName(resource.PackagePath);
+        ReportProgress(progress, $"Checking {label} in {packageName}...", LerpProgress(start, end, 0.08));
+        var bytes = await resourceCatalogService.GetResourceBytesAsync(
+            resource.PackagePath,
+            resource.Key,
+            raw: false,
+            cancellationToken,
+            CreateReadProgressReporter(progress, LerpProgress(start, end, 0.10), LerpProgress(start, end, 0.22), packageName)).ConfigureAwait(false);
         if (bytes.Length > 0)
         {
             return resource;
         }
 
-        foreach (var companionPackagePath in EnumerateCompanionPackagePaths(resource.PackagePath))
+        var companionPackagePaths = EnumerateCompanionPackagePaths(resource.PackagePath).ToArray();
+        for (var companionIndex = 0; companionIndex < companionPackagePaths.Length; companionIndex++)
         {
-            var companionBytes = await resourceCatalogService.GetResourceBytesAsync(companionPackagePath, resource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+            var companionPackagePath = companionPackagePaths[companionIndex];
+            var companionFraction = companionPackagePaths.Length == 0
+                ? 0.5
+                : (double)(companionIndex + 1) / companionPackagePaths.Length;
+            ReportProgress(
+                progress,
+                $"Checking companion package {Path.GetFileName(companionPackagePath)} for {label}...",
+                LerpProgress(start, end, 0.20 + (companionFraction * 0.55)));
+            var companionBytes = await resourceCatalogService.GetResourceBytesAsync(
+                companionPackagePath,
+                resource.Key,
+                raw: false,
+                cancellationToken,
+                CreateReadProgressReporter(
+                    progress,
+                    LerpProgress(start, end, 0.24 + ((companionFraction - (1d / Math.Max(1, companionPackagePaths.Length))) * 0.40)),
+                    LerpProgress(start, end, 0.28 + (companionFraction * 0.40)),
+                    Path.GetFileName(companionPackagePath))).ConfigureAwait(false);
             if (companionBytes.Length > 0)
             {
                 return resource with { PackagePath = companionPackagePath };
             }
         }
 
+        ReportProgress(progress, $"Keeping original {label} package path.", LerpProgress(start, end, 0.95));
         return resource;
+    }
+
+    private static double LerpProgress(double start, double end, double fraction)
+    {
+        if (end <= start)
+        {
+            return start;
+        }
+
+        return start + ((end - start) * Math.Clamp(fraction, 0d, 1d));
     }
 
     private async Task<CanonicalTexture?> TryDecodeTextureAsync(
@@ -1845,11 +2073,28 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         string slot,
         CanonicalTextureSemantic semantic,
         CanonicalTextureSourceKind sourceKind,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string stageLabel = "texture")
     {
         try
         {
-            var pngBytes = await GetTexturePngAsync(packagePath, key, cancellationToken).ConfigureAwait(false);
+            var packageName = Path.GetFileName(packagePath);
+            ReportProgress(progress, $"{stageLabel}: reading {packageName}...", LerpProgress(start, end, 0.12));
+            var pngBytes = await GetTexturePngAsync(
+                packagePath,
+                key,
+                cancellationToken,
+                CreateReadProgressReporter(progress, LerpProgress(start, end, 0.18), LerpProgress(start, end, 0.82), packageName)).ConfigureAwait(false);
+            if (pngBytes is null)
+            {
+                ReportProgress(progress, $"{stageLabel}: no image in {packageName}.", LerpProgress(start, end, 0.88));
+                return null;
+            }
+
+            ReportProgress(progress, $"{stageLabel}: decoding {packageName}...", LerpProgress(start, end, 0.96));
             return pngBytes is null
                 ? null
                 : new CanonicalTexture(
@@ -1863,6 +2108,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         }
         catch
         {
+            ReportProgress(progress, $"{stageLabel}: failed in {Path.GetFileName(packagePath)}.", LerpProgress(start, end, 0.88));
             return null;
         }
     }
@@ -1942,7 +2188,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata modelResource,
         Ts4RcolResource root,
         Ts4ChunkReference reference,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string label = "LOD")
     {
         cancellationToken.ThrowIfCancellationRequested();
         var diagnostics = new List<string>();
@@ -1954,6 +2204,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         if (reference.ReferenceType is Ts4ReferenceType.Public or Ts4ReferenceType.Private)
         {
+            ReportProgress(progress, $"Checking embedded {label} reference...", LerpProgress(start, end, 0.15));
             var embeddedChunk = root.ResolveChunk(reference);
             if (embeddedChunk is null || embeddedChunk.Tag != "MLOD")
             {
@@ -1973,6 +2224,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         if (reference.ReferenceType == Ts4ReferenceType.Delayed)
         {
+            ReportProgress(progress, $"Resolving delayed {label} key...", LerpProgress(start, end, 0.20));
             var delayedKey = root.ResolveExternalKey(reference);
             if (delayedKey is null)
             {
@@ -1980,7 +2232,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 return new Ts4ModelLodResolution(null, diagnostics);
             }
 
-            var directResource = await TryResolveModelLodResourceByKeyAsync(modelResource, delayedKey.Value, cancellationToken).ConfigureAwait(false);
+            var directResource = await TryResolveModelLodResourceByKeyAsync(modelResource, delayedKey.Value, cancellationToken, progress, start, end, label).ConfigureAwait(false);
             if (directResource is not null)
             {
                 if (!string.Equals(directResource.PackagePath, modelResource.PackagePath, StringComparison.OrdinalIgnoreCase))
@@ -2017,11 +2269,25 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     private async Task<ResourceMetadata?> TryResolveModelLodResourceByKeyAsync(
         ResourceMetadata ownerResource,
         Ts4ResourceKey key,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string label = "LOD")
     {
         var record = new ResourceKeyRecord(key.Type, key.Group, key.Instance, "ModelLOD");
 
-        var localBytes = await resourceCatalogService.GetResourceBytesAsync(ownerResource.PackagePath, record, raw: false, cancellationToken).ConfigureAwait(false);
+        ReportProgress(progress, $"Checking local package for {label}...", LerpProgress(start, end, 0.35));
+        var localBytes = await resourceCatalogService.GetResourceBytesAsync(
+            ownerResource.PackagePath,
+            record,
+            raw: false,
+            cancellationToken,
+            CreateReadProgressReporter(
+                progress,
+                LerpProgress(start, end, 0.36),
+                LerpProgress(start, end, 0.50),
+                Path.GetFileName(ownerResource.PackagePath))).ConfigureAwait(false);
         if (localBytes.Length > 0)
         {
             return ownerResource with
@@ -2032,9 +2298,27 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             };
         }
 
-        foreach (var companionPackagePath in EnumerateCompanionPackagePaths(ownerResource.PackagePath))
+        var companionPackagePaths = EnumerateCompanionPackagePaths(ownerResource.PackagePath).ToArray();
+        for (var companionIndex = 0; companionIndex < companionPackagePaths.Length; companionIndex++)
         {
-            var companionBytes = await resourceCatalogService.GetResourceBytesAsync(companionPackagePath, record, raw: false, cancellationToken).ConfigureAwait(false);
+            var companionPackagePath = companionPackagePaths[companionIndex];
+            var companionFraction = companionPackagePaths.Length == 0
+                ? 0.5
+                : (double)(companionIndex + 1) / companionPackagePaths.Length;
+            ReportProgress(
+                progress,
+                $"Checking companion {Path.GetFileName(companionPackagePath)} for {label}...",
+                LerpProgress(start, end, 0.45 + (companionFraction * 0.30)));
+            var companionBytes = await resourceCatalogService.GetResourceBytesAsync(
+                companionPackagePath,
+                record,
+                raw: false,
+                cancellationToken,
+                CreateReadProgressReporter(
+                    progress,
+                    LerpProgress(start, end, 0.50 + ((companionFraction - (1d / Math.Max(1, companionPackagePaths.Length))) * 0.18)),
+                    LerpProgress(start, end, 0.56 + (companionFraction * 0.18)),
+                    Path.GetFileName(companionPackagePath))).ConfigureAwait(false);
             if (companionBytes.Length > 0)
             {
                 return new ResourceMetadata(
@@ -2055,6 +2339,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
+        ReportProgress(progress, $"Scanning index for {label}...", LerpProgress(start, end, 0.85));
         var matches = await FindModelLodResourcesByKeyAsync(record, cancellationToken).ConfigureAwait(false);
         var match = matches.FirstOrDefault();
         if (match is not null)
@@ -2219,24 +2504,34 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             return (uv0, 0);
         }
 
-        var uv0Area = EstimateUvCoverageArea(uv0);
-        var uv1Area = EstimateUvCoverageArea(uv1);
-        // Some Maxis materials intentionally pack a small but valid atlas island into UV0.
-        // Be conservative about switching to UV1, or banner/decal meshes can drift badly.
-        if (uv0Area > 0f && uv0Area < 0.002f && uv1Area > uv0Area * 8f)
+        var uv0Stats = ComputeUvCoverageStats(uv0);
+        var uv1Stats = ComputeUvCoverageStats(uv1);
+        // Prefer UV1 when UV0 looks like a collapsed strip/subspace while UV1 clearly exposes
+        // a materially richer unwrap. Keep this conservative enough to avoid breaking narrow
+        // intentional atlas strips, but broad enough to catch the recurring "squeezed into a
+        // band" cases in Build/Buy atlases.
+        var uv0LooksCollapsed =
+            uv0Stats.Area > 0f &&
+            ((uv0Stats.Area < 0.002f && uv1Stats.Area > uv0Stats.Area * 8f) ||
+             (uv0Stats.ShortSide > 0f &&
+              uv0Stats.ShortSide < 0.08f &&
+              uv0Stats.LongSide > uv0Stats.ShortSide * 4f &&
+              uv1Stats.Area > Math.Max(uv0Stats.Area * 2.5f, 0.12f)));
+        if (uv0LooksCollapsed)
         {
-            diagnostics.Add($"Mesh 0x{meshName:X8} uses UV1 for preview because UV0 covers only a tiny atlas region ({uv0Area:0.####}) while UV1 covers {uv1Area:0.####}.");
+            diagnostics.Add(
+                $"Mesh 0x{meshName:X8} uses UV1 for preview because UV0 looks collapsed (area={uv0Stats.Area:0.####}, range={uv0Stats.RangeU:0.###}x{uv0Stats.RangeV:0.###}) while UV1 covers {uv1Stats.Area:0.####} ({uv1Stats.RangeU:0.###}x{uv1Stats.RangeV:0.###}).");
             return (uv1, 1);
         }
 
         return (uv0, 0);
     }
 
-    private static float EstimateUvCoverageArea(float[] uvs)
+    private static UvCoverageStats ComputeUvCoverageStats(float[] uvs)
     {
         if (uvs.Length < 2)
         {
-            return 0f;
+            return new UvCoverageStats(0f, 0f, 0f);
         }
 
         var minU = float.PositiveInfinity;
@@ -2256,10 +2551,18 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         if (!float.IsFinite(minU) || !float.IsFinite(maxU) || !float.IsFinite(minV) || !float.IsFinite(maxV))
         {
-            return 0f;
+            return new UvCoverageStats(0f, 0f, 0f);
         }
 
-        return Math.Max(0f, maxU - minU) * Math.Max(0f, maxV - minV);
+        var rangeU = Math.Max(0f, maxU - minU);
+        var rangeV = Math.Max(0f, maxV - minV);
+        return new UvCoverageStats(rangeU, rangeV, rangeU * rangeV);
+    }
+
+    private readonly record struct UvCoverageStats(float RangeU, float RangeV, float Area)
+    {
+        public float ShortSide => Math.Min(RangeU, RangeV);
+        public float LongSide => Math.Max(RangeU, RangeV);
     }
 
 }
@@ -3625,6 +3928,14 @@ internal sealed class Ts4VrtfChunk
 
 internal sealed record Ts4DecodedVertex(float[] Position, float[]? Normal, float[]? Tangent, float[]? Uv0, float[]? Uv1);
 
+internal enum Ts4UvDecodeMode : byte
+{
+    Auto = 0,
+    FullUInt16 = 1,
+    HalfUInt15 = 2,
+    HalfFloat16 = 3
+}
+
 internal sealed class Ts4VbufChunk
 {
     private readonly byte[] rawData;
@@ -3655,6 +3966,8 @@ internal sealed class Ts4VbufChunk
         int vertexCount,
         float[] uvScales)
     {
+        var uv0Mode = DetermineUvDecodeMode(vrtf, streamOffset, baseVertexIndex, vertexCount, 0);
+        var uv1Mode = DetermineUvDecodeMode(vrtf, streamOffset, baseVertexIndex, vertexCount, 1);
         var results = new List<Ts4DecodedVertex>(vertexCount);
         for (var index = 0; index < vertexCount; index++)
         {
@@ -3691,10 +4004,10 @@ internal sealed class Ts4VbufChunk
                         tangent = ReadNormalLike(rawData, offset, element.Format);
                         break;
                     case Ts4VertexUsage.Uv when element.UsageIndex == 0:
-                        uv0 = ReadUv(rawData, offset, element.Format, uvScales);
+                        uv0 = ReadUv(rawData, offset, element.Format, uvScales, uv0Mode);
                         break;
                     case Ts4VertexUsage.Uv when element.UsageIndex == 1:
-                        uv1 = ReadUv(rawData, offset, element.Format, uvScales);
+                        uv1 = ReadUv(rawData, offset, element.Format, uvScales, uv1Mode);
                         break;
                 }
             }
@@ -3708,6 +4021,191 @@ internal sealed class Ts4VbufChunk
         }
 
         return results;
+    }
+
+    private Ts4UvDecodeMode DetermineUvDecodeMode(
+        Ts4VrtfChunk vrtf,
+        uint streamOffset,
+        int baseVertexIndex,
+        int vertexCount,
+        byte usageIndex)
+    {
+        var uvElement = vrtf.Elements.FirstOrDefault(element => element.Usage == Ts4VertexUsage.Uv && element.UsageIndex == usageIndex);
+        if (uvElement is null || uvElement.Format != 0x06)
+        {
+            return Ts4UvDecodeMode.Auto;
+        }
+
+        var sampleLimit = Math.Min(vertexCount, 256);
+        if (sampleLimit <= 0)
+        {
+            return Ts4UvDecodeMode.Auto;
+        }
+
+        var fullStats = new UvDecodeCandidateStats();
+        var halfStats = new UvDecodeCandidateStats();
+        var halfFloatStats = new UvDecodeCandidateStats();
+        for (var index = 0; index < sampleLimit; index++)
+        {
+            var absoluteVertexIndex = checked(baseVertexIndex + index);
+            var vertexOffset = checked((int)streamOffset + (absoluteVertexIndex * vrtf.VertexStride));
+            var offset = vertexOffset + uvElement.Offset;
+            if (offset < 0 || offset + 4 > rawData.Length)
+            {
+                break;
+            }
+
+            var rawU = ReadUInt16(rawData, offset);
+            var rawV = ReadUInt16(rawData, offset + 2);
+            fullStats.Add(rawU / (float)ushort.MaxValue, rawV / (float)ushort.MaxValue);
+            halfStats.Add(rawU / (float)short.MaxValue, rawV / (float)short.MaxValue);
+            halfFloatStats.Add((float)BitConverter.UInt16BitsToHalf(rawU), (float)BitConverter.UInt16BitsToHalf(rawV));
+        }
+
+        if (fullStats.AllFinite &&
+            halfStats.AllFinite &&
+            fullStats.RobustMaxU <= 0.55f &&
+            fullStats.RobustMaxV <= 0.55f &&
+            halfStats.RobustMaxU >= 0.75f &&
+            halfStats.RobustMaxU <= 1.05f &&
+            halfStats.RobustMaxV >= 0.75f &&
+            halfStats.RobustMaxV <= 1.05f &&
+            halfStats.RobustArea >= Math.Max(fullStats.RobustArea * 2f, 0.35f))
+        {
+            return Ts4UvDecodeMode.HalfUInt15;
+        }
+
+        var candidates = new[]
+        {
+            (Mode: Ts4UvDecodeMode.FullUInt16, Score: fullStats.Score()),
+            (Mode: Ts4UvDecodeMode.HalfUInt15, Score: halfStats.Score()),
+            (Mode: Ts4UvDecodeMode.HalfFloat16, Score: halfFloatStats.Score())
+        };
+
+        return candidates
+            .OrderByDescending(static candidate => candidate.Score)
+            .First().Mode;
+    }
+
+    private sealed class UvDecodeCandidateStats
+    {
+        private float minU = float.PositiveInfinity;
+        private float maxU = float.NegativeInfinity;
+        private float minV = float.PositiveInfinity;
+        private float maxV = float.NegativeInfinity;
+        private readonly List<float> sampledUs = [];
+        private readonly List<float> sampledVs = [];
+        private int finitePairCount;
+        private int nearUnitCount;
+        private int wideFiniteCount;
+        private int invalidCount;
+
+        public void Add(float u, float v)
+        {
+            if (!float.IsFinite(u) || !float.IsFinite(v))
+            {
+                invalidCount++;
+                return;
+            }
+
+            finitePairCount++;
+            minU = Math.Min(minU, u);
+            maxU = Math.Max(maxU, u);
+            minV = Math.Min(minV, v);
+            maxV = Math.Max(maxV, v);
+            sampledUs.Add(u);
+            sampledVs.Add(v);
+
+            if (u >= -0.25f && u <= 1.25f && v >= -0.25f && v <= 1.25f)
+            {
+                nearUnitCount++;
+            }
+
+            if (u >= -4f && u <= 4f && v >= -4f && v <= 4f)
+            {
+                wideFiniteCount++;
+            }
+        }
+
+        public double Score()
+        {
+            if (finitePairCount == 0)
+            {
+                return double.NegativeInfinity;
+            }
+
+            var rangeU = RobustRangeU;
+            var rangeV = RobustRangeV;
+            var shortSide = Math.Min(rangeU, rangeV);
+            var longSide = Math.Max(rangeU, rangeV);
+            var area = rangeU * rangeV;
+
+            var score = (nearUnitCount * 3d) + (wideFiniteCount * 1d) - (invalidCount * 20d);
+
+            if (area >= 0.05f && area <= 4f)
+            {
+                score += 80d;
+            }
+
+            if (area >= 0.2f && area <= 1.5f)
+            {
+                score += 40d;
+            }
+
+            if (shortSide < 0.05f && longSide > 0.5f)
+            {
+                score -= 80d;
+            }
+
+            if (shortSide < 0.02f)
+            {
+                score -= 120d;
+            }
+
+            if (area > 9f)
+            {
+                score -= 120d;
+            }
+
+            return score;
+        }
+
+        public bool AllFinite => finitePairCount > 0 && invalidCount == 0;
+        public float MaxU => maxU;
+        public float MaxV => maxV;
+        public float RobustMaxU => GetPercentile(sampledUs, 0.95f);
+        public float RobustMaxV => GetPercentile(sampledVs, 0.95f);
+        public float RobustRangeU => Math.Max(0f, RobustMaxU - GetPercentile(sampledUs, 0.05f));
+        public float RobustRangeV => Math.Max(0f, RobustMaxV - GetPercentile(sampledVs, 0.05f));
+        public float RobustArea => RobustRangeU * RobustRangeV;
+        public float Area
+        {
+            get
+            {
+                if (finitePairCount == 0)
+                {
+                    return 0f;
+                }
+
+                var rangeU = Math.Max(0f, maxU - minU);
+                var rangeV = Math.Max(0f, maxV - minV);
+                return rangeU * rangeV;
+            }
+        }
+
+        private static float GetPercentile(List<float> values, float percentile)
+        {
+            if (values.Count == 0)
+            {
+                return 0f;
+            }
+
+            var ordered = values.ToArray();
+            Array.Sort(ordered);
+            var index = (int)MathF.Round((ordered.Length - 1) * percentile);
+            index = Math.Clamp(index, 0, ordered.Length - 1);
+            return ordered[index];
+        }
     }
 
     private static float[] ReadVector3(byte[] data, int offset, byte format) => format switch
@@ -3725,7 +4223,7 @@ internal sealed class Ts4VbufChunk
         _ => throw new NotSupportedException($"Unsupported normal/tangent vertex format 0x{format:X2}.")
     };
 
-    private static float[] ReadUv(byte[] data, int offset, byte format, float[] uvScales)
+    private static float[] ReadUv(byte[] data, int offset, byte format, float[] uvScales, Ts4UvDecodeMode decodeMode)
     {
         var scaleU = uvScales.Length > 0 ? uvScales[0] : 1f;
         var scaleV = uvScales.Length > 1 ? uvScales[1] : scaleU;
@@ -3733,7 +4231,7 @@ internal sealed class Ts4VbufChunk
         var uv = format switch
         {
             0x01 => [ReadSingle(data, offset), ReadSingle(data, offset + 4)],
-            0x06 => DecodeShort2Normalized(data, offset),
+            0x06 => DecodeShort2Normalized(data, offset, decodeMode),
             0x07 => DecodeShort4Normalized(data, offset)[..2],
             _ => throw new NotSupportedException($"Unsupported UV vertex format 0x{format:X2}.")
         };
@@ -3761,17 +4259,23 @@ internal sealed class Ts4VbufChunk
         return [x / (float)scale, y / (float)scale, z / (float)scale];
     }
 
-    private static float[] DecodeShort2Normalized(byte[] data, int offset)
+    private static float[] DecodeShort2Normalized(byte[] data, int offset, Ts4UvDecodeMode decodeMode)
     {
-        // TS4 UV format 0x06 appears in two practical encodings:
-        // - full unsigned-normalized 0..65535
-        // - half-range 0..32767, common on some Build/Buy atlases
-        // The half-range variant otherwise collapses a full atlas into the top-left quarter.
         var rawU = ReadUInt16(data, offset);
         var rawV = ReadUInt16(data, offset + 2);
-        var divisor = rawU <= short.MaxValue && rawV <= short.MaxValue
-            ? (float)short.MaxValue
-            : ushort.MaxValue;
+        var divisor = decodeMode switch
+        {
+            Ts4UvDecodeMode.HalfUInt15 => (float)short.MaxValue,
+            Ts4UvDecodeMode.HalfFloat16 => 1f,
+            Ts4UvDecodeMode.FullUInt16 => ushort.MaxValue,
+            _ => rawU <= short.MaxValue && rawV <= short.MaxValue
+                ? (float)short.MaxValue
+                : ushort.MaxValue
+        };
+        if (decodeMode == Ts4UvDecodeMode.HalfFloat16)
+        {
+            return [(float)BitConverter.UInt16BitsToHalf(rawU), (float)BitConverter.UInt16BitsToHalf(rawV)];
+        }
         var u = rawU / divisor;
         var v = rawV / divisor;
         return [u, v];

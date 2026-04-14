@@ -54,7 +54,7 @@ public sealed class BasicTextureDecodeService : ITextureDecodeService
 
 public sealed class PlaceholderSceneBuildService : ISceneBuildService
 {
-    public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new SceneBuildResult(
@@ -84,7 +84,7 @@ public sealed class ResourcePreviewService : IPreviewService
         this.audioDecodeService = audioDecodeService;
     }
 
-    public async Task<PreviewResult> CreatePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    public async Task<PreviewResult> CreatePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
     {
         switch (resource.PreviewKind)
         {
@@ -95,7 +95,7 @@ public sealed class ResourcePreviewService : IPreviewService
                 return await CreateTexturePreviewAsync(resource, cancellationToken);
 
             case PreviewKind.Scene:
-                return await CreateScenePreviewAsync(resource, cancellationToken);
+                return await CreateScenePreviewAsync(resource, cancellationToken, progress);
 
             case PreviewKind.Audio:
                 return await CreateAudioPreviewAsync(resource, cancellationToken);
@@ -130,9 +130,11 @@ public sealed class ResourcePreviewService : IPreviewService
         return new PreviewResult(PreviewKind.Unsupported, new UnsupportedPreviewContent(resource, decoded.Diagnostics));
     }
 
-    private async Task<PreviewResult> CreateScenePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken)
+    private async Task<PreviewResult> CreateScenePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress)
     {
-        var result = await sceneBuildService.BuildSceneAsync(resource, cancellationToken);
+        progress?.Report(new PreviewBuildProgress("Preparing scene build...", 0.02));
+        var result = await sceneBuildService.BuildSceneAsync(resource, cancellationToken, progress);
+        progress?.Report(new PreviewBuildProgress("Scene build complete.", 1.0));
         return new PreviewResult(PreviewKind.Scene, new ScenePreviewContent(resource, result.Scene, string.Join(Environment.NewLine, result.Diagnostics), result.Status));
     }
 
