@@ -312,10 +312,18 @@ public sealed partial class MainViewModel : ObservableObject
         ? AssetResults.Count > 0
         : RawResources.Count > 0;
     public Visibility EmptyStateVisibility => HasVisibleResults ? Visibility.Collapsed : Visibility.Visible;
-    public string AssetSearchPlaceholder => "Search asset name, category, or package";
+    public string AssetSearchPlaceholder => AssetDomain == AssetBrowserDomain.BuildBuy
+        ? "Search build/buy name, description, category, or package"
+        : "Search CAS name, description, type, or package";
     public string RawSearchPlaceholder => "Search package path, type name, TGI, group, or instance";
-    public string AssetSearchHelp => "Examples: chair, comfort, objects.package";
+    public string AssetSearchHelp => AssetDomain == AssetBrowserDomain.BuildBuy
+        ? "Build/Buy uses identity, structure, raw catalog signals, and capability filters."
+        : "CAS uses identity, structure, and capability filters; raw catalog signals are hidden.";
     public string RawSearchHelp => "Examples: objectcatalog, 00B2D882, 00000000, package fragment";
+    public string AssetFacetSummaryText => AssetDomain == AssetBrowserDomain.BuildBuy
+        ? "Build/Buy catalog filters combine human-facing metadata with raw ObjectCatalog signals."
+        : "CAS filters stay focused on identity, structure, and preview support.";
+    public Visibility AssetCatalogSignalsVisibility => AssetDomain == AssetBrowserDomain.BuildBuy ? Visibility.Visible : Visibility.Collapsed;
     public string EffectivePreviewLoadStatus => string.IsNullOrWhiteSpace(PreviewLoadStatus) ? "Ready" : PreviewLoadStatus;
     public Brush PreviewLoadBrush => new SolidColorBrush(PreviewLoadCompleted && !IsPreviewLoading ? Colors.ForestGreen : Colors.DodgerBlue);
     public bool IsScenePreviewActive => PreviewSurfaceMode == PreviewSurfaceMode.Scene && CurrentScene is not null;
@@ -1504,6 +1512,10 @@ public sealed partial class MainViewModel : ObservableObject
     {
         SyncAssetStateFromProperties();
         assetQueryDirty = true;
+        OnPropertyChanged(nameof(AssetSearchPlaceholder));
+        OnPropertyChanged(nameof(AssetSearchHelp));
+        OnPropertyChanged(nameof(AssetFacetSummaryText));
+        OnPropertyChanged(nameof(AssetCatalogSignalsVisibility));
         UpdateBrowsePresentation();
         _ = ReloadAssetFacetOptionsAsync();
         if (SelectedBrowserMode == BrowserMode.AssetBrowser)
