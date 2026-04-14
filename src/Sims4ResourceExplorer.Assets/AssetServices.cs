@@ -576,7 +576,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         catch (Exception ex)
         {
             diagnostics.Add($"CASPart parsing failed: {ex.Message}");
-            return new AssetGraph(summary, [], diagnostics);
+            return BuildFallbackCasGraph(summary, root, packageResources, diagnostics);
         }
 
         var sameInstance = packageResources
@@ -656,27 +656,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
             .Select(static group => group.First())
             .ToArray();
-        var materialManifest = explicitTextures.Length == 0
-            ? []
-            : new[]
-            {
-                new MaterialManifestEntry(
-                    "ApproximateCasMaterial",
-                    null,
-                    explicitTextures.Any(static texture => texture.Key.TypeName.Contains("PNG", StringComparison.OrdinalIgnoreCase)),
-                    "portable-approximation",
-                    null,
-                    [],
-                    "CAS material/shader semantics are approximated to a portable texture bundle. Explicit CASPart texture references are used where available.",
-                    explicitTextures.Select(texture => new MaterialTextureEntry(
-                        GuessCasTextureSlot(texture.Key.TypeName),
-                        $"{GuessCasTextureSlot(texture.Key.TypeName)}_{texture.Key.Type:X8}_{texture.Key.Group:X8}_{texture.Key.FullInstance:X16}.png",
-                        texture.Key,
-                        texture.PackagePath,
-                        CanonicalTextureSemantic.Unknown,
-                        CanonicalTextureSourceKind.ExplicitLocal)).ToArray(),
-                    CanonicalMaterialSourceKind.ApproximateCas)
-            };
+        var materialManifest = BuildApproximateCasMaterialManifest(explicitTextures, "CAS material/shader semantics are approximated to a portable texture bundle. Explicit CASPart texture references are used where available.");
 
         var isSupported = category is not null
             && casPart.IsAdultOrYoungAdult
@@ -715,6 +695,116 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 isSupported,
                 "Adult/young-adult human CAS parts in the hair, full body, top, bottom, or shoes categories when the CASPart exposes a direct skinned Geometry LOD in the same package."));
     }
+
+    private AssetGraph BuildFallbackCasGraph(
+        AssetSummary summary,
+        ResourceMetadata root,
+        IReadOnlyList<ResourceMetadata> packageResources,
+        List<string> diagnostics)
+    {
+        diagnostics.Add("Using fallback CAS graph from exact-instance package resources. Category, swatch, and LOD semantics may be incomplete because CASPart semantic parsing did not succeed.");
+
+        var sameInstance = packageResources
+            .Where(resource => resource.Key.FullInstance == root.Key.FullInstance && resource.Key.FullTgi != root.Key.FullTgi)
+            .OrderBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
+            .ToArray();
+
+        var identityResources = new List<ResourceMetadata> { root };
+        identityResources.AddRange(sameInstance.Where(static resource => resource.Key.TypeName is "CASPartThumbnail" or "BodyPartThumbnail"));
+
+        var geometryResources = sameInstance
+            .Where(static resource => resource.Key.TypeName == "Geometry")
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToList();
+        var rigResources = sameInstance
+            .Where(static resource => resource.Key.TypeName == "Rig")
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToList();
+        var materialResources = sameInstance
+            .Where(static resource => resource.Key.TypeName == "MaterialDefinition")
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToList();
+        var explicitTextures = sameInstance
+            .Where(static resource => IsTextureType(resource.Key.TypeName))
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+
+        if (geometryResources.Count == 0)
+        {
+            diagnostics.Add("Fallback CAS graph did not find an exact-instance Geometry resource in the same package.");
+        }
+
+        if (rigResources.Count == 0)
+        {
+            diagnostics.Add("Fallback CAS graph did not find an exact-instance Rig resource in the same package.");
+        }
+
+        if (explicitTextures.Length == 0)
+        {
+            diagnostics.Add("Fallback CAS graph did not find exact-instance texture resources in the same package.");
+        }
+
+        var linkedResources = identityResources
+            .Concat(geometryResources)
+            .Concat(rigResources)
+            .Concat(materialResources)
+            .Concat(explicitTextures)
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .OrderBy(static resource => CasLinkOrder(resource.Key.TypeName))
+            .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
+            .ToArray();
+
+        return new AssetGraph(
+            summary,
+            linkedResources,
+            diagnostics,
+            null,
+            new CasAssetGraph(
+                root,
+                geometryResources.FirstOrDefault(),
+                rigResources.FirstOrDefault(),
+                identityResources,
+                geometryResources,
+                rigResources,
+                materialResources,
+                explicitTextures,
+                BuildApproximateCasMaterialManifest(explicitTextures, "CAS material/shader semantics are approximated from exact-instance fallback resources because CASPart semantic parsing failed."),
+                summary.Category,
+                null,
+                null,
+                geometryResources.Count > 0,
+                "Fallback CAS preview from exact-instance Geometry/Rig/Texture resources when CASPart semantic parsing is unavailable."));
+    }
+
+    private static IReadOnlyList<MaterialManifestEntry> BuildApproximateCasMaterialManifest(
+        IReadOnlyList<ResourceMetadata> explicitTextures,
+        string approximationText) =>
+        explicitTextures.Count == 0
+            ? []
+            : new[]
+            {
+                new MaterialManifestEntry(
+                    "ApproximateCasMaterial",
+                    null,
+                    explicitTextures.Any(static texture => texture.Key.TypeName.Contains("PNG", StringComparison.OrdinalIgnoreCase)),
+                    "portable-approximation",
+                    null,
+                    [],
+                    approximationText,
+                    explicitTextures.Select(texture => new MaterialTextureEntry(
+                        GuessCasTextureSlot(texture.Key.TypeName),
+                        $"{GuessCasTextureSlot(texture.Key.TypeName)}_{texture.Key.Type:X8}_{texture.Key.Group:X8}_{texture.Key.FullInstance:X16}.png",
+                        texture.Key,
+                        texture.PackagePath,
+                        CanonicalTextureSemantic.Unknown,
+                        CanonicalTextureSourceKind.ExplicitLocal)).ToArray(),
+                    CanonicalMaterialSourceKind.ApproximateCas)
+            };
 
     private IEnumerable<ResourceMetadata> ResolveCasTextures(
         Ts4CasPart casPart,

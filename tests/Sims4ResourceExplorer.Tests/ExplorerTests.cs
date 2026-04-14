@@ -4032,6 +4032,47 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task CasLogicalAsset_FallsBackWhenCasPartParsingFails()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-fallback.package");
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", tempRoot, SourceKind.Game);
+        var casPart = CreateResource(source.Id, packagePath, SourceKind.Game, "CASPart", 1, "Short Hair");
+        var geometry = CreateResource(source.Id, packagePath, SourceKind.Game, "Geometry", 1, "HairGeom");
+        var rig = CreateResource(source.Id, packagePath, SourceKind.Game, "Rig", 1, "HumanRig");
+        var texture = CreateResource(source.Id, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(source.Id, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var scan = new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [casPart, geometry, rig, texture, thumbnail], []);
+
+        var invalidCasPartBytes = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, texture.Key)[..40];
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = invalidCasPartBytes,
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+        var assets = graphBuilder.BuildAssetSummaries(scan);
+        await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
+
+        var asset = assets.Single(result => result.AssetKind == AssetKind.Cas);
+        var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+        var assetGraph = await graphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
+
+        Assert.NotNull(assetGraph.CasGraph);
+        Assert.NotNull(assetGraph.CasGraph!.GeometryResource);
+        Assert.Contains(assetGraph.Diagnostics, message => message.Contains("CASPart parsing failed:", StringComparison.Ordinal));
+        Assert.Contains(assetGraph.Diagnostics, message => message.Contains("Using fallback CAS graph", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task TextureDecodeService_DecodesPngPayload()
     {
         var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "PNGImage", 1);
