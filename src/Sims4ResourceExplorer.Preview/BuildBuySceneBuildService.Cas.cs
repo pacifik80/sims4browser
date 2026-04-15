@@ -45,7 +45,7 @@ public sealed partial class BuildBuySceneBuildService
 
         var textureCache = new Dictionary<string, CanonicalTexture?>(StringComparer.OrdinalIgnoreCase);
         ReportProgress(progress, "Resolving textures...", 0.55);
-        var textures = await ResolveFallbackTexturesAsync(geometryResource, textureCache, cancellationToken).ConfigureAwait(false);
+        var textures = await ResolveFallbackTexturesAsync(geometryResource, textureCache, cancellationToken, diagnostics).ConfigureAwait(false);
         if (textures.Count == 0)
         {
             diagnostics.Add("No exact-instance texture candidates were decoded for this Geometry root.");
@@ -247,7 +247,8 @@ internal sealed class Ts4GeomResource
 
     public static Ts4GeomResource Parse(byte[] bytes)
     {
-        using var stream = new MemoryStream(bytes, writable: false);
+        var payload = ResolveGeomPayload(bytes);
+        using var stream = new MemoryStream(payload, writable: false);
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
 
         ExpectTag(reader, "GEOM");
@@ -295,6 +296,33 @@ internal sealed class Ts4GeomResource
             Indices = indices,
             BoneHashes = boneHashes
         };
+    }
+
+    private static byte[] ResolveGeomPayload(byte[] bytes)
+    {
+        if (bytes.Length >= 4 &&
+            bytes[0] == (byte)'G' &&
+            bytes[1] == (byte)'E' &&
+            bytes[2] == (byte)'O' &&
+            bytes[3] == (byte)'M')
+        {
+            return bytes;
+        }
+
+        try
+        {
+            var rcol = Ts4RcolResource.Parse(bytes);
+            var geomChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag == "GEOM");
+            if (geomChunk is not null)
+            {
+                return geomChunk.Data.ToArray();
+            }
+        }
+        catch
+        {
+        }
+
+        return bytes;
     }
 
     private static IReadOnlyList<Ts4GeomFormat> ReadFormats(BinaryReader reader)

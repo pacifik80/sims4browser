@@ -1,4 +1,5 @@
 using LlamaLogic.Packages;
+using System.Buffers.Binary;
 using System.Reflection;
 using System.Text;
 using Sims4ResourceExplorer.Assets;
@@ -115,6 +116,35 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void AssetGraphBuilder_BuildBuySummary_CollapsesSameSceneRootFamilyIntoOneLogicalAsset()
+    {
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var packagePath = Path.Combine(tempRoot, "family.package");
+        var sourceId = Guid.NewGuid();
+        const string logicalRootTgi = "01661233:00000000:039E5CF151195E00";
+        var objectCatalogType = (uint)ResourceType.ObjectCatalog;
+        var objectDefinitionType = (uint)ResourceType.ObjectDefinition;
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 0, "Still LIfe Store Front Prop") with { Key = new ResourceKeyRecord(objectCatalogType, 0, 0x31D40, "ObjectCatalog") },
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 0, "sculptFloor_EP06GENsetStorefront14x4x5_set1") with { Key = new ResourceKeyRecord(objectDefinitionType, 0, 0x31D40, "ObjectDefinition"), SceneRootTgiHint = logicalRootTgi },
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 0, "Still LIfe Store Front Prop") with { Key = new ResourceKeyRecord(objectCatalogType, 0, 0x31D41, "ObjectCatalog") },
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 0, "sculptFloor_EP06GENsetStorefront14x4x5_set2") with { Key = new ResourceKeyRecord(objectDefinitionType, 0, 0x31D41, "ObjectDefinition"), SceneRootTgiHint = logicalRootTgi },
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 0, "Still LIfe Store Front Prop") with { Key = new ResourceKeyRecord(objectCatalogType, 0, 0x31D42, "ObjectCatalog") },
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 0, "sculptFloor_EP06GENsetStorefront14x4x5_set3") with { Key = new ResourceKeyRecord(objectDefinitionType, 0, 0x31D42, "ObjectDefinition"), SceneRootTgiHint = logicalRootTgi }
+        };
+
+        var summaries = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []));
+
+        var summary = Assert.Single(summaries.Where(asset => asset.AssetKind == AssetKind.BuildBuy));
+        Assert.Equal("Still LIfe Store Front Prop", summary.DisplayName);
+        Assert.Equal(3, summary.VariantCount);
+        Assert.True(summary.HasVariants);
+        Assert.Equal(logicalRootTgi, summary.LogicalRootTgi);
+        Assert.Contains("Collapsed 3 Build/Buy identity entries", summary.Diagnostics, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AssetGraphBuilder_MarksBuildBuySummaryPartialWhenExactLodCoverageIsMissing()
     {
         var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
@@ -132,6 +162,71 @@ public sealed class ExplorerTests : IDisposable
 
         Assert.Equal("Metadata", summary.SupportLabel);
         Assert.Contains("no exact geometry candidate", summary.SupportNotes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AssetGraphBuilder_CreatesGeneral3DSummariesForLooseModelRoots()
+    {
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var packagePath = Path.Combine(tempRoot, "general3d.package");
+        var sourceId = Guid.NewGuid();
+        var resources = new[]
+        {
+            CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "LooseChair"),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 1),
+            CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1)
+        };
+
+        var summaries = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []));
+
+        var summary = Assert.Single(summaries);
+        Assert.Equal(AssetKind.General3D, summary.AssetKind);
+        Assert.Equal("LooseChair", summary.DisplayName);
+        Assert.Equal("Model", summary.RootTypeName);
+        Assert.Equal("ModelLOD", summary.PrimaryGeometryType);
+        Assert.Equal("General 3D", summary.Category);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsGeneral3DGraphForStandaloneModel()
+    {
+        var packagePath = Path.Combine(tempRoot, "general3d-graph.package");
+        var sourceId = Guid.NewGuid();
+        var model = CreateResource(sourceId, packagePath, SourceKind.Game, "Model", 1, "LooseChair");
+        var modelLod = CreateResource(sourceId, packagePath, SourceKind.Game, "ModelLOD", 1);
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 1);
+        var texture = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1);
+        var material = CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 1);
+        var resources = new[]
+        {
+            model,
+            modelLod,
+            geometry,
+            texture,
+            material
+        };
+
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [model.Key.FullTgi] = []
+                },
+                new Dictionary<string, string?>()));
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.General3D);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.NotNull(graph.General3DGraph);
+        Assert.True(graph.General3DGraph!.IsSupported);
+        Assert.Equal(model.Key.FullTgi, graph.General3DGraph.SceneRootResource.Key.FullTgi);
+        Assert.Single(graph.General3DGraph.ModelResources);
+        Assert.Single(graph.General3DGraph.ModelLodResources);
+        Assert.Single(graph.General3DGraph.GeometryResources);
+        Assert.Single(graph.General3DGraph.MaterialResources);
+        Assert.Single(graph.General3DGraph.TextureResources);
     }
 
     [Fact]
@@ -441,6 +536,159 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitCasGraph_FromDirectGeometryTgiWhenLodsAreMissing()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-direct-geometry-tgi.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "acAcc_NecklaceCollar");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 1, "NecklaceGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 1, "AccessoryRig");
+        var texture = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, texture.Key, "acAcc_NecklaceCollar", version: 0x0000002Eu, bodyType: 12, includeLodReferences: false),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+        var resources = new[] { casPart, geometry, rig, texture, thumbnail };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.Cas);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.True(graph.CasGraph is not null, string.Join(Environment.NewLine, graph.Diagnostics));
+        Assert.True(graph.CasGraph!.IsSupported, string.Join(Environment.NewLine, graph.Diagnostics));
+        Assert.Equal("Accessory", graph.CasGraph.Category);
+        Assert.Equal(geometry.Key.FullTgi, graph.CasGraph.GeometryResource?.Key.FullTgi);
+        Assert.Contains(graph.Diagnostics, message => message.Contains("using direct Geometry references from the CASPart TGI table", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_PreservesCasColorShiftMaskTextureRole()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-colorshift.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "Short Hair");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 1, "HairGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 1, "HumanRig");
+        var diffuse = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var colorShiftMask = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage2", 1);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, diffuse.Key, colorShiftMaskKey: colorShiftMask.Key, version: 0x00000031u),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [diffuse.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng,
+                [colorShiftMask.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+        var resources = new[] { casPart, geometry, rig, diffuse, thumbnail, colorShiftMask };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.Cas);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        var materialTextures = graph.CasGraph!.Materials.SelectMany(static material => material.Textures).ToArray();
+        Assert.Contains(materialTextures, texture => texture.Slot == "diffuse" && texture.SourceKey?.FullTgi == diffuse.Key.FullTgi);
+        Assert.Contains(materialTextures, texture => texture.Slot == "color_shift_mask" && texture.SourceKey?.FullTgi == colorShiftMask.Key.FullTgi);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitCasGraph_FromIndexedCrossPackageGeometryForAccessory()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-cross-package.package");
+        var externalPackagePath = Path.Combine(tempRoot, "cas-cross-package-external.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "acAcc_NecklaceCollar");
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var geometry = CreateResource(sourceId, externalPackagePath, SourceKind.Game, "Geometry", 1, "NecklaceGeom");
+        var rig = CreateResource(sourceId, externalPackagePath, SourceKind.Game, "Rig", 1, "AccessoryRig");
+        var diffuse = CreateResource(sourceId, externalPackagePath, SourceKind.Game, "PNGImage", 1);
+        var material = CreateResource(sourceId, externalPackagePath, SourceKind.Game, "MaterialDefinition", 1, "AccessoryMaterial");
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, diffuse.Key, "acAcc_NecklaceCollar", bodyType: 12),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [diffuse.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng,
+                [material.Key.FullTgi] = []
+            },
+            new Dictionary<string, string?>());
+        var indexStore = new FakeGraphIndexStore([geometry, rig, diffuse, material]);
+        var builder = new ExplicitAssetGraphBuilder(catalog, indexStore);
+        var localResources = new[] { casPart, thumbnail };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, localResources, []))
+            .Single(asset => asset.AssetKind == AssetKind.Cas);
+        var graph = await builder.BuildAssetGraphAsync(summary, localResources, CancellationToken.None);
+
+        Assert.True(graph.CasGraph is not null, string.Join(Environment.NewLine, graph.Diagnostics));
+        Assert.True(graph.CasGraph!.IsSupported, string.Join(Environment.NewLine, graph.Diagnostics));
+        Assert.Equal("Accessory", graph.CasGraph.Category);
+        Assert.Equal(geometry.Key.FullTgi, graph.CasGraph.GeometryResource?.Key.FullTgi);
+        Assert.Contains(graph.CasGraph.RigResources, resource => resource.Key.FullTgi == rig.Key.FullTgi);
+        Assert.Contains(graph.CasGraph.TextureResources, resource => resource.Key.FullTgi == diffuse.Key.FullTgi);
+        Assert.Contains(graph.CasGraph.MaterialResources, resource => resource.Key.FullTgi == material.Key.FullTgi);
+        Assert.Contains(graph.Diagnostics, message => message.Contains("resolved via indexed cross-package lookup", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Resolved CAS geometry companions", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetDetailsFormatter_UsesResolvedCasGraphCapabilities_WhenSummaryIsMetadataOnly()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-details.package");
+        var externalPackagePath = Path.Combine(tempRoot, "cas-details-external.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "acAcc_NecklaceCollar");
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var geometry = CreateResource(sourceId, externalPackagePath, SourceKind.Game, "Geometry", 1, "NecklaceGeom");
+        var rig = CreateResource(sourceId, externalPackagePath, SourceKind.Game, "Rig", 1, "AccessoryRig");
+        var diffuse = CreateResource(sourceId, externalPackagePath, SourceKind.Game, "PNGImage", 1);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, diffuse.Key, "acAcc_NecklaceCollar", bodyType: 12),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [diffuse.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var indexStore = new FakeGraphIndexStore([geometry, rig, diffuse]);
+        var builder = new ExplicitAssetGraphBuilder(catalog, indexStore);
+        var localResources = new[] { casPart, thumbnail };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, localResources, []))
+            .Single(asset => asset.AssetKind == AssetKind.Cas);
+        Assert.Equal("Metadata", summary.SupportLabel);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, localResources, CancellationToken.None);
+        var details = AssetDetailsFormatter.BuildAssetDetails(summary, graph, graph.CasGraph!.GeometryResource, null);
+
+        Assert.Contains("Support Status: Geometry+Textures", details, StringComparison.Ordinal);
+        Assert.Contains("Category: Accessory", details, StringComparison.Ordinal);
+        Assert.Contains("Has Exact Geometry Candidate: Yes", details, StringComparison.Ordinal);
+        Assert.Contains("Has Rig Reference: Yes", details, StringComparison.Ordinal);
+        Assert.Contains("Package-Local Graph: No", details, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Ts4ObjectDefinition_Parse_ReturnsConfirmedHeaderFields()
     {
         var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
@@ -540,6 +788,150 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void Ts4SeedMetadataExtractor_ExtractsCasPartTechnicalNameFromStableHeaderWhenBodyIsTruncated()
+    {
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var bytes = CreateSyntheticCasPartBytesWithTruncatedBody(geometryKey, thumbnailKey, textureKey);
+        var resource = new ResourceMetadata(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            SourceKind.Game,
+            "cas.package",
+            new ResourceKeyRecord(0x034AEECB, 0, 4, "CASPart"),
+            null,
+            null,
+            null,
+            null,
+            PreviewKind.Hex,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+
+        var technicalName = Ts4SeedMetadataExtractor.TryExtractTechnicalName(resource, bytes);
+
+        Assert.Equal("BrokenCasPart", technicalName);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_ReturnsNullForCasPartWithTruncatedManagedString()
+    {
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var bytes = CreateSyntheticCasPartBytesWithTruncatedManagedString(geometryKey, thumbnailKey, textureKey);
+        var resource = new ResourceMetadata(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            SourceKind.Game,
+            "cas.package",
+            new ResourceKeyRecord(0x034AEECB, 0, 4, "CASPart"),
+            null,
+            null,
+            null,
+            null,
+            PreviewKind.Hex,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+
+        var technicalName = Ts4SeedMetadataExtractor.TryExtractTechnicalName(resource, bytes);
+
+        Assert.Null(technicalName);
+    }
+
+    [Fact]
+    public void Ts4CasPart_Parse_HandlesVersion46Layout()
+    {
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var bytes = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "ymHair_ModernSweep");
+        var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
+        var casPartType = RequireType(assetsAssembly, "Sims4ResourceExplorer.Assets.Ts4CasPart");
+
+        var parsed = casPartType
+            .GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [bytes])!;
+
+        Assert.Equal(2, (int)casPartType.GetProperty("BodyType")!.GetValue(parsed)!);
+        Assert.Equal(0x00003010u, (uint)casPartType.GetProperty("AgeGenderFlags")!.GetValue(parsed)!);
+        Assert.Equal("ymHair_ModernSweep", (string?)casPartType.GetProperty("InternalName")!.GetValue(parsed));
+
+        var lods = ((System.Collections.IEnumerable)casPartType.GetProperty("Lods")!.GetValue(parsed)!).Cast<object>().ToArray();
+        var tgi = ((System.Collections.IEnumerable)casPartType.GetProperty("TgiList")!.GetValue(parsed)!).Cast<object>().ToArray();
+        Assert.Single(lods);
+        Assert.Equal(4, tgi.Length);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_ExtractsCasPartVariantRowsFromSwatches()
+    {
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var bytes = CreateSyntheticCasPartBytes(
+            geometryKey,
+            thumbnailKey,
+            textureKey,
+            internalName: "yfTop_Test",
+            swatchColors: [0xFFFFCCAAu, 0xFF112233u, 0xFF445566u]);
+        var resource = new ResourceMetadata(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            SourceKind.Game,
+            "cas.package",
+            new ResourceKeyRecord(0x034AEECB, 0, 4, "CASPart"),
+            null,
+            null,
+            null,
+            null,
+            PreviewKind.Hex,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+
+        var seedMetadata = Ts4SeedMetadataExtractor.TryExtractCasPartSeedMetadata(resource, bytes);
+
+        Assert.NotNull(seedMetadata);
+        Assert.Equal("yfTop_Test", seedMetadata!.TechnicalName);
+        Assert.Equal(3, seedMetadata.Variants.Count);
+        Assert.All(seedMetadata.Variants, variant => Assert.Equal("Swatch", variant.VariantKind));
+        Assert.Equal("#FFFFCCAA", seedMetadata.Variants[0].SwatchHex);
+        Assert.Equal(thumbnailKey.FullTgi, seedMetadata.Variants[0].ThumbnailTgi);
+    }
+
+    [Fact]
+    public void AssetGraphBuilder_SetsCasVariantCountFromIndexedVariantRows()
+    {
+        var packagePath = "cas-variants.package";
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "yfTop_Test");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 1);
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var scan = new PackageScanResult(sourceId, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [casPart, geometry, thumbnail], [])
+        {
+            AssetVariants =
+            [
+                new DiscoveredAssetVariant(sourceId, SourceKind.Game, AssetKind.Cas, packagePath, casPart.Key, 0, "Swatch", "Swatch 1", "#FFFFCCAA", thumbnail.Key.FullTgi),
+                new DiscoveredAssetVariant(sourceId, SourceKind.Game, AssetKind.Cas, packagePath, casPart.Key, 1, "Swatch", "Swatch 2", "#FF112233", thumbnail.Key.FullTgi),
+                new DiscoveredAssetVariant(sourceId, SourceKind.Game, AssetKind.Cas, packagePath, casPart.Key, 2, "Swatch", "Swatch 3", "#FF445566", thumbnail.Key.FullTgi)
+            ]
+        };
+
+        var summary = builder.BuildAssetSummaries(scan).Single();
+
+        Assert.Equal(3, summary.VariantCount);
+        Assert.True(summary.HasVariants);
+        Assert.True(summary.CapabilitySnapshot.HasVariants);
+    }
+
+    [Fact]
     public void Ts4ObjectCatalog_Parse_ExtractsConfirmedLocalizationHashes()
     {
         var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
@@ -577,6 +969,26 @@ public sealed class ExplorerTests : IDisposable
         var descriptionHash = Ts4SeedMetadataExtractor.TryExtractObjectCatalogDescriptionHash(payload);
 
         Assert.Equal(0x12552F9Bu, descriptionHash);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_ExtractsObjectDefinitionSceneRootHint()
+    {
+        var payload = CreateSyntheticObjectDefinitionBytes(
+            "sculptFloor_EP06GENsetStorefront14x4x5_set1",
+            2,
+            227,
+            0x00000009u,
+            0x039E5CF1u,
+            0x51195E00u,
+            0x01661233u,
+            0x00000000u);
+
+        var metadata = Ts4SeedMetadataExtractor.TryExtractObjectDefinitionSeedMetadata(payload);
+
+        Assert.NotNull(metadata);
+        Assert.Equal("sculptFloor_EP06GENsetStorefront14x4x5_set1", metadata!.TechnicalName);
+        Assert.Equal("01661233:00000000:039E5CF151195E00", metadata.SceneRootTgiHint);
     }
 
     [Fact]
@@ -4032,6 +4444,86 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task CasLogicalAsset_BuildsSceneFromWrappedGeometryResource()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-wrapped-geom.package");
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", tempRoot, SourceKind.Game);
+        var casPart = CreateResource(source.Id, packagePath, SourceKind.Game, "CASPart", 1, "Short Hair");
+        var geometry = CreateResource(source.Id, packagePath, SourceKind.Game, "Geometry", 1, "HairGeom");
+        var rig = CreateResource(source.Id, packagePath, SourceKind.Game, "Rig", 1, "HumanRig");
+        var texture = CreateResource(source.Id, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(source.Id, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var scan = new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [casPart, geometry, rig, texture, thumbnail], []);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, texture.Key),
+                [geometry.Key.FullTgi] = WrapSingleChunkRcol(CreateSyntheticSkinnedGeometryBytes()),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+        var assets = graphBuilder.BuildAssetSummaries(scan);
+        await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
+
+        var asset = assets.Single(result => result.AssetKind == AssetKind.Cas);
+        var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+        var assetGraph = await graphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
+        Assert.True(assetGraph.CasGraph is not null, string.Join(Environment.NewLine, assetGraph.Diagnostics));
+        Assert.True(assetGraph.CasGraph!.IsSupported, string.Join(Environment.NewLine, assetGraph.Diagnostics));
+
+        var sceneBuilder = new BuildBuySceneBuildService(catalog, store);
+        var scene = await sceneBuilder.BuildSceneAsync(assetGraph.CasGraph.GeometryResource!, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+        Assert.NotEmpty(scene.Scene!.Meshes);
+    }
+
+    [Fact]
+    public async Task CasGeometryScene_SkipsUndecodableFallbackTextureCandidate()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-undecodable-texture.package");
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Fixture", tempRoot, SourceKind.Game);
+        var geometry = CreateResource(source.Id, packagePath, SourceKind.Game, "Geometry", 1, "AccessoryGeom");
+        var texture = CreateResource(source.Id, packagePath, SourceKind.Game, "PNGImage", 1, "AccessoryTexture");
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes()
+            },
+            new Dictionary<string, string?>(),
+            new Dictionary<string, Exception>
+            {
+                [texture.Key.FullTgi] = new InvalidDataException("Unknown image format.")
+            });
+
+        var sceneBuilder = new BuildBuySceneBuildService(
+            catalog,
+            new FakeGraphIndexStore([geometry, texture]));
+
+        var scene = await sceneBuilder.BuildSceneAsync(geometry, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+        Assert.Empty(scene.Scene!.Materials.SelectMany(static material => material.Textures));
+        Assert.Contains(scene.Diagnostics, message => message.Contains("Skipped same-instance fallback texture", StringComparison.Ordinal));
+        Assert.Contains(scene.Diagnostics, message => message.Contains("Unknown image format.", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task CasLogicalAsset_FallsBackWhenCasPartParsingFails()
     {
         var packagePath = Path.Combine(tempRoot, "cas-fallback.package");
@@ -4089,6 +4581,26 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task ResourceCatalogService_DecodesSyntheticRle2TextureToPng()
+    {
+        var packagePath = Path.Combine(tempRoot, "synthetic-rle2.package");
+        var package = new DataBasePackedFile();
+        var resourceKey = new ResourceKey(ResourceType.RLE2Image, 0x00000000, 0x0000000000000001);
+        package.Set(resourceKey, CreateSyntheticRle2TextureBytes(), CompressionMode.ForceOff);
+        await package.SaveAsAsync(packagePath, ResourceKeyOrder.Preserve, CancellationToken.None);
+
+        var service = new LlamaResourceCatalogService();
+        var pngBytes = await service.GetTexturePngAsync(
+            packagePath,
+            new ResourceKeyRecord((uint)ResourceType.RLE2Image, 0x00000000, 0x0000000000000001, nameof(ResourceType.RLE2Image)),
+            CancellationToken.None);
+
+        Assert.NotNull(pngBytes);
+        Assert.True(pngBytes!.Length > 8);
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, pngBytes.Take(8).ToArray());
+    }
+
+    [Fact]
     public async Task SqliteIndexStore_PersistsAndQueriesResourcesAndAssets()
     {
         var cacheService = new TestCacheService(tempRoot);
@@ -4141,6 +4653,140 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task SqliteIndexStore_PersistsAndQueriesAssetVariants()
+    {
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Game", tempRoot, SourceKind.Game);
+        await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+        var packagePath = "variants.package";
+        var resource = CreateResource(source.Id, packagePath, SourceKind.Game, "CASPart", 1, "yfTop_Test");
+        var asset = new AssetSummary(
+            Guid.NewGuid(),
+            source.Id,
+            SourceKind.Game,
+            AssetKind.Cas,
+            "yfTop_Test",
+            "CAS",
+            packagePath,
+            resource.Key,
+            null,
+            3,
+            1,
+            string.Empty,
+            new AssetCapabilitySnapshot(true, true, true, true, HasVariants: true));
+        var scan = new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [resource], [])
+        {
+            AssetVariants =
+            [
+                new DiscoveredAssetVariant(source.Id, SourceKind.Game, AssetKind.Cas, packagePath, resource.Key, 0, "Swatch", "Swatch 1 (#FFFFCCAA)", "#FFFFCCAA"),
+                new DiscoveredAssetVariant(source.Id, SourceKind.Game, AssetKind.Cas, packagePath, resource.Key, 1, "Swatch", "Swatch 2 (#FF112233)", "#FF112233"),
+                new DiscoveredAssetVariant(source.Id, SourceKind.Game, AssetKind.Cas, packagePath, resource.Key, 2, "Swatch", "Swatch 3 (#FF445566)", "#FF445566")
+            ]
+        };
+
+        await store.ReplacePackageAsync(scan, [asset], CancellationToken.None);
+
+        var variants = await store.GetAssetVariantsAsync(asset.Id, CancellationToken.None);
+        var variantOnlyAssets = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                string.Empty,
+                AssetBrowserDomain.Cas,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                true,
+                AssetBrowserSort.Name,
+                0,
+                10,
+                new AssetCapabilityFilter()),
+            CancellationToken.None);
+
+        Assert.Equal(3, variants.Count);
+        Assert.All(variants, variant => Assert.Equal(asset.Id, variant.AssetId));
+        Assert.Single(variantOnlyAssets.Items);
+        Assert.Equal(3, variantOnlyAssets.Items[0].VariantCount);
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_QueriesGeneral3DAssetsSeparatelyFromBuildBuy()
+    {
+        var cacheService = new TestCacheService(tempRoot);
+        var store = new SqliteIndexStore(cacheService);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var source = new DataSourceDefinition(Guid.NewGuid(), "Game", tempRoot, SourceKind.Game);
+        await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+        var packagePath = "general3d.package";
+        var model = CreateResource(source.Id, packagePath, SourceKind.Game, "Model", 1, "LooseChair");
+        var modelLod = CreateResource(source.Id, packagePath, SourceKind.Game, "ModelLOD", 1);
+        var asset = new AssetSummary(
+            Guid.NewGuid(),
+            source.Id,
+            SourceKind.Game,
+            AssetKind.General3D,
+            "LooseChair",
+            "General 3D",
+            packagePath,
+            model.Key,
+            null,
+            1,
+            1,
+            string.Empty,
+            new AssetCapabilitySnapshot(true, true, true, true),
+            PackageName: packagePath,
+            RootTypeName: "Model",
+            PrimaryGeometryType: "ModelLOD",
+            CategoryNormalized: "general3d");
+
+        await store.ReplacePackageAsync(
+            new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [model, modelLod], []),
+            [asset],
+            CancellationToken.None);
+
+        var general3DResults = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                "loosechair",
+                AssetBrowserDomain.General3D,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                10,
+                new AssetCapabilityFilter()),
+            CancellationToken.None);
+        var buildBuyResults = await store.QueryAssetsAsync(
+            new AssetBrowserQuery(
+                new SourceScope(),
+                "loosechair",
+                AssetBrowserDomain.BuildBuy,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                10,
+                new AssetCapabilityFilter()),
+            CancellationToken.None);
+
+        Assert.Single(general3DResults.Items);
+        Assert.Empty(buildBuyResults.Items);
+        Assert.Equal(AssetKind.General3D, general3DResults.Items[0].AssetKind);
+    }
+
+    [Fact]
     public void PreviewPresentationState_SwitchesBetweenSceneImageAndDiagnostics()
     {
         var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "Model", 1);
@@ -4183,10 +4829,61 @@ public sealed class ExplorerTests : IDisposable
         var successDetails = AssetDetailsFormatter.BuildAssetDetails(summary, graph, root, successfulScene);
         var failureDetails = AssetDetailsFormatter.BuildAssetDetails(summary, graph, root, failedScene);
 
-        Assert.Contains("Support Status: Metadata", successDetails);
+        Assert.Contains("Support Status: Geometry", successDetails);
         Assert.Contains("Scene Reconstruction: SceneReady", successDetails);
         Assert.Contains("Scene Reconstruction: Failed", failureDetails);
         Assert.Contains("No triangle meshes could be reconstructed.", failureDetails);
+    }
+
+    [Fact]
+    public void AssetDetailsFormatter_ReportsSelectedVariantAndMarksIndexedRow()
+    {
+        var sourceId = Guid.NewGuid();
+        var root = CreateResource(sourceId, "variants.package", SourceKind.Game, "CASPart", 1, "yfTop_Test");
+        var summary = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfTop_Test", "CAS", "variants.package", root.Key, null, 3, 1, string.Empty, new AssetCapabilitySnapshot(true, true, true, true, HasVariants: true));
+        var graph = new AssetGraph(summary, [], [], null, new CasAssetGraph(root, null, null, [root], [], [], [], [], [], "Top", "Swatch data available", null, false, "subset"));
+        AssetVariantSummary[] variants =
+        [
+            new AssetVariantSummary(summary.Id, sourceId, SourceKind.Game, AssetKind.Cas, "variants.package", root.Key.FullTgi, 0, "Swatch", "Swatch 1 (#FF112233)", "#FF112233"),
+            new AssetVariantSummary(summary.Id, sourceId, SourceKind.Game, AssetKind.Cas, "variants.package", root.Key.FullTgi, 1, "Swatch", "Swatch 2 (#FF445566)", "#FF445566")
+        ];
+
+        var details = AssetDetailsFormatter.BuildAssetDetails(summary, graph, null, null, variants, variants[1]);
+
+        Assert.Contains("Selected Variant: Swatch 2: Swatch 2 (#FF445566)", details);
+        Assert.Contains("> Swatch 2: Swatch 2 (#FF445566) | #FF445566", details);
+        Assert.Contains("  Swatch 1: Swatch 1 (#FF112233) | #FF112233", details);
+    }
+
+    [Fact]
+    public void AssetVariantSceneAdapter_AppliesCasSwatchTintToApproximateCasMaterials()
+    {
+        var scene = new CanonicalScene(
+            "CasScene",
+            [],
+            [new CanonicalMaterial("ApproximateCasMaterial", [], SourceKind: CanonicalMaterialSourceKind.ApproximateCas)],
+            [],
+            new Bounds3D(0, 0, 0, 1, 1, 1));
+        var variant = new AssetVariantSummary(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            SourceKind.Game,
+            AssetKind.Cas,
+            "test.package",
+            "034AEECB:00000000:0000000000000001",
+            0,
+            "Swatch",
+            "Swatch 1 (#FF3366CC)",
+            "#FF3366CC");
+
+        var adapted = AssetVariantSceneAdapter.ApplyToScene(scene, AssetKind.Cas, variant);
+        var diagnostics = AssetVariantSceneAdapter.AppendVariantDiagnostics("Scene ready.", AssetKind.Cas, variant);
+
+        Assert.NotNull(adapted.Materials[0].ViewportTintColor);
+        Assert.Equal(0.2f, adapted.Materials[0].ViewportTintColor!.R, 3);
+        Assert.Equal(0.4f, adapted.Materials[0].ViewportTintColor!.G, 3);
+        Assert.Equal(0.8f, adapted.Materials[0].ViewportTintColor!.B, 3);
+        Assert.Contains("Selected swatch tint: #FF3366CC", diagnostics);
     }
 
     [Fact]
@@ -4461,6 +5158,15 @@ public sealed class ExplorerTests : IDisposable
             resources.AddRange(graph.CasGraph.MaterialResources);
             resources.AddRange(graph.CasGraph.TextureResources);
         }
+        else if (graph.General3DGraph is not null)
+        {
+            resources.AddRange(graph.General3DGraph.ModelResources);
+            resources.AddRange(graph.General3DGraph.ModelLodResources);
+            resources.AddRange(graph.General3DGraph.GeometryResources);
+            resources.AddRange(graph.General3DGraph.RigResources);
+            resources.AddRange(graph.General3DGraph.MaterialResources);
+            resources.AddRange(graph.General3DGraph.TextureResources);
+        }
 
         return resources
             .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
@@ -4468,12 +5174,24 @@ public sealed class ExplorerTests : IDisposable
             .ToArray();
     }
 
-    private static byte[] CreateSyntheticCasPartBytes(ResourceKeyRecord geometryKey, ResourceKeyRecord thumbnailKey, ResourceKeyRecord textureKey, string internalName = "Short Hair")
+    private static byte[] CreateSyntheticCasPartBytes(
+        ResourceKeyRecord geometryKey,
+        ResourceKeyRecord thumbnailKey,
+        ResourceKeyRecord textureKey,
+        string internalName = "Short Hair",
+        IReadOnlyList<uint>? swatchColors = null,
+        ResourceKeyRecord? colorShiftMaskKey = null,
+        uint version = 0x0000002Eu,
+        int bodyType = 2,
+        bool includeLodReferences = true)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.BigEndianUnicode, leaveOpen: true);
+        var noneKey = new ResourceKeyRecord(0u, 0u, 0ul, "0x00000000");
+        var effectiveColorShiftMaskKey = colorShiftMaskKey ?? noneKey;
+        swatchColors ??= [0xFFFFCCAAu];
 
-        writer.Write(0x0000001Cu);
+        writer.Write(version);
         var tgiOffsetPosition = stream.Position;
         writer.Write(0u);
         writer.Write(0u);
@@ -4483,6 +5201,9 @@ public sealed class ExplorerTests : IDisposable
         writer.Write(0u);
         writer.Write(0u);
         writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write(0ul);
+        writer.Write(0ul);
         writer.Write(0ul);
         writer.Write(0u);
         writer.Write(0u);
@@ -4490,40 +5211,67 @@ public sealed class ExplorerTests : IDisposable
         writer.Write(0u);
         writer.Write(0u);
         writer.Write((byte)0);
-        writer.Write(2);
+        writer.Write(bodyType);
         writer.Write(0);
         writer.Write(0x00003010u);
+        writer.Write(1u);
+        writer.Write((short)0);
         writer.Write((byte)0);
-        writer.Write((byte)0);
-        writer.Write((byte)1);
-        writer.Write(unchecked((int)0xFFFFCCAA));
+        writer.Write(new byte[9]);
+        writer.Write((byte)swatchColors.Count);
+        foreach (var swatchColor in swatchColors)
+        {
+            writer.Write(swatchColor);
+        }
         writer.Write((byte)0);
         writer.Write((byte)2);
         writer.Write(0ul);
         writer.Write((byte)0);
-        writer.Write((byte)0);
-        writer.Write(0);
-
-        var lodListPosition = stream.Position;
-        writer.Write((byte)1);
-        writer.Write((byte)0);
         writer.Write(0u);
-        writer.Write((byte)1);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0ul);
+        writer.Write(0ul);
+        for (var sliderIndex = 0; sliderIndex < 11; sliderIndex++)
+        {
+            writer.Write(0f);
+        }
+
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
         writer.Write(0);
+        if (includeLodReferences)
+        {
+            writer.Write((byte)1);
+            writer.Write((byte)0);
+            writer.Write(0u);
+            writer.Write((byte)1);
+            writer.Write(0);
+            writer.Write(0);
+            writer.Write(0);
+        }
+        else
+        {
+            writer.Write((byte)0);
+        }
+        writer.Write((byte)1);
+        writer.Write((byte)1);
+        writer.Write((byte)0);
+        writer.Write((byte)3);
+        writer.Write((byte)3);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)3);
+        writer.Write((byte)3);
         writer.Write(0);
-        writer.Write(0);
-        writer.Write((byte)1);
+        writer.Write((byte)3);
         writer.Write((byte)0);
-        writer.Write((byte)0);
-        writer.Write((byte)1);
-        writer.Write((byte)2);
-        writer.Write((byte)0);
-        writer.Write((byte)0);
-        writer.Write((byte)0);
-        writer.Write((byte)2);
-        writer.Write((byte)1);
-        writer.Write((byte)0);
-        writer.Write((byte)0);
+        if (version >= 0x00000031u)
+        {
+            writer.Write((byte)4);
+        }
 
         var tgiOffset = (uint)(stream.Position - 8);
         var current = stream.Position;
@@ -4531,12 +5279,67 @@ public sealed class ExplorerTests : IDisposable
         writer.Write(tgiOffset);
         stream.Position = current;
 
-        writer.Write((byte)3);
+        writer.Write((byte)(colorShiftMaskKey is null ? 4 : 5));
+        WriteResourceKey(writer, noneKey);
         WriteResourceKey(writer, geometryKey);
         WriteResourceKey(writer, thumbnailKey);
         WriteResourceKey(writer, textureKey);
+        if (colorShiftMaskKey is not null)
+        {
+            WriteResourceKey(writer, effectiveColorShiftMaskKey);
+        }
         writer.Flush();
         return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticRle2TextureBytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        writer.Write(0x35545844u); // DXT5
+        writer.Write(0x32454C52u); // RLE2
+        writer.Write((ushort)4);   // width
+        writer.Write((ushort)4);   // height
+        writer.Write((ushort)1);   // mip count
+        writer.Write((ushort)0);   // reserved
+
+        writer.Write(36); // command offset
+        writer.Write(38); // offset2
+        writer.Write(42); // offset3
+        writer.Write(46); // offset0
+        writer.Write(46); // offset1
+
+        writer.Write((ushort)0x0006); // one opaque block
+        writer.Write(new byte[] { 0xFF, 0xFF, 0x00, 0x00 }); // block2
+        writer.Write(new byte[] { 0x00, 0x00, 0x00, 0x00 }); // block3
+
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticCasPartBytesWithTruncatedBody(ResourceKeyRecord geometryKey, ResourceKeyRecord thumbnailKey, ResourceKeyRecord textureKey)
+    {
+        var bytes = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, "BrokenCasPart");
+        var bodyStartOffset = FindSyntheticCasPartBodyStartOffset(bytes);
+        return bytes[..(bodyStartOffset + 2)];
+    }
+
+    private static byte[] CreateSyntheticCasPartBytesWithTruncatedManagedString(ResourceKeyRecord geometryKey, ResourceKeyRecord thumbnailKey, ResourceKeyRecord textureKey)
+    {
+        var bytes = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, "BrokenCasPart");
+        return bytes[..20];
+    }
+
+    private static int FindSyntheticCasPartBodyStartOffset(byte[] bytes)
+    {
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
+        _ = reader.ReadUInt32();
+        _ = reader.ReadUInt32();
+        _ = reader.ReadUInt32();
+        var stringLength = reader.ReadByte();
+        stream.Position += stringLength;
+        return checked((int)stream.Position);
     }
 
     private static byte[] CreateSyntheticObjectDefinitionBytes(string internalName, ushort version, uint declaredSize, params uint[] remainingWords)
@@ -4606,6 +5409,25 @@ public sealed class ExplorerTests : IDisposable
         writer.Write(2);
         writer.Write(0x11111111u);
         writer.Write(0x22222222u);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] WrapSingleChunkRcol(byte[] chunkBytes)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(3u);
+        writer.Write(0);
+        writer.Write(0u);
+        writer.Write(0);
+        writer.Write(1);
+        writer.Write(0ul);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0);
+        writer.Write(chunkBytes);
         writer.Flush();
         return stream.ToArray();
     }
@@ -4682,9 +5504,9 @@ public sealed class ExplorerTests : IDisposable
 
     private static void WriteResourceKey(BinaryWriter writer, ResourceKeyRecord key)
     {
-        writer.Write(key.Type);
-        writer.Write(key.Group);
         writer.Write(key.FullInstance);
+        writer.Write(key.Group);
+        writer.Write(key.Type);
     }
 
     private sealed class TestCacheService : ICacheService
@@ -4714,11 +5536,16 @@ public sealed class ExplorerTests : IDisposable
     {
         private readonly IReadOnlyDictionary<string, byte[]> bytesByTgi;
         private readonly IReadOnlyDictionary<string, string?> textByTgi;
+        private readonly IReadOnlyDictionary<string, Exception> textureExceptionsByTgi;
 
-        public FakeResourceCatalogService(IReadOnlyDictionary<string, byte[]> bytesByTgi, IReadOnlyDictionary<string, string?> textByTgi)
+        public FakeResourceCatalogService(
+            IReadOnlyDictionary<string, byte[]> bytesByTgi,
+            IReadOnlyDictionary<string, string?> textByTgi,
+            IReadOnlyDictionary<string, Exception>? textureExceptionsByTgi = null)
         {
             this.bytesByTgi = bytesByTgi;
             this.textByTgi = textByTgi;
+            this.textureExceptionsByTgi = textureExceptionsByTgi ?? new Dictionary<string, Exception>();
         }
 
         public Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken) =>
@@ -4733,8 +5560,15 @@ public sealed class ExplorerTests : IDisposable
         public Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken) =>
             Task.FromResult(textByTgi.TryGetValue(key.FullTgi, out var value) ? value : null);
 
-        public Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null) =>
-            Task.FromResult<byte[]?>(bytesByTgi[key.FullTgi]);
+        public Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null)
+        {
+            if (textureExceptionsByTgi.TryGetValue(key.FullTgi, out var exception))
+            {
+                return Task.FromException<byte[]?>(exception);
+            }
+
+            return Task.FromResult<byte[]?>(bytesByTgi[key.FullTgi]);
+        }
     }
 
     private sealed class FakeSceneBuildService(SceneBuildResult result) : ISceneBuildService
@@ -4758,6 +5592,7 @@ public sealed class ExplorerTests : IDisposable
         public Task<bool> NeedsRescanAsync(Guid dataSourceId, string packagePath, long fileSize, DateTimeOffset lastWriteTimeUtc, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<IIndexWriteSession> OpenRebuildSessionAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken) => Task.FromResult(resource);
         public Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -4767,6 +5602,7 @@ public sealed class ExplorerTests : IDisposable
         public Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => resource.PackagePath == packagePath && resource.Key.FullInstance == fullInstance).ToArray());
         public Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsAsync(Guid assetId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetVariantSummary>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => string.Equals(resource.Key.FullTgi, fullTgi, StringComparison.OrdinalIgnoreCase)).ToArray());
         public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;

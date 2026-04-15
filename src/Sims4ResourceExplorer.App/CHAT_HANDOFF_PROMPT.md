@@ -20,6 +20,9 @@ Important project rules:
   Sims4ResourceExplorer.App.csproj.
 - The same build id must appear in both the window title and the diagnostics
   `Build: ...` line.
+- Any substantial change to user-visible behavior, supported subsets,
+  workflows, limitations, or diagnostics must update the relevant docs in the
+  same change set.
 - If code changes are meant to be verified by launching the app, always:
   - increment the build number
   - clean/build the app so `run.ps1` can be launched immediately
@@ -54,7 +57,6 @@ Current known cautions:
   look metallic, foggy, or washed out.
 
 Current recent feature state:
-- Build numbers have progressed through build-0048.
 - Preview UI already has:
   - `RawUv`
   - `MaterialUv`
@@ -78,6 +80,8 @@ Continue Sims4 Browser in c:\Users\stani\PROJECTS\Sims4Browser.
 Read AGENTS.md and the App csproj first.
 Preserve the rule that every verification build increments BuildNumber and the
 same build id appears in title + diagnostics.
+Update the relevant docs whenever a substantial behavior/workflow/support
+change lands.
 Treat RawUv as raw mesh UV, MaterialUv as confirmed material transform only,
 and do not fake shader logic with unmarked heuristics.
 Prefer general fixes over per-asset hacks.

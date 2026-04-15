@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Sims4ResourceExplorer.Assets;
@@ -52,7 +53,7 @@ public sealed class IndexingPipelineTests
     }
 
     [Fact]
-    public async Task PackageIndexCoordinator_StartsProcessingBeforeDiscoveryCompletes()
+    public async Task PackageIndexCoordinator_CompletesScopeBeforeStartingProcessing()
     {
         var root = CreatePackageRoot();
 
@@ -82,8 +83,10 @@ public sealed class IndexingPipelineTests
 
             var runTask = coordinator.RunAsync([source], progress: null, CancellationToken.None);
             await firstYielded.Task;
-            await firstScanStarted.Task;
+            var startedTooEarly = await Task.WhenAny(firstScanStarted.Task, Task.Delay(TimeSpan.FromMilliseconds(200))) == firstScanStarted.Task;
+            Assert.False(startedTooEarly);
             allowSecondYield.TrySetResult();
+            await firstScanStarted.Task;
             await runTask;
 
             Assert.Equal(2, store.ReplacedPackages.Count);
@@ -116,7 +119,7 @@ public sealed class IndexingPipelineTests
             var progressEvents = new List<IndexingProgress>();
             await coordinator.RunAsync([source], new Progress<IndexingProgress>(progressEvents.Add), CancellationToken.None);
 
-            Assert.True(progressEvents.Count < 20, $"Expected throttled progress events, got {progressEvents.Count}.");
+            Assert.True(progressEvents.Count < 25, $"Expected throttled progress events, got {progressEvents.Count}.");
             Assert.Contains(progressEvents, progress => progress.Summary is not null);
             Assert.All(progressEvents.Where(progress => progress.WorkerSlots is not null), progress =>
             {
@@ -151,9 +154,10 @@ public sealed class IndexingPipelineTests
             await coordinator.RunAsync([source], new Progress<IndexingProgress>(progressEvents.Add), CancellationToken.None);
 
             Assert.NotEmpty(progressEvents);
-            Assert.Equal("preparing", progressEvents[0].Stage);
-            Assert.Contains(progressEvents, progress => progress.Message.Contains("fingerprint", StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(progressEvents, progress => progress.Message.Contains("write session", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => string.Equals(progress.Stage, "preparing", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => string.Equals(progress.Stage, "scope", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => progress.Message.Contains("shadow", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => progress.Message.Contains("rebuild session", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -264,6 +268,874 @@ public sealed class IndexingPipelineTests
                     1000),
                 CancellationToken.None);
             Assert.Equal(450, rows.Items.Count);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_BulkReplaceUpdatesFtsWithoutLeavingStaleSearchRows()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var packagePath = Path.Combine(root, "searchable.package");
+            ResourceMetadata[] initialResources =
+            [
+                CreateNamedResource(source.Id, packagePath, 1, "OldChair"),
+                CreateNamedResource(source.Id, packagePath, 2, "OldLamp")
+            ];
+            AssetSummary[] initialAssets =
+            [
+                CreateAsset(source.Id, packagePath, "OldChair Asset")
+            ];
+
+            await using (var session = await store.OpenWriteSessionAsync(CancellationToken.None))
+            {
+                await session.ReplacePackagesAsync(
+                    [(new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, initialResources, []), initialAssets)],
+                    CancellationToken.None);
+                await session.FinalizeAsync(progress: null, CancellationToken.None);
+            }
+
+            var oldResourceSearch = await store.QueryResourcesAsync(
+                new RawResourceBrowserQuery(
+                    new SourceScope(),
+                    "OldChair",
+                    RawResourceDomain.All,
+                    string.Empty,
+                    packagePath,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                    ResourceLinkFilter.Any,
+                    RawResourceSort.TypeName,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Single(oldResourceSearch.Items);
+
+            var oldAssetSearch = await store.QueryAssetsAsync(
+                new AssetBrowserQuery(
+                    new SourceScope(),
+                    "OldChair",
+                    AssetBrowserDomain.BuildBuy,
+                    string.Empty,
+                    packagePath,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Single(oldAssetSearch.Items);
+
+            ResourceMetadata[] updatedResources =
+            [
+                CreateNamedResource(source.Id, packagePath, 3, "NewChair")
+            ];
+
+            await using (var session = await store.OpenWriteSessionAsync(CancellationToken.None))
+            {
+                await session.ReplacePackagesAsync(
+                    [(new PackageScanResult(source.Id, SourceKind.Game, packagePath, 11, DateTimeOffset.UtcNow, updatedResources, []), Array.Empty<AssetSummary>())],
+                    CancellationToken.None);
+                await session.FinalizeAsync(progress: null, CancellationToken.None);
+            }
+
+            var staleResourceSearch = await store.QueryResourcesAsync(
+                new RawResourceBrowserQuery(
+                    new SourceScope(),
+                    "OldChair",
+                    RawResourceDomain.All,
+                    string.Empty,
+                    packagePath,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                    ResourceLinkFilter.Any,
+                    RawResourceSort.TypeName,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Empty(staleResourceSearch.Items);
+
+            var freshResourceSearch = await store.QueryResourcesAsync(
+                new RawResourceBrowserQuery(
+                    new SourceScope(),
+                    "NewChair",
+                    RawResourceDomain.All,
+                    string.Empty,
+                    packagePath,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                    ResourceLinkFilter.Any,
+                    RawResourceSort.TypeName,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Single(freshResourceSearch.Items);
+
+            var staleAssetSearch = await store.QueryAssetsAsync(
+                new AssetBrowserQuery(
+                    new SourceScope(),
+                    "OldChair",
+                    AssetBrowserDomain.BuildBuy,
+                    string.Empty,
+                    packagePath,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Empty(staleAssetSearch.Items);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task PackageIndexCoordinator_RebuildsShadowDatabaseAndRemovesStalePackages()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var stalePackagePath = Path.Combine(root, "stale.package");
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+            await store.ReplacePackageAsync(
+                new PackageScanResult(
+                    source.Id,
+                    SourceKind.Game,
+                    stalePackagePath,
+                    10,
+                    DateTimeOffset.UtcNow,
+                    [CreateNamedResource(source.Id, stalePackagePath, 1, "StaleChair")],
+                    []),
+                [],
+                CancellationToken.None);
+
+            var freshPackages = CreatePackageFiles(root, "fresh.package");
+            var scanner = new FakePackageScanner(source, freshPackages);
+            var catalog = new TrackingResourceCatalogService(TimeSpan.Zero, 1)
+            {
+                ScanResourceFactory = packagePath => CreateNamedResource(source.Id, packagePath, 1, "FreshChair")
+            };
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new FakeAssetGraphBuilder(),
+                store,
+                new IndexingRunOptions(1, 2, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(60)));
+
+            var progressEvents = new List<IndexingProgress>();
+            await coordinator.RunAsync([source], new Progress<IndexingProgress>(progressEvents.Add), CancellationToken.None);
+
+            var indexedPackages = await store.GetIndexedPackagesAsync([source.Id], CancellationToken.None);
+            Assert.Single(indexedPackages);
+            Assert.Equal(freshPackages[0], indexedPackages[0].PackagePath);
+
+            var staleRows = await store.GetPackageResourcesAsync(stalePackagePath, CancellationToken.None);
+            Assert.Empty(staleRows);
+
+            var freshSearch = await store.QueryResourcesAsync(
+                new RawResourceBrowserQuery(
+                    new SourceScope(),
+                    "FreshChair",
+                    RawResourceDomain.All,
+                    string.Empty,
+                    freshPackages[0],
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                    ResourceLinkFilter.Any,
+                    RawResourceSort.TypeName,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Single(freshSearch.Items);
+            Assert.Contains(progressEvents, progress => string.Equals(progress.Stage, "finalizing", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(progressEvents, progress => progress.Message.Contains("Activating rebuilt catalog", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_InitializeCreatesAssetSourceIndex()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = cache.DatabasePath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Cache = SqliteCacheMode.Shared
+            }.ToString());
+            await connection.OpenAsync(CancellationToken.None);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_assets_source';";
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+            Assert.Equal(1, count);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task PackageIndexCoordinator_RebuildsShardCatalogAndQueriesAcrossAllShards()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var packagePaths = CreatePackageFiles(
+                root,
+                "alpha.package",
+                "beta.package",
+                "gamma.package",
+                "delta.package",
+                "epsilon.package",
+                "zeta.package",
+                "eta.package",
+                "theta.package");
+
+            var scanner = new FakePackageScanner(source, packagePaths);
+            var catalog = new TrackingResourceCatalogService(TimeSpan.Zero, 1)
+            {
+                ScanResourceFactory = packagePath => CreateNamedResource(
+                    source.Id,
+                    packagePath,
+                    1,
+                    $"SharedNeedle {Path.GetFileNameWithoutExtension(packagePath)}")
+            };
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new PerPackageAssetGraphBuilder("SharedNeedle"),
+                store,
+                new IndexingRunOptions(4, 8, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(60)));
+
+            await coordinator.RunAsync([source], progress: null, CancellationToken.None);
+
+            Assert.True(File.Exists(cache.DatabasePath));
+            Assert.True(File.Exists(Path.Combine(cache.CacheRoot, "index.shard01.sqlite")));
+            Assert.True(File.Exists(Path.Combine(cache.CacheRoot, "index.shard02.sqlite")));
+            Assert.True(File.Exists(Path.Combine(cache.CacheRoot, "index.shard03.sqlite")));
+
+            var expectedPackageOrder = packagePaths.OrderBy(static path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+
+            var allResources = await store.QueryResourcesAsync(
+                new RawResourceBrowserQuery(
+                    new SourceScope(),
+                    "SharedNeedle",
+                    RawResourceDomain.All,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                    ResourceLinkFilter.Any,
+                    RawResourceSort.PackagePath,
+                    0,
+                    32),
+                CancellationToken.None);
+            Assert.Equal(packagePaths.Count, allResources.TotalCount);
+            Assert.Equal(expectedPackageOrder, allResources.Items.Select(static item => item.PackagePath).ToArray());
+
+            var pagedResources = await store.QueryResourcesAsync(
+                new RawResourceBrowserQuery(
+                    new SourceScope(),
+                    "SharedNeedle",
+                    RawResourceDomain.All,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                    ResourceLinkFilter.Any,
+                    RawResourceSort.PackagePath,
+                    2,
+                    3),
+                CancellationToken.None);
+            Assert.Equal(expectedPackageOrder.Skip(2).Take(3).ToArray(), pagedResources.Items.Select(static item => item.PackagePath).ToArray());
+
+            var allAssets = await store.QueryAssetsAsync(
+                new AssetBrowserQuery(
+                    new SourceScope(),
+                    "SharedNeedle",
+                    AssetBrowserDomain.BuildBuy,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Package,
+                    0,
+                    32),
+                CancellationToken.None);
+            Assert.Equal(packagePaths.Count, allAssets.TotalCount);
+            Assert.Equal(expectedPackageOrder, allAssets.Items.Select(static item => item.PackagePath).ToArray());
+
+            var packageResources = await store.GetPackageResourcesAsync(packagePaths[3], CancellationToken.None);
+            Assert.Single(packageResources);
+            Assert.Equal(packagePaths[3], packageResources[0].PackagePath);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task PackageIndexCoordinator_FinalizedShardSchemaUsesUniqueIndexesInsteadOfPrimaryKeys()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var packagePaths = CreatePackageFiles(root, "schema.package");
+            var scanner = new FakePackageScanner(source, packagePaths);
+            var catalog = new TrackingResourceCatalogService(TimeSpan.Zero, 1)
+            {
+                ScanResourceFactory = packagePath => CreateNamedResource(source.Id, packagePath, 1, "SchemaNeedle")
+            };
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new PerPackageAssetGraphBuilder("SchemaNeedle"),
+                store,
+                new IndexingRunOptions(1, 2, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(60)));
+
+            await coordinator.RunAsync([source], progress: null, CancellationToken.None);
+
+            foreach (var databasePath in new[]
+                     {
+                         cache.DatabasePath,
+                         Path.Combine(cache.CacheRoot, "index.shard01.sqlite"),
+                         Path.Combine(cache.CacheRoot, "index.shard02.sqlite"),
+                         Path.Combine(cache.CacheRoot, "index.shard03.sqlite")
+                     })
+            {
+                await using var connection = await OpenConnectionAsync(databasePath);
+
+                var resourcesTableSql = await GetSqlDefinitionAsync(connection, "table", "resources");
+                Assert.Contains("id TEXT NOT NULL", resourcesTableSql, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("PRIMARY KEY", resourcesTableSql, StringComparison.OrdinalIgnoreCase);
+
+                var assetsTableSql = await GetSqlDefinitionAsync(connection, "table", "assets");
+                Assert.Contains("id TEXT NOT NULL", assetsTableSql, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("PRIMARY KEY", assetsTableSql, StringComparison.OrdinalIgnoreCase);
+
+                Assert.Equal(1, await CountObjectAsync(connection, "index", "ux_resources_id"));
+                Assert.Equal(1, await CountObjectAsync(connection, "index", "ux_assets_id"));
+            }
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_AssetBrowserReturnsOneCanonicalAssetAcrossBaseAndDeltaShards()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var basePackagePath = CreatePackageFiles(root, "base.package").Single();
+            var baseShard = ComputeCatalogShardIndex(basePackagePath);
+            var deltaRoot = Path.Combine(root, "Delta");
+            Directory.CreateDirectory(deltaRoot);
+
+            string? deltaPackagePath = null;
+            for (var index = 0; index < 64; index++)
+            {
+                var candidate = Path.Combine(deltaRoot, $"delta_{index:00}.package");
+                File.WriteAllText(candidate, string.Empty);
+                if (ComputeCatalogShardIndex(candidate) != baseShard)
+                {
+                    deltaPackagePath = candidate;
+                    break;
+                }
+            }
+
+            Assert.NotNull(deltaPackagePath);
+
+            var rootKey = new ResourceKeyRecord(0x034AEECB, 0x00000000, 0x0000000000002000, "CASPart");
+            var canonicalAsset = new AssetSummary(
+                StableEntityIds.ForAsset(source.Id, AssetKind.Cas, basePackagePath, rootKey),
+                source.Id,
+                SourceKind.Game,
+                AssetKind.Cas,
+                "puHair_TestHero",
+                "Hair",
+                basePackagePath,
+                rootKey,
+                null,
+                1,
+                4,
+                string.Empty,
+                AssetCapabilitySnapshot.Empty);
+            var deltaShadowAsset = new AssetSummary(
+                StableEntityIds.ForAsset(source.Id, AssetKind.Cas, deltaPackagePath!, rootKey),
+                source.Id,
+                SourceKind.Game,
+                AssetKind.Cas,
+                "CAS Part 0000000000002000",
+                "Hair",
+                deltaPackagePath!,
+                rootKey,
+                null,
+                1,
+                1,
+                string.Empty,
+                AssetCapabilitySnapshot.Empty);
+
+            await using (var session = await store.OpenRebuildSessionAsync([source], CancellationToken.None))
+            {
+                await session.ReplacePackagesAsync(
+                    [
+                        (new PackageScanResult(source.Id, SourceKind.Game, basePackagePath, 10, DateTimeOffset.UtcNow, [], []), [canonicalAsset]),
+                        (new PackageScanResult(source.Id, SourceKind.Game, deltaPackagePath!, 11, DateTimeOffset.UtcNow, [], []), [deltaShadowAsset])
+                    ],
+                    CancellationToken.None);
+                await session.FinalizeAsync(progress: null, CancellationToken.None);
+            }
+
+            var allAssets = await store.QueryAssetsAsync(
+                new AssetBrowserQuery(
+                    new SourceScope(),
+                    string.Empty,
+                    AssetBrowserDomain.Cas,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Equal(1, allAssets.TotalCount);
+            var winner = Assert.Single(allAssets.Items);
+            Assert.Equal("puHair_TestHero", winner.DisplayName);
+            Assert.Equal(basePackagePath, winner.PackagePath);
+
+            var searchResults = await store.QueryAssetsAsync(
+                new AssetBrowserQuery(
+                    new SourceScope(),
+                    "puHair_TestHero",
+                    AssetBrowserDomain.Cas,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Equal(1, searchResults.TotalCount);
+            Assert.Equal("puHair_TestHero", Assert.Single(searchResults.Items).DisplayName);
+
+            var assetDatabasePaths = new[]
+            {
+                cache.DatabasePath,
+                Path.Combine(cache.CacheRoot, "index.shard01.sqlite"),
+                Path.Combine(cache.CacheRoot, "index.shard02.sqlite"),
+                Path.Combine(cache.CacheRoot, "index.shard03.sqlite")
+            };
+
+            var canonicalRows = 0;
+            foreach (var databasePath in assetDatabasePaths)
+            {
+                await using var connection = await OpenConnectionAsync(databasePath);
+                await using var command = connection.CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT COUNT(*)
+                    FROM assets
+                    WHERE root_tgi = $rootTgi AND COALESCE(is_canonical, 1) = 1;
+                    """;
+                command.Parameters.AddWithValue("$rootTgi", rootKey.FullTgi);
+                canonicalRows += Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+            }
+
+            Assert.Equal(1, canonicalRows);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_BuildBuyCanonicalizesAcrossSharedLogicalRootTgi()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var packagePath = CreatePackageFiles(root, "buildbuy.package").Single();
+            const string logicalRootTgi = "01661233:00000000:039E5CF151195E00";
+
+            var rootKeyA = new ResourceKeyRecord(0xC0DB5AE7, 0x00000000, 0x0000000000031D40, "ObjectDefinition");
+            var rootKeyB = new ResourceKeyRecord(0xC0DB5AE7, 0x00000000, 0x0000000000031D41, "ObjectDefinition");
+            var groupedAssetA = new AssetSummary(
+                StableEntityIds.ForAsset(source.Id, AssetKind.BuildBuy, packagePath, rootKeyA),
+                source.Id,
+                SourceKind.Game,
+                AssetKind.BuildBuy,
+                "Still LIfe Store Front Prop",
+                "Build/Buy",
+                packagePath,
+                rootKeyA,
+                null,
+                1,
+                4,
+                string.Empty,
+                AssetCapabilitySnapshot.Empty,
+                LogicalRootTgi: logicalRootTgi);
+            var groupedAssetB = new AssetSummary(
+                StableEntityIds.ForAsset(source.Id, AssetKind.BuildBuy, packagePath, rootKeyB),
+                source.Id,
+                SourceKind.Game,
+                AssetKind.BuildBuy,
+                "Still LIfe Store Front Prop",
+                "Build/Buy",
+                packagePath,
+                rootKeyB,
+                null,
+                1,
+                4,
+                string.Empty,
+                AssetCapabilitySnapshot.Empty,
+                LogicalRootTgi: logicalRootTgi);
+
+            await using (var session = await store.OpenRebuildSessionAsync([source], CancellationToken.None))
+            {
+                await session.ReplacePackagesAsync(
+                    [(new PackageScanResult(source.Id, SourceKind.Game, packagePath, 10, DateTimeOffset.UtcNow, [], []), [groupedAssetA, groupedAssetB])],
+                    CancellationToken.None);
+                await session.FinalizeAsync(progress: null, CancellationToken.None);
+            }
+
+            var allAssets = await store.QueryAssetsAsync(
+                new AssetBrowserQuery(
+                    new SourceScope(),
+                    "Still LIfe Store Front Prop",
+                    AssetBrowserDomain.BuildBuy,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Equal(1, allAssets.TotalCount);
+            var winner = Assert.Single(allAssets.Items);
+            Assert.Equal("Still LIfe Store Front Prop", winner.DisplayName);
+            Assert.Equal(logicalRootTgi, winner.LogicalRootTgi);
+
+            var assetDatabasePaths = new[]
+            {
+                cache.DatabasePath,
+                Path.Combine(cache.CacheRoot, "index.shard01.sqlite"),
+                Path.Combine(cache.CacheRoot, "index.shard02.sqlite"),
+                Path.Combine(cache.CacheRoot, "index.shard03.sqlite")
+            };
+
+            var canonicalRows = 0;
+            foreach (var databasePath in assetDatabasePaths)
+            {
+                await using var connection = await OpenConnectionAsync(databasePath);
+                await using var command = connection.CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT COUNT(*)
+                    FROM assets
+                    WHERE logical_root_tgi = $logicalRootTgi AND COALESCE(is_canonical, 1) = 1;
+                    """;
+                command.Parameters.AddWithValue("$logicalRootTgi", logicalRootTgi);
+                canonicalRows += Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+            }
+
+            Assert.Equal(1, canonicalRows);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_BuildBuyCanonicalizesCatalogOnlyEntriesViaMatchingObjectDefinitionIdentity()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var fullPackagePath = CreatePackageFiles(root, "sp54-full.package").Single();
+            var deltaPackagePath = CreatePackageFiles(root, "sp54-delta.package").Single();
+            const string logicalRootTgi = "01661233:00000000:D2C57F6424389E2F";
+            const string displayName = "\"Anything's a Surface\" Pedestal";
+
+            var definitionKeyA = new ResourceKeyRecord(0xC0DB5AE7, 0x00000000, 0x000000000006B18B, "ObjectDefinition");
+            var definitionKeyB = new ResourceKeyRecord(0xC0DB5AE7, 0x00000000, 0x000000000006B18C, "ObjectDefinition");
+            var catalogOnlyKey = new ResourceKeyRecord(0x319E4F1D, 0x00000000, 0x000000000006B18C, "ObjectCatalog");
+            var fullScan = new PackageScanResult(
+                source.Id,
+                SourceKind.Game,
+                fullPackagePath,
+                10,
+                DateTimeOffset.UtcNow,
+                [
+                    new ResourceMetadata(
+                        Guid.NewGuid(),
+                        source.Id,
+                        SourceKind.Game,
+                        fullPackagePath,
+                        definitionKeyA,
+                        "pedestal_SP54GENstool_set1",
+                        null,
+                        null,
+                        null,
+                        PreviewKind.Metadata,
+                        true,
+                        true,
+                        string.Empty,
+                        string.Empty,
+                        SceneRootTgiHint: logicalRootTgi),
+                    new ResourceMetadata(
+                        Guid.NewGuid(),
+                        source.Id,
+                        SourceKind.Game,
+                        fullPackagePath,
+                        definitionKeyB,
+                        "pedestal_SP54GENstool_set2",
+                        null,
+                        null,
+                        null,
+                        PreviewKind.Metadata,
+                        true,
+                        true,
+                        string.Empty,
+                        string.Empty,
+                        SceneRootTgiHint: logicalRootTgi)
+                ],
+                []);
+
+            var groupedFamilyAsset = new AssetSummary(
+                StableEntityIds.ForAsset(source.Id, AssetKind.BuildBuy, fullPackagePath, definitionKeyA),
+                source.Id,
+                SourceKind.Game,
+                AssetKind.BuildBuy,
+                displayName,
+                "Build/Buy",
+                fullPackagePath,
+                definitionKeyA,
+                null,
+                2,
+                4,
+                string.Empty,
+                AssetCapabilitySnapshot.Empty,
+                PackageName: Path.GetFileName(fullPackagePath),
+                RootTypeName: "ObjectDefinition",
+                IdentityType: "ObjectDefinition",
+                LogicalRootTgi: logicalRootTgi);
+            var catalogOnlyDelta = new AssetSummary(
+                StableEntityIds.ForAsset(source.Id, AssetKind.BuildBuy, deltaPackagePath, catalogOnlyKey),
+                source.Id,
+                SourceKind.Game,
+                AssetKind.BuildBuy,
+                displayName,
+                "Build/Buy",
+                deltaPackagePath,
+                catalogOnlyKey,
+                null,
+                1,
+                0,
+                string.Empty,
+                AssetCapabilitySnapshot.Empty,
+                PackageName: Path.GetFileName(deltaPackagePath),
+                RootTypeName: "ObjectCatalog",
+                IdentityType: "ObjectCatalog");
+            var deltaScan = new PackageScanResult(
+                source.Id,
+                SourceKind.Game,
+                deltaPackagePath,
+                10,
+                DateTimeOffset.UtcNow,
+                [
+                    new ResourceMetadata(
+                        Guid.NewGuid(),
+                        source.Id,
+                        SourceKind.Game,
+                        deltaPackagePath,
+                        catalogOnlyKey,
+                        displayName,
+                        null,
+                        null,
+                        null,
+                        PreviewKind.Metadata,
+                        true,
+                        true,
+                        string.Empty,
+                        string.Empty)
+                ],
+                []);
+
+            await using (var session = await store.OpenRebuildSessionAsync([source], CancellationToken.None))
+            {
+                await session.ReplacePackagesAsync(
+                    [
+                        (fullScan, [groupedFamilyAsset]),
+                        (deltaScan, [catalogOnlyDelta])
+                    ],
+                    CancellationToken.None);
+                await session.FinalizeAsync(progress: null, CancellationToken.None);
+            }
+
+            var results = await store.QueryAssetsAsync(
+                new AssetBrowserQuery(
+                    new SourceScope(),
+                    displayName,
+                    AssetBrowserDomain.BuildBuy,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    0,
+                    20),
+                CancellationToken.None);
+            Assert.Equal(1, results.TotalCount);
+            var winner = Assert.Single(results.Items);
+            Assert.Equal(displayName, winner.DisplayName);
+            Assert.Equal(logicalRootTgi, winner.LogicalRootTgi);
+
+            var assetDatabasePaths = new[]
+            {
+                cache.DatabasePath,
+                Path.Combine(cache.CacheRoot, "index.shard01.sqlite"),
+                Path.Combine(cache.CacheRoot, "index.shard02.sqlite"),
+                Path.Combine(cache.CacheRoot, "index.shard03.sqlite")
+            };
+
+            var canonicalRows = 0;
+            var catalogOnlyLogicalRootMatches = 0;
+            foreach (var databasePath in assetDatabasePaths)
+            {
+                await using var connection = await OpenConnectionAsync(databasePath);
+
+                await using (var canonicalCommand = connection.CreateCommand())
+                {
+                    canonicalCommand.CommandText =
+                        """
+                        SELECT COUNT(*)
+                        FROM assets
+                        WHERE display_name = $displayName AND COALESCE(is_canonical, 1) = 1;
+                        """;
+                    canonicalCommand.Parameters.AddWithValue("$displayName", displayName);
+                    canonicalRows += Convert.ToInt32(await canonicalCommand.ExecuteScalarAsync(CancellationToken.None));
+                }
+
+                await using (var catalogCommand = connection.CreateCommand())
+                {
+                    catalogCommand.CommandText =
+                        """
+                        SELECT COUNT(*)
+                        FROM assets
+                        WHERE root_tgi = $rootTgi AND logical_root_tgi = $logicalRootTgi;
+                        """;
+                    catalogCommand.Parameters.AddWithValue("$rootTgi", catalogOnlyKey.FullTgi);
+                    catalogCommand.Parameters.AddWithValue("$logicalRootTgi", logicalRootTgi);
+                    catalogOnlyLogicalRootMatches += Convert.ToInt32(await catalogCommand.ExecuteScalarAsync(CancellationToken.None));
+                }
+            }
+
+            Assert.Equal(1, canonicalRows);
+            Assert.Equal(1, catalogOnlyLogicalRootMatches);
         }
         finally
         {
@@ -483,12 +1355,13 @@ public sealed class IndexingPipelineTests
             var progressEvents = new List<IndexingProgress>();
             await coordinator.RunAsync([source], new Progress<IndexingProgress>(progressEvents.Add), CancellationToken.None);
 
-            var finalSnapshot = progressEvents.Last(progress => progress.Summary is not null);
+            var finalSnapshot = progressEvents.Last();
+            var summary = progressEvents.Select(static progress => progress.Summary).LastOrDefault(static summary => summary is not null);
             Assert.Equal(9 * 1024, finalSnapshot.PackageBytesTotal);
             Assert.Equal(9 * 1024, finalSnapshot.PackageBytesProcessed);
-            Assert.NotNull(finalSnapshot.Summary);
-            Assert.Equal(9 * 1024, finalSnapshot.Summary!.PackageBytesDiscovered);
-            Assert.Equal(9 * 1024, finalSnapshot.Summary.PackageBytesProcessed);
+            Assert.NotNull(summary);
+            Assert.Equal(9 * 1024, summary!.PackageBytesDiscovered);
+            Assert.Equal(9 * 1024, summary.PackageBytesProcessed);
         }
         finally
         {
@@ -511,6 +1384,24 @@ public sealed class IndexingPipelineTests
             true,
             true,
             "Build/Buy seed",
+            string.Empty);
+
+    private static ResourceMetadata CreateNamedResource(Guid sourceId, string packagePath, int index, string name) =>
+        CreateResource(sourceId, packagePath, index) with { Name = name };
+
+    private static AssetSummary CreateAsset(Guid sourceId, string packagePath, string displayName) =>
+        new(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            AssetKind.BuildBuy,
+            displayName,
+            "Decor",
+            packagePath,
+            new ResourceKeyRecord(0x319E4F1D, 0x00000001, 0x0000000000001000, "ObjectCatalog"),
+            null,
+            1,
+            1,
             string.Empty);
 
     private static string CreatePackageRoot()
@@ -716,6 +1607,41 @@ public sealed class IndexingPipelineTests
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) => [summary];
     }
 
+    private sealed class PerPackageAssetGraphBuilder(string searchToken) : IAssetGraphBuilder
+    {
+        public Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
+            Task.FromResult(new AssetGraph(summary, packageResources, []));
+
+        public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) =>
+        [
+            new AssetSummary(
+                StableEntityIds.ForAsset(
+                    packageScan.DataSourceId,
+                    AssetKind.BuildBuy,
+                    packageScan.PackagePath,
+                    new ResourceKeyRecord(
+                        0x319E4F1D,
+                        0x00000001,
+                        BitConverter.ToUInt64(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(packageScan.PackagePath)), 0),
+                        "ObjectCatalog")),
+                packageScan.DataSourceId,
+                SourceKind.Game,
+                AssetKind.BuildBuy,
+                $"{Path.GetFileNameWithoutExtension(packageScan.PackagePath)} {searchToken}",
+                "Decor",
+                packageScan.PackagePath,
+                new ResourceKeyRecord(
+                    0x319E4F1D,
+                    0x00000001,
+                    BitConverter.ToUInt64(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(packageScan.PackagePath)), 0),
+                    "ObjectCatalog"),
+                null,
+                1,
+                1,
+                string.Empty)
+        ];
+    }
+
     private sealed class FakeIndexStore : IIndexStore
     {
         public List<string> ReplacedPackages { get; } = [];
@@ -740,6 +1666,7 @@ public sealed class IndexingPipelineTests
         public Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsAsync(Guid assetId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetVariantSummary>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
@@ -751,6 +1678,12 @@ public sealed class IndexingPipelineTests
         }
 
         public Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken)
+        {
+            OpenWriteSessionCount++;
+            return Task.FromResult<IIndexWriteSession>(new FakeWriteSession(this));
+        }
+
+        public Task<IIndexWriteSession> OpenRebuildSessionAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken)
         {
             OpenWriteSessionCount++;
             return Task.FromResult<IIndexWriteSession>(new FakeWriteSession(this));
@@ -798,7 +1731,11 @@ public sealed class IndexingPipelineTests
                 return Task.CompletedTask;
             }
 
-            public Task FinalizeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+            public Task FinalizeAsync(IProgress<IndexWriteStageProgress>? progress, CancellationToken cancellationToken)
+            {
+                progress?.Report(new IndexWriteStageProgress("finalizing", "Building browse indexes."));
+                return Task.CompletedTask;
+            }
 
             public IndexWriteMetrics? ConsumeLastMetrics()
             {
@@ -822,6 +1759,43 @@ public sealed class IndexingPipelineTests
             Directory.CreateDirectory(CacheRoot);
             Directory.CreateDirectory(ExportRoot);
         }
+    }
+
+    private static async Task<SqliteConnection> OpenConnectionAsync(string databasePath)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Cache = SqliteCacheMode.Shared
+        }.ToString());
+        await connection.OpenAsync(CancellationToken.None);
+        return connection;
+    }
+
+    private static async Task<string> GetSqlDefinitionAsync(SqliteConnection connection, string objectType, string objectName)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT sql FROM sqlite_master WHERE type = $type AND name = $name;";
+        command.Parameters.AddWithValue("$type", objectType);
+        command.Parameters.AddWithValue("$name", objectName);
+        return Convert.ToString(await command.ExecuteScalarAsync(CancellationToken.None)) ?? string.Empty;
+    }
+
+    private static async Task<int> CountObjectAsync(SqliteConnection connection, string objectType, string objectName)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = $type AND name = $name;";
+        command.Parameters.AddWithValue("$type", objectType);
+        command.Parameters.AddWithValue("$name", objectName);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+    }
+
+    private static int ComputeCatalogShardIndex(string packagePath)
+    {
+        var input = Encoding.UTF8.GetBytes(packagePath);
+        var hash = System.Security.Cryptography.MD5.HashData(input);
+        return (int)(BitConverter.ToUInt32(hash, 0) % 4);
     }
 
     private static byte[] CreateSyntheticObjectDefinitionBytes(string internalName)

@@ -9,7 +9,8 @@ public enum BrowserMode
 public enum AssetBrowserDomain
 {
     BuildBuy,
-    Cas
+    Cas,
+    General3D
 }
 
 public enum RawResourceDomain
@@ -212,7 +213,7 @@ public sealed class AssetBrowserState
             chips.Add(new FilterChip("sourceScope", $"Source: {sourceScope.ToDisplayText()}"));
         }
 
-        chips.Add(new FilterChip("domain", Domain == AssetBrowserDomain.BuildBuy ? "Domain: Build/Buy" : "Domain: CAS"));
+        chips.Add(new FilterChip("domain", $"Domain: {GetDomainLabel(Domain)}"));
 
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
@@ -343,7 +344,7 @@ public sealed class AssetBrowserState
     }
 
     public string BuildSummary(SourceScope sourceScope, int totalCount, int loadedCount) =>
-        $"Assets > {(Domain == AssetBrowserDomain.BuildBuy ? "Build/Buy" : "CAS")} > {sourceScope.ToDisplayText()} · {totalCount:N0} matches · showing {loadedCount:N0} sorted by {Sort}";
+        $"Assets > {GetDomainLabel(Domain)} > {sourceScope.ToDisplayText()} · {totalCount:N0} matches · showing {loadedCount:N0} sorted by {Sort}";
 
     public void RemoveFilter(string key)
     {
@@ -462,6 +463,14 @@ public sealed class AssetBrowserState
 
     private static string NormalizePackageFragment(string value) =>
         value.Trim().Replace('/', '\\');
+
+    private static string GetDomainLabel(AssetBrowserDomain domain) => domain switch
+    {
+        AssetBrowserDomain.BuildBuy => "Build/Buy",
+        AssetBrowserDomain.Cas => "CAS",
+        AssetBrowserDomain.General3D => "General 3D",
+        _ => domain.ToString()
+    };
 }
 
 public sealed class RawResourceBrowserState

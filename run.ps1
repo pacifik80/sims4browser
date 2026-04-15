@@ -114,7 +114,12 @@ if (-not $NoBuild -and $lockingProcesses.Count -gt 0) {
             Write-Host "Stopped process $($process.Id)" -ForegroundColor DarkYellow
         }
         catch {
-            throw "Failed to stop running app process $($process.Id): $($_.Exception.Message)"
+            $message = $_.Exception.Message
+            if ($message -like "*Cannot find a process with the process identifier*") {
+                continue
+            }
+
+            throw "Failed to stop running app process $($process.Id): $message"
         }
     }
 
@@ -161,9 +166,8 @@ elseif (-not (Test-Path $exePath)) {
 Write-Host "Starting Sims4 Resource Explorer build $buildNumber ($Configuration, x64)..." -ForegroundColor Cyan
 Write-Host "Executable: $resolvedExePath" -ForegroundColor DarkGray
 try {
-    $appDllPath = Join-Path $outputRoot "Sims4ResourceExplorer.App.dll"
-    $assembly = [System.Reflection.Assembly]::LoadFile((Resolve-Path $appDllPath).Path)
-    $informationalVersion = ($assembly.GetCustomAttributes([System.Reflection.AssemblyInformationalVersionAttribute], $false) | Select-Object -First 1).InformationalVersion
+    $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedExePath)
+    $informationalVersion = $versionInfo.ProductVersion
     if ($informationalVersion) {
         Write-Host "Build version: $informationalVersion" -ForegroundColor DarkGray
     }

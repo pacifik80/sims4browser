@@ -109,7 +109,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $topReportPath = "$OutputPath.top$TopCount.txt"
 Write-Host "Generating topN report..." -ForegroundColor Cyan
-$report = & dotnet-trace report $OutputPath topN --count $TopCount
+$report = & dotnet-trace report $OutputPath topN -n $TopCount
 $report | Set-Content -Path $topReportPath
 
 Write-Host "Trace collection finished." -ForegroundColor Green

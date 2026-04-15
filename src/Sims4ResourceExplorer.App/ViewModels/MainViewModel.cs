@@ -30,6 +30,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IIndexingTelemetryRecorderService indexingTelemetryRecorderService;
     private readonly AssetBrowserState assetBrowserState = new();
     private readonly RawResourceBrowserState rawResourceBrowserState = new();
+    private readonly Dictionary<string, CanonicalTexture?> assetVariantTextureCache = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? indexingCancellationTokenSource;
     private CancellationTokenSource? assetSearchDebounceTokenSource;
@@ -37,8 +38,15 @@ public sealed partial class MainViewModel : ObservableObject
     private ResourceMetadata? selectedResource;
     private AssetSummary? selectedAsset;
     private AssetGraph? selectedAssetGraph;
+    private ScenePreviewContent? selectedAssetBaseScenePreview;
+    private ScenePreviewContent? selectedAssetScenePreview;
+    private string? selectedAssetDetailsSupplement;
+    private IReadOnlyList<AssetVariantSummary> selectedAssetVariants = [];
     private ResourceMetadata? selectedAssetSceneRoot;
     private bool suppressSceneLodSelectionPreview;
+    private bool suppressAssetVariantSelectionUpdates;
+    private long assetVariantThumbnailLoadGeneration;
+    private long assetVariantPreviewLoadGeneration;
     private byte[]? previewAudioBytes;
     private bool assetQueryDirty = true;
     private bool rawQueryDirty = true;
@@ -46,6 +54,7 @@ public sealed partial class MainViewModel : ObservableObject
     private bool rawBrowserHasLoaded;
     private int assetTotalCount;
     private int rawTotalCount;
+    private bool suspendBrowserQueriesDuringIndexing;
 
     public MainViewModel(
         IIndexStore indexStore,
@@ -98,6 +107,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<string> AssetCatalogSignal0034Values { get; } = [];
     public ObservableCollection<SceneLodOption> AvailableSceneLods { get; } = [];
     public ObservableCollection<string> AvailableSceneTextureSlots { get; } = [];
+    public ObservableCollection<AssetVariantPickerItem> AssetVariantItems { get; } = [];
     public ObservableLog Log { get; } = [];
     public IReadOnlyList<int> AvailableWorkerCounts { get; }
     public IReadOnlyList<BrowserMode> BrowserModes { get; }
@@ -300,6 +310,15 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string selectedSceneTextureSlot = "All";
 
+    [ObservableProperty]
+    private AssetVariantPickerItem? selectedAssetVariant;
+
+    [ObservableProperty]
+    private BitmapImage? selectedAssetVariantThumbnailSource;
+
+    [ObservableProperty]
+    private string selectedAssetVariantThumbnailText = "Select a logical asset to inspect indexed variant data.";
+
     public bool IsNotBusy => !IsBusy;
     public Visibility AssetBrowserVisibility => SelectedBrowserMode == BrowserMode.AssetBrowser ? Visibility.Visible : Visibility.Collapsed;
     public Visibility RawBrowserVisibility => SelectedBrowserMode == BrowserMode.RawResourceBrowser ? Visibility.Visible : Visibility.Collapsed;
@@ -312,17 +331,29 @@ public sealed partial class MainViewModel : ObservableObject
         ? AssetResults.Count > 0
         : RawResources.Count > 0;
     public Visibility EmptyStateVisibility => HasVisibleResults ? Visibility.Collapsed : Visibility.Visible;
-    public string AssetSearchPlaceholder => AssetDomain == AssetBrowserDomain.BuildBuy
-        ? "Search build/buy name, description, category, or package"
-        : "Search CAS name, description, type, or package";
+    public string AssetSearchPlaceholder => AssetDomain switch
+    {
+        AssetBrowserDomain.BuildBuy => "Search build/buy name, description, category, or package",
+        AssetBrowserDomain.Cas => "Search CAS name, description, type, or package",
+        AssetBrowserDomain.General3D => "Search General 3D name, root type, geometry type, or package",
+        _ => "Search assets"
+    };
     public string RawSearchPlaceholder => "Search package path, type name, TGI, group, or instance";
-    public string AssetSearchHelp => AssetDomain == AssetBrowserDomain.BuildBuy
-        ? "Build/Buy uses identity, structure, raw catalog signals, and capability filters."
-        : "CAS uses identity, structure, and capability filters; raw catalog signals are hidden.";
+    public string AssetSearchHelp => AssetDomain switch
+    {
+        AssetBrowserDomain.BuildBuy => "Build/Buy uses identity, structure, raw catalog signals, and capability filters.",
+        AssetBrowserDomain.Cas => "CAS uses identity, structure, and capability filters; raw catalog signals are hidden.",
+        AssetBrowserDomain.General3D => "General 3D focuses on standalone Model, ModelLOD, and Geometry roots plus package-local structure.",
+        _ => "Asset Browser uses identity and structure filters."
+    };
     public string RawSearchHelp => "Examples: objectcatalog, 00B2D882, 00000000, package fragment";
-    public string AssetFacetSummaryText => AssetDomain == AssetBrowserDomain.BuildBuy
-        ? "Build/Buy catalog filters combine human-facing metadata with raw ObjectCatalog signals."
-        : "CAS filters stay focused on identity, structure, and preview support.";
+    public string AssetFacetSummaryText => AssetDomain switch
+    {
+        AssetBrowserDomain.BuildBuy => "Build/Buy catalog filters combine human-facing metadata with raw ObjectCatalog signals.",
+        AssetBrowserDomain.Cas => "CAS filters stay focused on identity, structure, and preview support.",
+        AssetBrowserDomain.General3D => "General 3D surfaces standalone Model, ModelLOD, and Geometry roots that are not currently harmonized into Build/Buy or CAS.",
+        _ => "Asset filters stay focused on identity, structure, and preview support."
+    };
     public Visibility AssetCatalogSignalsVisibility => AssetDomain == AssetBrowserDomain.BuildBuy ? Visibility.Visible : Visibility.Collapsed;
     public string EffectivePreviewLoadStatus => string.IsNullOrWhiteSpace(PreviewLoadStatus) ? "Ready" : PreviewLoadStatus;
     public Brush PreviewLoadBrush => new SolidColorBrush(PreviewLoadCompleted && !IsPreviewLoading ? Colors.ForestGreen : Colors.DodgerBlue);
@@ -337,6 +368,13 @@ public sealed partial class MainViewModel : ObservableObject
     public bool CanSelectSceneLod => AvailableSceneLods.Count > 1;
     public bool HasSceneTextureSlotOptions => AvailableSceneTextureSlots.Count > 0;
     public bool CanSelectSceneTextureSlot => AvailableSceneTextureSlots.Count > 1;
+    public bool HasAssetVariantOptions => AssetVariantItems.Count > 0;
+    public bool CanSelectAssetVariant => AssetVariantItems.Count > 1;
+    public Visibility AssetVariantPickerVisibility => HasAssetVariantOptions ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility SelectedAssetVariantThumbnailVisibility => SelectedAssetVariantThumbnailSource is null ? Visibility.Collapsed : Visibility.Visible;
+    public string AssetVariantPickerSummary => BuildAssetVariantPickerSummary();
+    public string SelectedAssetVariantDescriptor => BuildSelectedAssetVariantDescriptor();
+    public string SelectedAssetVariantMetadataText => BuildSelectedAssetVariantMetadataText();
 
     public async Task InitializeAsync()
     {
@@ -378,6 +416,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         IsBusy = true;
+        suspendBrowserQueriesDuringIndexing = true;
+        CancelPendingBrowserQueries();
         indexingCancellationTokenSource = new CancellationTokenSource();
         StatusMessage = $"Indexing started with {SelectedWorkerCount} workers.";
         IndexingTelemetrySession? telemetrySession = null;
@@ -400,6 +440,7 @@ public sealed partial class MainViewModel : ObservableObject
 
             await telemetrySession.CompleteAsync("completed", CancellationToken.None);
             indexingDialogViewModel.MarkCompleted("Indexing completed. Refreshing browser results...");
+            suspendBrowserQueriesDuringIndexing = false;
             MarkAllQueriesDirty();
             await ReloadAssetFacetOptionsAsync();
             await RefreshActiveBrowserAsync(resetWindow: true);
@@ -412,6 +453,8 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 await telemetrySession.CompleteAsync("canceled", CancellationToken.None);
             }
+            suspendBrowserQueriesDuringIndexing = false;
+            await RefreshBrowseStateAfterIndexingAsync();
             StatusMessage = "Indexing canceled.";
             AppendLog("Indexing canceled by user.");
             indexingDialogViewModel.MarkCanceled();
@@ -422,12 +465,15 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 await telemetrySession.CompleteAsync("failed", CancellationToken.None);
             }
+            suspendBrowserQueriesDuringIndexing = false;
+            await RefreshBrowseStateAfterIndexingAsync();
             StatusMessage = $"Indexing failed: {ex.Message}";
             AppendLog($"Indexing failed: {ex}");
             indexingDialogViewModel.MarkFailed($"Indexing failed: {ex.Message}");
         }
         finally
         {
+            suspendBrowserQueriesDuringIndexing = false;
             if (telemetrySession is not null)
             {
                 await telemetrySession.DisposeAsync();
@@ -440,14 +486,21 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void CancelIndexing() => indexingCancellationTokenSource?.Cancel();
 
-    public Task RefreshActiveBrowserAsync(bool resetWindow = true) =>
-        SelectedBrowserMode == BrowserMode.AssetBrowser
+    public Task RefreshActiveBrowserAsync(bool resetWindow = true)
+    {
+        if (suspendBrowserQueriesDuringIndexing)
+        {
+            return Task.CompletedTask;
+        }
+
+        return SelectedBrowserMode == BrowserMode.AssetBrowser
             ? RefreshAssetBrowserAsync(resetWindow, append: !resetWindow)
             : RefreshRawBrowserAsync(resetWindow, append: !resetWindow);
+    }
 
     public async Task LoadMoreAsync()
     {
-        if (!HasMoreResults || IsQueryingResults)
+        if (suspendBrowserQueriesDuringIndexing || !HasMoreResults || IsQueryingResults)
         {
             return;
         }
@@ -516,7 +569,11 @@ public sealed partial class MainViewModel : ObservableObject
         selectedResource = resource;
         selectedAsset = null;
         selectedAssetGraph = null;
+        selectedAssetBaseScenePreview = null;
+        selectedAssetScenePreview = null;
+        selectedAssetDetailsSupplement = null;
         selectedAssetSceneRoot = null;
+        ClearAssetVariantState();
         SetSceneLodOptions([]);
         ResetPreviewState();
         BeginPreviewLoad(3, "Resolving resource metadata...");
@@ -550,59 +607,95 @@ public sealed partial class MainViewModel : ObservableObject
 
         selectedAsset = asset;
         selectedAssetGraph = null;
+        selectedAssetBaseScenePreview = null;
+        selectedAssetScenePreview = null;
+        selectedAssetDetailsSupplement = null;
+        selectedAssetVariants = [];
         selectedAssetSceneRoot = null;
         selectedResource = null;
+        assetVariantTextureCache.Clear();
+        ClearAssetVariantState();
         ResetPreviewState();
         BeginPreviewLoad(1d, "Scanning index...");
         await YieldToUiAsync();
 
         await AdvancePreviewLoadAsync(0.04, "Scanning index...");
         var packageResources = await indexStore.GetResourcesByInstanceAsync(asset.PackagePath, asset.RootKey.FullInstance, CancellationToken.None);
-        await AdvancePreviewLoadAsync(0.10, "Building asset graph...");
+        await AdvancePreviewLoadAsync(0.08, "Loading variant data...");
+        selectedAssetVariants = await indexStore.GetAssetVariantsAsync(asset.Id, CancellationToken.None);
+        SetAssetVariantOptions(selectedAssetVariants);
+        await AdvancePreviewLoadAsync(0.12, "Building asset graph...");
         var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         selectedAssetGraph = graph;
-        var assetDetails = AssetDetailsFormatter.BuildAssetDetails(asset, graph, null, null);
+        var assetDetails = BuildCurrentAssetDetails();
         var fallbackPreviewResource = FindAssetFallbackPreviewResource(asset, graph, packageResources);
-        await AdvancePreviewLoadAsync(0.16, "Resolving scene root...");
+        await AdvancePreviewLoadAsync(0.18, "Resolving scene root...");
 
         ResourceMetadata? sceneRoot = null;
         string unsupportedMessage;
-        if (asset.AssetKind == AssetKind.BuildBuy)
+        switch (asset.AssetKind)
         {
-            var buildBuyGraph = graph.BuildBuyGraph;
-            if (buildBuyGraph is null || !buildBuyGraph.IsSupported)
+            case AssetKind.BuildBuy:
             {
-                unsupportedMessage = "This Build/Buy asset is outside the currently supported static-object subset.";
+                var buildBuyGraph = graph.BuildBuyGraph;
+                if (buildBuyGraph is null || !buildBuyGraph.IsSupported)
+                {
+                    unsupportedMessage = "This Build/Buy asset is outside the currently supported static-object subset.";
+                }
+                else
+                {
+                    sceneRoot = buildBuyGraph.ModelResource;
+                    unsupportedMessage = string.Empty;
+                }
+
+                break;
             }
-            else
+
+            case AssetKind.Cas:
             {
-                sceneRoot = buildBuyGraph.ModelResource;
-                unsupportedMessage = string.Empty;
+                var casGraph = graph.CasGraph;
+                if (casGraph is null || !casGraph.IsSupported || casGraph.GeometryResource is null)
+                {
+                    unsupportedMessage = "This CAS asset is outside the currently supported adult/young-adult human skinned subset.";
+                }
+                else
+                {
+                    sceneRoot = casGraph.GeometryResource;
+                    unsupportedMessage = string.Empty;
+                }
+
+                break;
             }
-        }
-        else
-        {
-            var casGraph = graph.CasGraph;
-            if (casGraph is null || !casGraph.IsSupported || casGraph.GeometryResource is null)
+
+            case AssetKind.General3D:
             {
-                unsupportedMessage = "This CAS asset is outside the currently supported adult/young-adult human skinned subset.";
+                var general3DGraph = graph.General3DGraph;
+                if (general3DGraph is null || !general3DGraph.IsSupported)
+                {
+                    unsupportedMessage = "This General 3D asset does not currently expose a supported Model, ModelLOD, or Geometry scene root.";
+                }
+                else
+                {
+                    sceneRoot = general3DGraph.SceneRootResource;
+                    unsupportedMessage = string.Empty;
+                }
+
+                break;
             }
-            else
-            {
-                sceneRoot = casGraph.GeometryResource;
-                unsupportedMessage = string.Empty;
-            }
+
+            default:
+                unsupportedMessage = $"Unsupported asset kind: {asset.AssetKind}.";
+                break;
         }
 
         if (sceneRoot is null)
         {
             SetSceneLodOptions([]);
+            selectedAssetScenePreview = null;
+            selectedAssetDetailsSupplement = BuildAssetPreviewFallbackSupplement(unsupportedMessage, graph.Diagnostics);
+            assetDetails = BuildCurrentAssetDetails();
             await AdvancePreviewLoadAsync(4, "Building fallback preview...");
-            var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(
-                fallbackPreviewResource,
-                assetDetails,
-                unsupportedMessage,
-                graph.Diagnostics);
+            var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(fallbackPreviewResource, assetDetails);
             if (!fallbackPreviewApplied)
             {
                 PreviewText = string.Join(Environment.NewLine, graph.Diagnostics.DefaultIfEmpty(unsupportedMessage));
@@ -621,19 +714,20 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetSceneRoot = sceneRoot;
         SetSceneLodOptions(BuildSceneLodOptions(graph, sceneRoot), sceneRoot.Key.FullTgi);
 
-        await AdvancePreviewLoadAsync(0.22, "Preparing scene build...");
-        var previewProgress = CreatePreviewBuildProgressReporter(0.22, 0.72);
-        await AdvancePreviewLoadAsync(0.24, "Building 3D preview...");
+        await AdvancePreviewLoadAsync(0.24, "Preparing scene build...");
+        var previewProgress = CreatePreviewBuildProgressReporter(0.24, 0.70);
+        await AdvancePreviewLoadAsync(0.26, "Building 3D preview...");
         var preview = await previewService.CreatePreviewAsync(sceneRoot, CancellationToken.None, previewProgress);
-        var assetDetailsWithScene = AssetDetailsFormatter.BuildAssetDetails(asset, graph, sceneRoot, preview.Content as ScenePreviewContent);
-        if (preview.Content is ScenePreviewContent { Scene: null } failedScenePreview)
+        selectedAssetBaseScenePreview = preview.Content as ScenePreviewContent;
+        selectedAssetScenePreview = await BuildDisplayedScenePreviewAsync(selectedAssetBaseScenePreview, CancellationToken.None);
+        selectedAssetDetailsSupplement = null;
+        var assetDetailsWithScene = BuildCurrentAssetDetails();
+        if (selectedAssetScenePreview is ScenePreviewContent { Scene: null } failedScenePreview)
         {
+            selectedAssetDetailsSupplement = "Fallback: scene reconstruction failed, showing asset image preview instead.";
+            assetDetailsWithScene = BuildCurrentAssetDetails();
             await AdvancePreviewLoadAsync(0.96, "Applying fallback preview...");
-            var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(
-                fallbackPreviewResource,
-                $"{assetDetailsWithScene}{Environment.NewLine}{Environment.NewLine}Fallback: scene reconstruction failed, showing asset image preview instead.",
-                failedScenePreview.Diagnostics,
-                graph.Diagnostics);
+            var fallbackPreviewApplied = await TryApplyAssetFallbackPreviewAsync(fallbackPreviewResource, assetDetailsWithScene);
             if (fallbackPreviewApplied)
             {
                 CompletePreviewLoad();
@@ -642,7 +736,10 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         await AdvancePreviewLoadAsync(0.96, "Applying preview...");
-        await ApplyPreviewAsync(sceneRoot, preview, assetDetailsWithScene);
+        await ApplyPreviewAsync(
+            sceneRoot,
+            new PreviewResult(preview.Kind, selectedAssetScenePreview ?? preview.Content),
+            assetDetailsWithScene);
         CompletePreviewLoad();
     }
 
@@ -730,9 +827,15 @@ public sealed partial class MainViewModel : ObservableObject
         var previewProgress = CreatePreviewBuildProgressReporter(0.10, 0.82);
         await AdvancePreviewLoadAsync(0.10, "Building selected LOD preview...");
         var preview = await previewService.CreatePreviewAsync(resource, CancellationToken.None, previewProgress);
-        var assetDetails = AssetDetailsFormatter.BuildAssetDetails(selectedAsset, selectedAssetGraph, resource, preview.Content as ScenePreviewContent);
+        selectedAssetBaseScenePreview = preview.Content as ScenePreviewContent;
+        selectedAssetScenePreview = await BuildDisplayedScenePreviewAsync(selectedAssetBaseScenePreview, CancellationToken.None);
+        selectedAssetDetailsSupplement = null;
+        var assetDetails = BuildCurrentAssetDetails();
         await AdvancePreviewLoadAsync(0.96, "Applying preview...");
-        await ApplyPreviewAsync(resource, preview, assetDetails);
+        await ApplyPreviewAsync(
+            resource,
+            new PreviewResult(preview.Kind, selectedAssetScenePreview ?? preview.Content),
+            assetDetails);
         CompletePreviewLoad();
     }
 
@@ -745,7 +848,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ReloadAssetFacetOptionsAsync()
     {
-        var assetKind = AssetDomain == AssetBrowserDomain.BuildBuy ? AssetKind.BuildBuy : AssetKind.Cas;
+        var assetKind = AssetDomain switch
+        {
+            AssetBrowserDomain.BuildBuy => AssetKind.BuildBuy,
+            AssetBrowserDomain.Cas => AssetKind.Cas,
+            AssetBrowserDomain.General3D => AssetKind.General3D,
+            _ => AssetKind.BuildBuy
+        };
         var options = await indexStore.GetAssetFacetOptionsAsync(assetKind, CancellationToken.None);
         ReplaceCollection(AssetCategories, PrependAll(options.Categories));
         ReplaceCollection(AssetRootTypes, PrependAll(options.RootTypeNames));
@@ -896,6 +1005,26 @@ public sealed partial class MainViewModel : ObservableObject
     {
         assetQueryDirty = true;
         rawQueryDirty = true;
+    }
+
+    private void CancelPendingBrowserQueries()
+    {
+        assetSearchDebounceTokenSource?.Cancel();
+        rawSearchDebounceTokenSource?.Cancel();
+    }
+
+    private async Task RefreshBrowseStateAfterIndexingAsync()
+    {
+        try
+        {
+            MarkAllQueriesDirty();
+            await ReloadAssetFacetOptionsAsync();
+            await RefreshActiveBrowserAsync(resetWindow: true);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Post-index browser refresh failed: {ex}");
+        }
     }
 
     private void UpdateBrowsePresentation()
@@ -1056,6 +1185,11 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task DebounceSearchAsync(BrowserMode mode)
     {
+        if (suspendBrowserQueriesDuringIndexing)
+        {
+            return;
+        }
+
         CancellationTokenSource tokenSource;
         if (mode == BrowserMode.AssetBrowser)
         {
@@ -1113,11 +1247,228 @@ public sealed partial class MainViewModel : ObservableObject
         return graph.LinkedResources.FirstOrDefault(IsPreviewableAssetFallback);
     }
 
+    private string BuildCurrentAssetDetails()
+    {
+        if (selectedAsset is null || selectedAssetGraph is null)
+        {
+            return "Metadata will appear here.";
+        }
+
+        var details = AssetDetailsFormatter.BuildAssetDetails(
+            selectedAsset,
+            selectedAssetGraph,
+            selectedAssetSceneRoot,
+            selectedAssetScenePreview,
+            selectedAssetVariants,
+            SelectedAssetVariant?.Variant);
+        return string.IsNullOrWhiteSpace(selectedAssetDetailsSupplement)
+            ? details
+            : $"{details}{Environment.NewLine}{Environment.NewLine}{selectedAssetDetailsSupplement}";
+    }
+
+    private string BuildCurrentDisplayedAssetDetails()
+    {
+        var assetDetails = BuildCurrentAssetDetails();
+        return selectedResource is null
+            ? assetDetails
+            : $"{assetDetails}{Environment.NewLine}{Environment.NewLine}{BuildResourceDetails(selectedResource)}";
+    }
+
+    private async Task<ScenePreviewContent?> BuildDisplayedScenePreviewAsync(ScenePreviewContent? basePreview, CancellationToken cancellationToken)
+    {
+        if (basePreview is null)
+        {
+            return null;
+        }
+
+        if (basePreview.Scene is null || selectedAsset is null)
+        {
+            return basePreview;
+        }
+
+        var adaptedScene = AssetVariantSceneAdapter.ApplyToScene(
+            basePreview.Scene,
+            selectedAsset.AssetKind,
+            SelectedAssetVariant?.Variant);
+        var diagnostics = AssetVariantSceneAdapter.AppendVariantDiagnostics(
+            basePreview.Diagnostics,
+            selectedAsset.AssetKind,
+            SelectedAssetVariant?.Variant);
+
+        if (selectedAsset.AssetKind == AssetKind.Cas &&
+            selectedAssetGraph?.CasGraph is { } casGraph)
+        {
+            var compositeResult = await TryApplyCasVariantTextureCompositeAsync(
+                adaptedScene,
+                casGraph,
+                SelectedAssetVariant?.Variant,
+                cancellationToken);
+            adaptedScene = compositeResult.Scene;
+            if (!string.IsNullOrWhiteSpace(compositeResult.Diagnostics))
+            {
+                diagnostics = string.IsNullOrWhiteSpace(diagnostics)
+                    ? compositeResult.Diagnostics
+                    : $"{diagnostics}{Environment.NewLine}{compositeResult.Diagnostics}";
+            }
+        }
+
+        return basePreview with
+        {
+            Scene = adaptedScene,
+            Diagnostics = diagnostics
+        };
+    }
+
+    private async Task<CasVariantTextureCompositeResult> TryApplyCasVariantTextureCompositeAsync(
+        CanonicalScene scene,
+        CasAssetGraph casGraph,
+        AssetVariantSummary? selectedVariant,
+        CancellationToken cancellationToken)
+    {
+        if (selectedVariant is null ||
+            !string.Equals(selectedVariant.VariantKind, "Swatch", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(selectedVariant.SwatchHex))
+        {
+            return new CasVariantTextureCompositeResult(scene, string.Empty);
+        }
+
+        var manifestMaterial = casGraph.Materials.FirstOrDefault(static material => material.SourceKind == CanonicalMaterialSourceKind.ApproximateCas)
+            ?? casGraph.Materials.FirstOrDefault();
+        if (manifestMaterial is null || manifestMaterial.Textures.Count == 0)
+        {
+            return new CasVariantTextureCompositeResult(scene, string.Empty);
+        }
+
+        var relevantSlots = manifestMaterial.Textures
+            .Where(static texture => texture.Slot is "diffuse" or "color_shift_mask")
+            .ToArray();
+        if (relevantSlots.Length == 0)
+        {
+            return new CasVariantTextureCompositeResult(scene, string.Empty);
+        }
+
+        var resolvedTextures = new List<CanonicalTexture>(relevantSlots.Length);
+        foreach (var manifestTexture in relevantSlots)
+        {
+            var resolvedTexture = await TryResolveAssetVariantTextureAsync(manifestTexture, casGraph, cancellationToken);
+            if (resolvedTexture is not null)
+            {
+                resolvedTextures.Add(resolvedTexture);
+            }
+        }
+
+        if (resolvedTextures.Count == 0)
+        {
+            return new CasVariantTextureCompositeResult(scene, string.Empty);
+        }
+
+        var mergedMaterials = scene.Materials
+            .Select(material =>
+            {
+                if (material.SourceKind != CanonicalMaterialSourceKind.ApproximateCas)
+                {
+                    return material;
+                }
+
+                return material with
+                {
+                    Textures = MergeMaterialTextures(material.Textures, resolvedTextures)
+                };
+            })
+            .ToArray();
+
+        var diagnostics = resolvedTextures.Any(static texture => texture.Slot.Equals("color_shift_mask", StringComparison.OrdinalIgnoreCase))
+            ? "CAS swatch preview resolved role-specific diffuse and color-shift mask textures from the indexed material manifest."
+            : "CAS swatch preview resolved a role-specific diffuse texture from the indexed material manifest.";
+        return new CasVariantTextureCompositeResult(scene with { Materials = mergedMaterials }, diagnostics);
+    }
+
+    private async Task<CanonicalTexture?> TryResolveAssetVariantTextureAsync(
+        MaterialTextureEntry manifestTexture,
+        CasAssetGraph casGraph,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{manifestTexture.SourcePackagePath}|{manifestTexture.SourceKey?.FullTgi}|{manifestTexture.Slot}";
+        if (assetVariantTextureCache.TryGetValue(cacheKey, out var cachedTexture))
+        {
+            return cachedTexture;
+        }
+
+        ResourceMetadata? resource = null;
+        if (manifestTexture.SourceKey is not null)
+        {
+            resource = casGraph.TextureResources.FirstOrDefault(candidate =>
+                candidate.Key.FullTgi.Equals(manifestTexture.SourceKey.FullTgi, StringComparison.OrdinalIgnoreCase) &&
+                (manifestTexture.SourcePackagePath is null ||
+                 candidate.PackagePath.Equals(manifestTexture.SourcePackagePath, StringComparison.OrdinalIgnoreCase)));
+
+            if (resource is null && !string.IsNullOrWhiteSpace(manifestTexture.SourcePackagePath))
+            {
+                resource = await indexStore.GetResourceByTgiAsync(
+                    manifestTexture.SourcePackagePath,
+                    manifestTexture.SourceKey.FullTgi,
+                    cancellationToken);
+            }
+
+            resource ??= (await indexStore.GetResourcesByTgiAsync(manifestTexture.SourceKey.FullTgi, cancellationToken))
+                .FirstOrDefault(candidate => manifestTexture.SourcePackagePath is null ||
+                                             candidate.PackagePath.Equals(manifestTexture.SourcePackagePath, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (resource is null)
+        {
+            assetVariantTextureCache[cacheKey] = null;
+            return null;
+        }
+
+        var preview = await previewService.CreatePreviewAsync(resource, cancellationToken);
+        if (preview.Content is not TexturePreviewContent texturePreview)
+        {
+            assetVariantTextureCache[cacheKey] = null;
+            return null;
+        }
+
+        var canonicalTexture = new CanonicalTexture(
+            manifestTexture.Slot,
+            manifestTexture.FileName,
+            texturePreview.PngBytes,
+            manifestTexture.SourceKey,
+            resource.PackagePath,
+            manifestTexture.Semantic,
+            manifestTexture.SourceKind);
+        assetVariantTextureCache[cacheKey] = canonicalTexture;
+        return canonicalTexture;
+    }
+
+    private static IReadOnlyList<CanonicalTexture> MergeMaterialTextures(
+        IReadOnlyList<CanonicalTexture> existingTextures,
+        IReadOnlyList<CanonicalTexture> overrideTextures)
+    {
+        var merged = existingTextures.ToDictionary(static texture => texture.Slot, StringComparer.OrdinalIgnoreCase);
+        foreach (var overrideTexture in overrideTextures)
+        {
+            merged[overrideTexture.Slot] = overrideTexture;
+        }
+
+        return merged.Values
+            .OrderBy(static texture => texture.Slot, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string BuildAssetPreviewFallbackSupplement(string primaryReason, IReadOnlyList<string> diagnostics)
+    {
+        var lines = diagnostics
+            .Where(static diagnostic => !string.IsNullOrWhiteSpace(diagnostic))
+            .ToArray();
+
+        return lines.Length == 0
+            ? $"Preview Fallback:{Environment.NewLine}{primaryReason}"
+            : $"Preview Fallback:{Environment.NewLine}{primaryReason}{Environment.NewLine}{string.Join(Environment.NewLine, lines)}";
+    }
+
     private async Task<bool> TryApplyAssetFallbackPreviewAsync(
         ResourceMetadata? fallbackPreviewResource,
-        string assetDetails,
-        string primaryReason,
-        IReadOnlyList<string> diagnostics)
+        string assetDetails)
     {
         if (!IsPreviewableAssetFallback(fallbackPreviewResource) || fallbackPreviewResource is null)
         {
@@ -1133,15 +1484,7 @@ public sealed partial class MainViewModel : ObservableObject
             return false;
         }
 
-        var fallbackDetails =
-            $"""
-            {assetDetails}
-
-            Preview Fallback:
-            {primaryReason}
-            {string.Join(Environment.NewLine, diagnostics.Where(static diagnostic => !string.IsNullOrWhiteSpace(diagnostic)))}
-            """;
-        await ApplyPreviewAsync(fallbackPreviewResource, fallbackPreview, fallbackDetails);
+        await ApplyPreviewAsync(fallbackPreviewResource, fallbackPreview, assetDetails);
         return true;
     }
 
@@ -1312,6 +1655,182 @@ public sealed partial class MainViewModel : ObservableObject
         IsPreviewLoading = false;
     }
 
+    private void ClearAssetVariantState()
+    {
+        suppressAssetVariantSelectionUpdates = true;
+        try
+        {
+            ReplaceCollection(AssetVariantItems, []);
+            SelectedAssetVariant = null;
+        }
+        finally
+        {
+            suppressAssetVariantSelectionUpdates = false;
+        }
+
+        selectedAssetVariants = [];
+        Interlocked.Increment(ref assetVariantThumbnailLoadGeneration);
+        SelectedAssetVariantThumbnailSource = null;
+        SelectedAssetVariantThumbnailText = "Select a logical asset to inspect indexed variant data.";
+        NotifySelectedAssetVariantStateChanged();
+    }
+
+    private void SetAssetVariantOptions(IReadOnlyList<AssetVariantSummary> variants)
+    {
+        suppressAssetVariantSelectionUpdates = true;
+        try
+        {
+            if (variants.Count == 0)
+            {
+                ReplaceCollection(AssetVariantItems, []);
+                SelectedAssetVariant = null;
+            }
+            else
+            {
+                var options = new List<AssetVariantPickerItem> { AssetVariantPickerItem.CreateDefault(variants.Count) };
+                options.AddRange(
+                    variants
+                        .OrderBy(static variant => variant.VariantKind, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(static variant => variant.VariantIndex)
+                        .Select(AssetVariantPickerItem.Create));
+                ReplaceCollection(AssetVariantItems, options);
+                SelectedAssetVariant = AssetVariantItems.FirstOrDefault();
+            }
+        }
+        finally
+        {
+            suppressAssetVariantSelectionUpdates = false;
+        }
+
+        Interlocked.Increment(ref assetVariantThumbnailLoadGeneration);
+        SelectedAssetVariantThumbnailSource = null;
+        SelectedAssetVariantThumbnailText = variants.Count == 0
+            ? "No indexed variants were found for this logical asset."
+            : "Catalog default is selected. Choose a swatch or preset to inspect its indexed metadata.";
+        NotifySelectedAssetVariantStateChanged();
+    }
+
+    private void NotifySelectedAssetVariantStateChanged()
+    {
+        OnPropertyChanged(nameof(HasAssetVariantOptions));
+        OnPropertyChanged(nameof(CanSelectAssetVariant));
+        OnPropertyChanged(nameof(AssetVariantPickerVisibility));
+        OnPropertyChanged(nameof(AssetVariantPickerSummary));
+        OnPropertyChanged(nameof(SelectedAssetVariantDescriptor));
+        OnPropertyChanged(nameof(SelectedAssetVariantMetadataText));
+        OnPropertyChanged(nameof(SelectedAssetVariantThumbnailVisibility));
+    }
+
+    private string BuildAssetVariantPickerSummary()
+    {
+        if (selectedAssetVariants.Count == 0)
+        {
+            return "No indexed swatches or presets were found for the selected logical asset.";
+        }
+
+        var kindBreakdown = string.Join(
+            ", ",
+            selectedAssetVariants
+                .GroupBy(static variant => variant.VariantKind, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(static group => $"{group.Count():N0} {group.Key.ToLowerInvariant()}"));
+
+        return $"{selectedAssetVariants.Count:N0} indexed variant rows: {kindBreakdown}.";
+    }
+
+    private string BuildSelectedAssetVariantDescriptor() =>
+        SelectedAssetVariant?.Variant is null
+            ? "Catalog default"
+            : SelectedAssetVariant.Variant.DisplayLabel;
+
+    private string BuildSelectedAssetVariantMetadataText()
+    {
+        var variant = SelectedAssetVariant?.Variant;
+        if (variant is null)
+        {
+            return selectedAssetVariants.Count == 0
+                ? "The selected asset does not currently expose indexed swatch or preset rows."
+                : "The canonical catalog row is selected. Pick a swatch or preset to inspect its indexed data.";
+        }
+
+        var details = new List<string>
+        {
+            $"{variant.VariantKind} {variant.VariantIndex + 1}",
+            Path.GetFileName(variant.PackagePath)
+        };
+        if (!string.IsNullOrWhiteSpace(variant.SwatchHex))
+        {
+            details.Add(variant.SwatchHex);
+        }
+
+        if (!string.IsNullOrWhiteSpace(variant.ThumbnailTgi))
+        {
+            details.Add($"thumb {variant.ThumbnailTgi}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(variant.Diagnostics))
+        {
+            details.Add(variant.Diagnostics);
+        }
+
+        return string.Join(" | ", details);
+    }
+
+    private async Task RefreshSelectedAssetVariantThumbnailAsync(AssetVariantPickerItem? option)
+    {
+        var generation = Interlocked.Increment(ref assetVariantThumbnailLoadGeneration);
+        SelectedAssetVariantThumbnailSource = null;
+
+        var variant = option?.Variant;
+        if (variant is null)
+        {
+            SelectedAssetVariantThumbnailText = selectedAssetVariants.Count == 0
+                ? "No indexed swatch or preset rows are available for this asset."
+                : "Catalog default is selected. Choose a swatch or preset to inspect its indexed thumbnail.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(variant.ThumbnailTgi))
+        {
+            SelectedAssetVariantThumbnailText = "This indexed variant does not currently expose a dedicated thumbnail link.";
+            return;
+        }
+
+        SelectedAssetVariantThumbnailText = $"Loading indexed thumbnail {variant.ThumbnailTgi}...";
+        var thumbnailResource = await indexStore.GetResourceByTgiAsync(variant.PackagePath, variant.ThumbnailTgi, CancellationToken.None);
+        if (thumbnailResource is null)
+        {
+            thumbnailResource = (await indexStore.GetResourcesByTgiAsync(variant.ThumbnailTgi, CancellationToken.None))
+                .FirstOrDefault();
+        }
+
+        if (generation != assetVariantThumbnailLoadGeneration)
+        {
+            return;
+        }
+
+        if (thumbnailResource is null)
+        {
+            SelectedAssetVariantThumbnailText = $"Indexed thumbnail {variant.ThumbnailTgi} could not be resolved from the active catalog.";
+            return;
+        }
+
+        var thumbnailPreview = await previewService.CreatePreviewAsync(thumbnailResource, CancellationToken.None);
+        if (generation != assetVariantThumbnailLoadGeneration)
+        {
+            return;
+        }
+
+        if (thumbnailPreview.Content is TexturePreviewContent texturePreview)
+        {
+            SelectedAssetVariantThumbnailSource = await CreateBitmapAsync(texturePreview.PngBytes);
+            SelectedAssetVariantThumbnailText = $"Indexed thumbnail {variant.ThumbnailTgi} from {Path.GetFileName(thumbnailResource.PackagePath)}.";
+            return;
+        }
+
+        SelectedAssetVariantThumbnailText = $"Indexed thumbnail {variant.ThumbnailTgi} resolved, but it did not decode into an image preview.";
+    }
+
     private void SetSceneLodOptions(IEnumerable<SceneLodOption> options, string? selectedFullTgi = null)
     {
         suppressSceneLodSelectionPreview = true;
@@ -1385,6 +1904,45 @@ public sealed partial class MainViewModel : ObservableObject
             return [new SceneLodOption("Geometry root", graph.CasGraph.GeometryResource)];
         }
 
+        if (graph.General3DGraph is not null)
+        {
+            var options = new List<SceneLodOption>();
+            var general3DGraph = graph.General3DGraph;
+            if (general3DGraph.SceneRootResource.Key.TypeName == "Model")
+            {
+                options.Add(new SceneLodOption("Auto (Model root)", general3DGraph.SceneRootResource));
+                foreach (var embeddedLod in general3DGraph.EmbeddedLodLabels
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    options.Add(new SceneLodOption($"{embeddedLod} (embedded in Model root)", general3DGraph.SceneRootResource));
+                }
+            }
+
+            foreach (var lod in general3DGraph.ModelLodResources
+                         .OrderBy(static resource => resource.Key.Group)
+                         .ThenBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase))
+            {
+                options.Add(new SceneLodOption($"{DescribeBuildBuyLod(lod.Key.Group)} ({lod.Key.FullTgi})", lod));
+            }
+
+            foreach (var geometry in general3DGraph.GeometryResources
+                         .Where(resource => !string.Equals(resource.Key.FullTgi, selectedSceneRoot.Key.FullTgi, StringComparison.OrdinalIgnoreCase))
+                         .OrderBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase))
+            {
+                options.Add(new SceneLodOption($"Geometry root ({geometry.Key.FullTgi})", geometry));
+            }
+
+            if (options.Count == 0)
+            {
+                options.Add(new SceneLodOption(general3DGraph.SceneRootResource.Key.TypeName, general3DGraph.SceneRootResource));
+            }
+
+            return options
+                .GroupBy(static option => option.Resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+                .Select(static group => group.First())
+                .ToArray();
+        }
+
         return [new SceneLodOption(selectedSceneRoot.Key.TypeName, selectedSceneRoot)];
     }
 
@@ -1446,6 +2004,8 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnPreviewLoadCompletedChanged(bool value) => NotifyPreviewStateChanged();
     partial void OnPreviewSurfaceModeChanged(PreviewSurfaceMode value) => NotifyPreviewStateChanged();
     partial void OnPreviewImageSourceChanged(BitmapImage? value) => NotifyPreviewStateChanged();
+    partial void OnSelectedAssetVariantThumbnailSourceChanged(BitmapImage? value) => NotifySelectedAssetVariantStateChanged();
+    partial void OnSelectedAssetVariantThumbnailTextChanged(string value) => NotifySelectedAssetVariantStateChanged();
     partial void OnCurrentSceneChanged(CanonicalScene? value)
     {
         SetSceneTextureSlotOptions(value);
@@ -1461,6 +2021,49 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _ = SelectSceneLodAsync(value);
         }
+    }
+
+    partial void OnSelectedAssetVariantChanged(AssetVariantPickerItem? value)
+    {
+        NotifySelectedAssetVariantStateChanged();
+        if (suppressAssetVariantSelectionUpdates)
+        {
+            return;
+        }
+
+        if (selectedAsset is not null && selectedAssetGraph is not null)
+        {
+            DetailsText = BuildCurrentDisplayedAssetDetails();
+        }
+
+        if (selectedAssetSceneRoot is not null && selectedAssetBaseScenePreview is not null)
+        {
+            _ = RefreshSelectedAssetVariantSceneAsync();
+        }
+
+        _ = RefreshSelectedAssetVariantThumbnailAsync(value);
+    }
+
+    private async Task RefreshSelectedAssetVariantSceneAsync()
+    {
+        if (selectedAssetSceneRoot is null || selectedAssetBaseScenePreview is null)
+        {
+            return;
+        }
+
+        var generation = Interlocked.Increment(ref assetVariantPreviewLoadGeneration);
+        var preview = await BuildDisplayedScenePreviewAsync(selectedAssetBaseScenePreview, CancellationToken.None);
+        if (generation != assetVariantPreviewLoadGeneration || preview is null)
+        {
+            return;
+        }
+
+        selectedAssetScenePreview = preview;
+        var assetDetails = BuildCurrentAssetDetails();
+        await ApplyPreviewAsync(
+            selectedAssetSceneRoot,
+            new PreviewResult(PreviewKind.Scene, preview),
+            assetDetails);
     }
 
     partial void OnSelectedBrowserModeChanged(BrowserMode value)
@@ -1854,6 +2457,15 @@ public sealed partial class MainViewModel : ObservableObject
             resources.AddRange(graph.CasGraph.MaterialResources);
             resources.AddRange(graph.CasGraph.TextureResources);
         }
+        else if (graph.General3DGraph is not null)
+        {
+            resources.AddRange(graph.General3DGraph.ModelResources);
+            resources.AddRange(graph.General3DGraph.ModelLodResources);
+            resources.AddRange(graph.General3DGraph.GeometryResources);
+            resources.AddRange(graph.General3DGraph.RigResources);
+            resources.AddRange(graph.General3DGraph.MaterialResources);
+            resources.AddRange(graph.General3DGraph.TextureResources);
+        }
 
         return resources
             .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
@@ -1909,6 +2521,8 @@ public sealed partial class MainViewModel : ObservableObject
     private static IReadOnlyList<string> PrependAll(IReadOnlyList<string> values) =>
         ["All", .. values.Where(static value => !string.Equals(value, "All", StringComparison.Ordinal))];
 }
+
+internal sealed record CasVariantTextureCompositeResult(CanonicalScene Scene, string Diagnostics);
 
 public enum SceneRenderMode
 {

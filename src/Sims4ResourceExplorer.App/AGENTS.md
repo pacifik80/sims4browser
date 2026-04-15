@@ -255,6 +255,23 @@ preserved across chat sessions.
   process-exit behavior, and output cleanup locks before assuming the app
   itself crashed.
 
+### Documentation Sync
+
+- Any substantial change to user-visible behavior, supported subsets,
+  workflows, limitations, diagnostics, or storage/query behavior must update
+  the relevant repository documentation in the same change.
+- Update the most specific docs that changed reality, typically from this set:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/supported-types.md`
+  - `docs/known-limitations.md`
+  - `docs/workflows/*.md`
+  - `docs/third-party-licenses.md`
+  - handoff/instruction files that mention the old behavior
+- Do not leave docs saying "not implemented yet" after the code and tests
+  already support the feature, and do not silently widen support claims
+  without matching tests and docs.
+
 ## Windows AI Prerequisites
 
 When integrating Phi Silica, Windows Vision, or other Windows AI APIs (see

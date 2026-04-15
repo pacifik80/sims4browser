@@ -14,95 +14,186 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Spacing="10">
+        <StackPanel Spacing="12">
             <TextBlock Text="Indexing Progress" FontSize="20" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding OverallSummary}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
-            <ProgressBar Maximum="{Binding PackagesProgressMaximum}" Value="{Binding PackagesProgressValue}" IsIndeterminate="{Binding PackagesProgressIndeterminate}" />
-            <Grid ColumnSpacing="16" RowSpacing="10">
+            <TextBlock Text="{Binding StageFlowText}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+
+            <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
 
-                <StackPanel Spacing="4">
-                    <TextBlock Text="{Binding WorkerCountText}" />
-                    <TextBlock Text="{Binding BacklogText}" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Spacing="4">
-                    <TextBlock Text="{Binding PackagesText}" />
-                    <TextBlock Text="{Binding ResourcesText}" />
-                    <TextBlock Text="{Binding DataProgressText}" />
-                </StackPanel>
-                <StackPanel Grid.Column="2" Spacing="4">
-                    <TextBlock Text="{Binding ElapsedEtaText}" />
-                    <TextBlock Text="{Binding ThroughputText}" />
-                </StackPanel>
-                <StackPanel Grid.Row="1" Spacing="4">
-                    <TextBlock Text="{Binding WorkerStatesText}" />
-                </StackPanel>
-                <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
-                    <TextBlock Text="{Binding PersistBacklogText}" />
-                </StackPanel>
-                <StackPanel Grid.Row="1" Grid.Column="2" Spacing="4">
-                    <TextBlock Text="{Binding WriterTelemetryText}" />
-                </StackPanel>
-                <TextBlock Grid.Row="2" Grid.ColumnSpan="3" Text="{Binding SummaryText}" TextWrapping="WrapWholeWords" />
+                <Border Padding="12" Background="{Binding ScopeStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="1. Scope" FontWeight="SemiBold" />
+                        <TextBlock Text="Count packages and total input size before index build starts." TextWrapping="WrapWholeWords" />
+                        <TextBlock Text="{Binding ScopeStageStatusText}" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Padding="12" Background="{Binding IndexingStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="2. Index Build" FontWeight="SemiBold" />
+                        <TextBlock Text="Scan packages, extract metadata, and write catalog shards." TextWrapping="WrapWholeWords" />
+                        <TextBlock Text="{Binding IndexingStageStatusText}" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Padding="12" Background="{Binding FinalizationStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="3. Finalization" FontWeight="SemiBold" />
+                        <TextBlock Text="Build browse/search indexes and activate the rebuilt catalog." TextWrapping="WrapWholeWords" />
+                        <TextBlock Text="{Binding FinalizationStageStatusText}" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
             </Grid>
         </StackPanel>
 
-        <Grid Grid.Row="1" RowSpacing="10">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <TextBlock Text="Workers" FontSize="16" FontWeight="SemiBold" />
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Enabled" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
-                <ItemsRepeater ItemsSource="{Binding Workers}">
-                    <ItemsRepeater.Layout>
-                        <UniformGridLayout MinItemWidth="320" MinColumnSpacing="12" MinRowSpacing="12" ItemsStretch="Fill" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate>
-                            <Border Padding="10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                                <StackPanel Spacing="4">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding WorkerLabel}" FontWeight="SemiBold" />
-                                        <TextBlock Grid.Column="1" Text="{Binding StatusBadgeText}" />
-                                    </Grid>
-                                    <TextBlock Text="{Binding PackageNameText}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding StageText}" MaxLines="1" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding ProcessedText}" />
-                                    <Grid ColumnSpacing="10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding WrittenText}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1" Text="{Binding ThroughputText}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
-                                    </Grid>
-                                    <Grid ColumnSpacing="10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding ElapsedText}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1" Text="{Binding EtaText}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
-                                    </Grid>
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
+        <Grid Grid.Row="1">
+            <ScrollViewer Visibility="{Binding ScopeSectionVisibility}" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Enabled" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Scope Discovery" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding ScopeSummaryText}" TextWrapping="WrapWholeWords" />
+                    <ProgressBar Maximum="{Binding ScopeProgressMaximum}" Value="{Binding ScopeProgressValue}" IsIndeterminate="{Binding ScopeProgressIndeterminate}" />
+                    <Grid ColumnSpacing="16" RowSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding ScopePackagesText}" />
+                        <TextBlock Grid.Column="1" Text="{Binding ScopeDataText}" />
+                        <TextBlock Grid.Column="2" Text="{Binding ScopeElapsedText}" />
+                    </Grid>
+                    <TextBlock Text="{Binding ScopeDetailText}" TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Visibility="{Binding IndexingSectionVisibility}" RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Index Build" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding OverallSummary}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <ProgressBar Maximum="{Binding PackagesProgressMaximum}" Value="{Binding PackagesProgressValue}" IsIndeterminate="{Binding PackagesProgressIndeterminate}" />
+                    <Grid ColumnSpacing="16" RowSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{Binding WorkerCountText}" />
+                            <TextBlock Text="{Binding BacklogText}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="{Binding PackagesText}" />
+                            <TextBlock Text="{Binding ResourcesText}" />
+                            <TextBlock Text="{Binding DataProgressText}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="4">
+                            <TextBlock Text="{Binding ElapsedEtaText}" />
+                            <TextBlock Text="{Binding ThroughputText}" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Spacing="4">
+                            <TextBlock Text="{Binding WorkerStatesText}" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
+                            <TextBlock Text="{Binding PersistBacklogText}" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="2" Spacing="4">
+                            <TextBlock Text="{Binding WriterTelemetryText}" />
+                        </StackPanel>
+                        <TextBlock Grid.Row="2" Grid.ColumnSpan="3" Text="{Binding LatestEventText}" TextWrapping="WrapWholeWords" />
+                        <TextBlock Grid.Row="3" Grid.ColumnSpan="3" Text="{Binding SummaryText}" TextWrapping="WrapWholeWords" />
+                    </Grid>
+                </StackPanel>
+
+                <Grid Grid.Row="1" RowSpacing="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Workers" FontSize="16" FontWeight="SemiBold" />
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Enabled" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+                        <ItemsRepeater ItemsSource="{Binding Workers}">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout MinItemWidth="320" MinColumnSpacing="12" MinRowSpacing="12" ItemsStretch="Fill" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Padding="10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                                        <StackPanel Spacing="4">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding WorkerLabel}" FontWeight="SemiBold" />
+                                                <TextBlock Grid.Column="1" Text="{Binding StatusBadgeText}" />
+                                            </Grid>
+                                            <TextBlock Text="{Binding PackageNameText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding StageText}" MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding ProcessedText}" />
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding WrittenText}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" Text="{Binding ThroughputText}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding ElapsedText}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" Text="{Binding EtaText}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+
+            <ScrollViewer Visibility="{Binding FinalizationSectionVisibility}" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Enabled" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Catalog Finalization" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding FinalizationSummaryText}" TextWrapping="WrapWholeWords" />
+                    <ProgressBar Maximum="{Binding FinalizationProgressMaximum}" Value="{Binding FinalizationProgressValue}" IsIndeterminate="{Binding FinalizationProgressIndeterminate}" />
+                    <Grid ColumnSpacing="16" RowSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="{Binding FinalizationProgressText}" />
+                        <TextBlock Grid.Column="1" Text="{Binding FinalizationCatalogText}" />
+                        <TextBlock Grid.Column="2" Text="{Binding FinalizationElapsedText}" />
+                        <TextBlock Grid.ColumnSpan="3" Grid.Row="1" Text="{Binding FinalizationResourcesText}" />
+                    </Grid>
+                    <TextBlock Text="{Binding FinalizationStepText}" TextWrapping="WrapWholeWords" />
+                </StackPanel>
             </ScrollViewer>
         </Grid>
 

@@ -301,9 +301,20 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         if (ResourceTypeHints.IsDdsFamily(key.TypeName))
         {
             progress?.Report(new ResourceReadProgress("Reading DDS texture bytes...", 0.35));
-            var bytes = await ReadWithDeletedFallbackAsync(force => package.GetDdsAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
-            progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
-            return bytes;
+            try
+            {
+                var bytes = await ReadWithDeletedFallbackAsync(force => package.GetDdsAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+                return bytes;
+            }
+            catch (Exception) when (key.TypeName is nameof(ResourceType.RLE2Image) or nameof(ResourceType.RLESImage))
+            {
+                progress?.Report(new ResourceReadProgress("Falling back to custom RLE texture decode...", 0.62));
+                var rawBytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                var pngBytes = Ts4RleTextureDecoder.DecodeToPng(rawBytes.ToArray());
+                progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+                return pngBytes;
+            }
         }
 
         progress?.Report(new ResourceReadProgress("Texture type is not previewable as PNG.", 1.0));

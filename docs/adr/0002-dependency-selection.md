@@ -10,7 +10,7 @@ The tool needs package access, WinUI tabular browsing, SQLite persistence, optio
 
 ## Decision
 
-Primary planned dependencies:
+Primary dependencies:
 
 - `LlamaLogic.Packages`
   - chosen as the primary package access library because it is purpose-built for Sims packages and aligns with the requested constraints
@@ -20,14 +20,16 @@ Primary planned dependencies:
   - required for WinUI 3 desktop shell
 - `CommunityToolkit.Mvvm`
   - chosen for concise MVVM commands/observable state with permissive licensing
+- `Microsoft.Extensions.Hosting`
+  - chosen for dependency injection and application service composition in the WinUI shell
 - `Microsoft.Data.Sqlite`
   - chosen for the persistent index/cache store
 - `NAudio`
   - chosen for Windows audio playback and WAV handling
 - `HelixToolkit.WinUI.SharpDX`
   - chosen for WinUI-compatible 3D preview
-- `HelixToolkit.SharpDX.Assimp` or `SharpAssimp`
-  - chosen as the likely FBX bridge, behind an adapter so it can be swapped if version/licensing friction appears
+- `AssimpNet`
+  - chosen as the current FBX bridge behind an adapter so it can still be swapped if version/licensing friction appears
 
 Reference material only:
 

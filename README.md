@@ -5,7 +5,7 @@ Read-only Windows desktop browser/exporter for The Sims 4 package resources and 
 ## Goals
 
 - Browse large Sims 4 game and mod libraries without loading full payloads during list browsing.
-- Resolve user-facing logical assets for Build/Buy and CAS where feasible.
+- Resolve user-facing logical assets for Build/Buy, CAS, and other 3D roots where feasible.
 - Preview supported textures, text/binary data, 3D content, and supported audio resources.
 - Export supported 3D assets to FBX with textures plus manifest/metadata sidecars.
 - Keep the source game and mod package files strictly read-only.
@@ -49,32 +49,49 @@ This repository is being built in vertical slices. The current implementation in
 - package scanning and persistent indexing
 - a WinUI 3 desktop shell for adding Game/DLC/Mods folders manually
 - raw resource browsing backed by SQLite
-- logical asset summaries for Build/Buy and CAS roots
+- logical asset summaries for Build/Buy, CAS, and generalized 3D roots
 - text, hex, and image preview pipelines with graceful fallback
 - raw export for every indexed resource
 - a first real Build/Buy vertical slice for static model-rooted furniture/decor objects with scene preview and FBX+textures export
-- a first real CAS vertical slice for adult/young-adult human hair, full body, top, bottom, and shoes parts when the CAS part exposes a direct skinned `Geometry` LOD in the same package
+- a first real CAS vertical slice for adult/young-adult human parts, including accessories, when the `CASPart` exposes a direct skinned `Geometry` LOD either package-local or via indexed cross-package lookup
+- a first `General 3D` slice for standalone package-local `Model`, `ModelLOD`, and `Geometry` roots that are not yet harmonized into Build/Buy or CAS identity graphs
 - a first in-app audio path for RIFF/WAV payloads
-- lightweight factual asset capability fields in the cache so the app can filter Build/Buy and CAS assets without baking support policy into the index
+- lightweight factual asset capability fields in the cache so the app can filter Build/Buy, CAS, and generalized 3D assets without baking support policy into the index
 
 Current 3D note:
 
 - the current supported subset is narrow and honest: static Build/Buy objects with a `Model` root, triangle-list `ModelLOD` geometry, no skinning/animation path, and package-local material/texture candidates
 - the Build/Buy subset now renders in a real in-app 3D viewport when scene reconstruction succeeds, and falls back to explicit diagnostics when reconstruction fails
-- CAS support is also narrow and honest: adult/young-adult human hair, full body, top, bottom, and shoes parts with a direct package-local skinned `Geometry` scene root plus package-local texture candidates
+- CAS support is still narrow but broader than the first slice: adult/young-adult human parts, including accessories, with a direct skinned `Geometry` scene root that can now resolve package-local or indexed cross-package `Geometry`/texture candidates
+- the CAS preview path now accepts both bare `GEOM` payloads and the wrapped single-chunk RCOL-style `Geometry` resources that appear in real game packages, so supported CAS assets do not fail just because the mesh payload is containerized
+- the CAS/Geometry fallback preview path now skips undecodable same-instance texture candidates per-resource instead of aborting the whole scene build, so one bad texture payload degrades to `Partial` diagnostics rather than collapsing the asset back to `Unsupported`
+- image preview now includes an internal `RLE2/RLES -> DXT5 DDS -> PNG` fallback path for Sims 4 texture payloads that the upstream package helper still rejects as `Unknown image format`
+- `General 3D` now exposes standalone `Model`, `ModelLOD`, and `Geometry` roots as first-class logical assets so they can be searched, filtered, opened in details, and sent through the existing scene-preview path
+- the first real CAS variant layer is now indexed: `CASPart` swatches and preset slots are stored as linked variant rows, `VariantCount` is no longer a stub for indexed CAS assets, and the details pane shows the indexed variant records for the selected asset
 - unsupported Build/Buy objects remain metadata/raw-export-first and report explicit diagnostics instead of faking scene success
 - unsupported CAS assets remain metadata/raw-export-first and report explicit diagnostics instead of faking scene success
+- Build/Buy indexing now also collapses same-package identity rows that resolve to the same downstream scene/model root into one logical asset family, so repeated `set1/set2/set3`-style entries do not flood the main asset list as separate top-level rows
+- Build/Buy finalization also backfills `ObjectCatalog`-only delta rows from matching `ObjectDefinition` families that share the same identity instance, using the persisted scene-root hint extracted during resource indexing, so catalog shadow entries do not survive as separate dead-end top-level assets beside the real family row
 
 ## Browsing model
 
 Browsing is now mode-first instead of tab-symmetric:
 
-- `Asset Browser` is the task-oriented path for Build/Buy and CAS asset discovery
+- `Asset Browser` is the task-oriented path for Build/Buy, CAS, and generalized 3D asset discovery
 - `Raw Resource Browser` is the diagnostic path for TGI/package/type inspection
 
-Each mode has its own search box, scoped facets, active filter chips, result summary, and incremental result window. The app shows total matches separately from the currently loaded rows so very large libraries stay understandable. Facets are still partly heuristic where Sims 4 categories/linkage are only partially known.
+Each mode has its own search box, scoped facets, active filter chips, result summary, and incremental result window. The app shows total matches separately from the currently loaded rows so very large libraries stay understandable. Facets are still partly heuristic where Sims 4 categories/linkage are only partially known. The logical asset catalog is canonicalized during indexing, so `Asset Browser` shows one logical asset row per logical family instead of surfacing separate base/delta shadow variants or catalog-only delta identities as duplicate list entries. The `General 3D` domain intentionally covers standalone scene roots that are not yet understood well enough to be promoted into richer Build/Buy or CAS identity graphs.
 
 For logical assets, the cache now stores cheap factual fields such as scene-root presence, exact-geometry candidate presence, and material/texture reference presence. The app derives labels and filtering behavior from those fields at runtime, so changing previewability rules does not require rebuilding the cache just to change policy.
+
+## Near-term roadmap
+
+The current implementation is moving in this order:
+
+1. make all discoverable 3D roots first-class browseable assets, even before they are fully harmonized into gameplay-aware identity graphs
+2. keep expanding the new variant/swatch/state layer beyond the first indexed CAS slice until Build/Buy, CAS, and `General 3D` families can all be navigated as structured logical assets
+3. harmonize Build/Buy, CAS, and `General 3D` detail/preview paths so the app exposes one logical asset with its variants and supporting structure instead of package-layer fragments
+4. deepen semantic graph coverage for Build/Buy and CAS before spending more effort on export fidelity
 
 ## Read-only safety
 
@@ -82,4 +99,8 @@ The app never modifies or repacks `.package` files. Cache, logs, and exports are
 
 ## Indexing note
 
-Indexing now uses a fast metadata-first path: package discovery streams into the worker queue, unchanged packages are skipped from one bulk fingerprint preload, and the hot scan loop records TGI/type/preview metadata without per-resource name or size lookups. Resource names and precise sizes are enriched lazily when a specific resource is opened or exported, then persisted back into SQLite so they do not need to be recomputed repeatedly.
+Indexing now uses a fast metadata-first full rebuild path with explicit stages. The run first defines package scope by discovering all candidate packages and total input size, then performs the actual metadata-first index build, and finally finalizes the rebuilt catalog. The hot scan loop records TGI/type/preview metadata without per-resource name or size lookups, and the run builds a fresh shadow SQLite catalog from scratch instead of mutating the live catalog in place. Resource names and precise sizes are enriched lazily when a specific resource is opened or exported, then persisted back into SQLite so they do not need to be recomputed repeatedly. CASPart technical names are now extracted from the stable managed-string header instead of depending on a full semantic parse, so modern CAS packages can contribute searchable names even when later CASPart sections use newer layout variants. The same seed-enrichment pass now also persists the first real CAS variant layer into `asset_variants`, keyed back to logical assets through the index, so swatches/preset slots survive into browsing and details instead of remaining hidden parser-only facts. The selected asset pane now exposes those indexed rows through an explicit variant picker with thumbnail resolution, and the selected CAS swatch now feeds back into the viewport through a swatch-aware approximate CAS material path that resolves role-specific `diffuse` and `color_shift_mask` textures when the indexed material manifest exposes them. During finalization, the asset catalog also computes one canonical logical asset row per `(data_source_id, asset_kind, root_tgi)` across the whole shard set before rebuilding asset FTS and browse indexes.
+
+The CAS runtime graph is now a little more resilient to real Maxis payloads than the indexed summary alone suggests. When a parsed `CASPart` does not expose any LOD envelopes but its TGI table still contains direct `Geometry` references, the graph builder promotes those `Geometry` keys as scene candidates instead of treating the part as permanently metadata-only. That closes a real accessory pattern in EP packs where the direct geometry keys are present but the narrower semantic LOD path still comes back empty.
+
+During indexing, the progress window owns the workflow and the main browse window is intentionally frozen so it does not compete with the indexer. The dialog now presents three stage-specific screens with metrics that match the current phase: scope discovery, index build, and finalization. Worker slots, persist backlog, and writer telemetry are shown only during the actual index-build stage; finalization gets its own step-oriented progress instead of reusing stale write-throughput counters. The serving catalog is now a small fixed shard set rather than a single hot SQLite file: the rebuild creates `index.sqlite` plus sibling shard files under the cache root, routes package writes into a stable shard by package path, and fans browse/search queries back out across the shard set after activation. Shadow-build ingest keeps `resources` and `assets` tables free of hot-path `PRIMARY KEY` maintenance, uses insert-only package rows during the rebuild, and builds unique browse/search indexes plus FTS once at the end. Seed-metadata enrichment is defensive: malformed resource payloads now degrade to per-resource enrichment misses instead of aborting the entire package run, and CASPart semantic parsing now follows a versioned layout model instead of the earlier legacy-only offset assumptions. Successful runs atomically activate the rebuilt shard set; canceled or failed runs leave the previously active catalog untouched. Live CPU traces can be captured with `profile-live-indexing.ps1`, and per-run indexing telemetry is written under `%LOCALAPPDATA%\\Sims4ResourceExplorer\\Telemetry\\Indexing`.

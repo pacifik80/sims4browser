@@ -78,6 +78,7 @@ public sealed partial class MainWindow : Window
         };
         PreviewSurface.Children.Insert(0, sceneViewport);
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        UpdateBusyUiState();
         Activated += MainWindow_Activated;
         TryApplyWindowIcon();
     }
@@ -349,6 +350,19 @@ public sealed partial class MainWindow : Window
             e.PropertyName == nameof(MainViewModel.SelectedSceneTextureSlot))
         {
             UpdatePreviewSurface();
+        }
+
+        if (e.PropertyName == nameof(MainViewModel.IsBusy))
+        {
+            UpdateBusyUiState();
+        }
+    }
+
+    private void UpdateBusyUiState()
+    {
+        if (Content is UIElement root)
+        {
+            root.IsHitTestVisible = !ViewModel.IsBusy;
         }
     }
 
@@ -729,20 +743,23 @@ public sealed partial class MainWindow : Window
         var opacityTexture = SelectViewportOpacityTexture(material, textureGroup, diffuseTexture, selectedSlot);
         var normalTexture = SelectNormalTexture(textureGroup);
         var specularTexture = SelectSpecularTexture(textureGroup);
+        var colorShiftMaskTexture = SelectColorShiftMaskTexture(textureGroup);
         var selectedSlotTexture = !string.IsNullOrWhiteSpace(selectedSlot)
             ? textureGroup.FirstOrDefault(texture => texture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
             : null;
         var viewportColorTexture = selectedSlotTexture ?? diffuseTexture ?? layeredColorTexture ?? emissiveTexture;
         var uvTransform = BuildUvTransform(viewportColorTexture);
+        var viewportTintColor = BuildViewportTintColor(material);
         var approximateBaseColor = BuildApproximateBaseColor(material);
-        var diffuseColor = approximateBaseColor ?? new Color4(0.62f, 0.62f, 0.62f, 1f);
-        var texturedLitDiffuseColor = new Color4(1f, 1f, 1f, 1f);
-        var ambientColor = approximateBaseColor is null
+        var effectiveBaseColor = viewportTintColor ?? approximateBaseColor;
+        var diffuseColor = effectiveBaseColor ?? new Color4(0.62f, 0.62f, 0.62f, 1f);
+        var texturedLitDiffuseColor = viewportTintColor ?? new Color4(1f, 1f, 1f, 1f);
+        var ambientColor = effectiveBaseColor is null
             ? new Color4(0.3f, 0.3f, 0.3f, 1f)
             : new Color4(
-                Math.Clamp(approximateBaseColor.Value.Red * 0.3f, 0f, 1f),
-                Math.Clamp(approximateBaseColor.Value.Green * 0.3f, 0f, 1f),
-                Math.Clamp(approximateBaseColor.Value.Blue * 0.3f, 0f, 1f),
+                Math.Clamp(effectiveBaseColor.Value.Red * 0.3f, 0f, 1f),
+                Math.Clamp(effectiveBaseColor.Value.Green * 0.3f, 0f, 1f),
+                Math.Clamp(effectiveBaseColor.Value.Blue * 0.3f, 0f, 1f),
                 1f);
 
         var isFlat = renderMode == SceneRenderMode.FlatTexture;
@@ -755,7 +772,12 @@ public sealed partial class MainWindow : Window
         var renderEmissiveMap = (isFlat && viewportColorTexture is not null) || (!isFlat && emissiveTexture is not null);
         var renderAlphaMap = ShouldRenderTransparentViewport(material, textureGroup, diffuseTexture, selectedSlot);
         var forceOpaqueViewportTexture = isLit && !renderAlphaMap;
-        var textureModel = CreateTextureModel(viewportColorTexture, forceOpaqueViewportTexture);
+        var (textureModel, usesSwatchComposite) = CreateViewportTextureModel(
+            material,
+            viewportColorTexture,
+            colorShiftMaskTexture,
+            viewportTintColor,
+            forceOpaqueViewportTexture);
         var emissiveTextureModel = emissiveTexture is null
             ? null
             : new TextureModel(new MemoryStream(emissiveTexture.PngBytes), autoCloseStream: true);
@@ -782,13 +804,16 @@ public sealed partial class MainWindow : Window
             ? new Color4(0.02f, 0.02f, 0.02f, 1f)
             : new Color4(0.08f, 0.08f, 0.08f, 1f);
         var litSpecularShininess = useMatteLitShading ? 4f : 12f;
+        var effectiveTexturedLitDiffuseColor = usesSwatchComposite
+            ? new Color4(1f, 1f, 1f, 1f)
+            : texturedLitDiffuseColor;
 
         return new PhongMaterial
         {
             DiffuseColor = isWireframe
                 ? new Color4(0.95f, 0.95f, 0.95f, 1f)
                 : isLit
-                    ? (renderDiffuseMap ? texturedLitDiffuseColor : diffuseColor)
+                    ? (renderDiffuseMap ? effectiveTexturedLitDiffuseColor : diffuseColor)
                     : viewportColorTexture is null
                         ? diffuseColor
                         : new Color4(0f, 0f, 0f, 1f),
@@ -824,9 +849,53 @@ public sealed partial class MainWindow : Window
         };
     }
 
+    private static (TextureModel? TextureModel, bool UsesSwatchComposite) CreateViewportTextureModel(
+        CanonicalMaterial? material,
+        CanonicalTexture? viewportColorTexture,
+        CanonicalTexture? colorShiftMaskTexture,
+        Color4? viewportTintColor,
+        bool forceOpaqueAlpha)
+    {
+        if (material?.SourceKind == CanonicalMaterialSourceKind.ApproximateCas &&
+            viewportColorTexture is not null &&
+            colorShiftMaskTexture is not null &&
+            viewportTintColor is not null)
+        {
+            var compositedPngBytes = ComposeSwatchMaskedPng(
+                viewportColorTexture.PngBytes,
+                colorShiftMaskTexture.PngBytes,
+                viewportTintColor.Value);
+            if (compositedPngBytes is not null)
+            {
+                if (forceOpaqueAlpha)
+                {
+                    compositedPngBytes = ForceOpaquePngAlpha(compositedPngBytes);
+                }
+
+                return (new TextureModel(new MemoryStream(compositedPngBytes), autoCloseStream: true), true);
+            }
+        }
+
+        return (CreateTextureModel(viewportColorTexture, forceOpaqueAlpha), false);
+    }
+
     private static Color4? BuildApproximateBaseColor(CanonicalMaterial? material)
     {
         if (material?.ApproximateBaseColor is not { } color)
+        {
+            return null;
+        }
+
+        return new Color4(
+            Math.Clamp(color.R, 0f, 1f),
+            Math.Clamp(color.G, 0f, 1f),
+            Math.Clamp(color.B, 0f, 1f),
+            Math.Clamp(color.A, 0f, 1f));
+    }
+
+    private static Color4? BuildViewportTintColor(CanonicalMaterial? material)
+    {
+        if (material?.ViewportTintColor is not { } color)
         {
             return null;
         }
@@ -884,6 +953,92 @@ public sealed partial class MainWindow : Window
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
         return memory.ToArray();
+    }
+
+    private static byte[]? ComposeSwatchMaskedPng(byte[] diffusePngBytes, byte[] maskPngBytes, Color4 tintColor)
+    {
+        try
+        {
+            using var diffuseStream = new InMemoryRandomAccessStream();
+            diffuseStream.WriteAsync(diffusePngBytes.AsBuffer()).AsTask().GetAwaiter().GetResult();
+            diffuseStream.Seek(0);
+
+            using var maskStream = new InMemoryRandomAccessStream();
+            maskStream.WriteAsync(maskPngBytes.AsBuffer()).AsTask().GetAwaiter().GetResult();
+            maskStream.Seek(0);
+
+            var diffuseDecoder = BitmapDecoder.CreateAsync(diffuseStream).AsTask().GetAwaiter().GetResult();
+            var maskDecoder = BitmapDecoder.CreateAsync(maskStream).AsTask().GetAwaiter().GetResult();
+            var diffusePixels = diffuseDecoder.GetPixelDataAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Straight,
+                new BitmapTransform(),
+                ExifOrientationMode.IgnoreExifOrientation,
+                ColorManagementMode.DoNotColorManage).AsTask().GetAwaiter().GetResult().DetachPixelData();
+            var maskPixels = maskDecoder.GetPixelDataAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Straight,
+                new BitmapTransform
+                {
+                    ScaledWidth = diffuseDecoder.PixelWidth,
+                    ScaledHeight = diffuseDecoder.PixelHeight
+                },
+                ExifOrientationMode.IgnoreExifOrientation,
+                ColorManagementMode.DoNotColorManage).AsTask().GetAwaiter().GetResult().DetachPixelData();
+            if (diffusePixels.Length != maskPixels.Length)
+            {
+                return null;
+            }
+
+            var tintR = Math.Clamp(tintColor.Red, 0f, 1f);
+            var tintG = Math.Clamp(tintColor.Green, 0f, 1f);
+            var tintB = Math.Clamp(tintColor.Blue, 0f, 1f);
+            var tintA = Math.Clamp(tintColor.Alpha, 0f, 1f);
+            var composedPixels = new byte[diffusePixels.Length];
+            for (var offset = 0; offset < diffusePixels.Length; offset += 4)
+            {
+                var baseB = diffusePixels[offset] / 255f;
+                var baseG = diffusePixels[offset + 1] / 255f;
+                var baseR = diffusePixels[offset + 2] / 255f;
+                var baseA = diffusePixels[offset + 3];
+
+                var maskB = maskPixels[offset] / 255f;
+                var maskG = maskPixels[offset + 1] / 255f;
+                var maskR = maskPixels[offset + 2] / 255f;
+                var maskA = maskPixels[offset + 3] / 255f;
+                var maskFactor = Math.Clamp(Math.Max(maskA, Math.Max(maskR, Math.Max(maskG, maskB))) * tintA, 0f, 1f);
+
+                var blendedR = baseR * ((1f - maskFactor) + (maskFactor * tintR));
+                var blendedG = baseG * ((1f - maskFactor) + (maskFactor * tintG));
+                var blendedB = baseB * ((1f - maskFactor) + (maskFactor * tintB));
+
+                composedPixels[offset] = (byte)Math.Clamp((int)Math.Round(blendedB * 255f), 0, 255);
+                composedPixels[offset + 1] = (byte)Math.Clamp((int)Math.Round(blendedG * 255f), 0, 255);
+                composedPixels[offset + 2] = (byte)Math.Clamp((int)Math.Round(blendedR * 255f), 0, 255);
+                composedPixels[offset + 3] = baseA;
+            }
+
+            using var output = new InMemoryRandomAccessStream();
+            var encoder = BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output).AsTask().GetAwaiter().GetResult();
+            encoder.SetPixelData(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Straight,
+                diffuseDecoder.PixelWidth,
+                diffuseDecoder.PixelHeight,
+                diffuseDecoder.DpiX,
+                diffuseDecoder.DpiY,
+                composedPixels);
+            encoder.FlushAsync().AsTask().GetAwaiter().GetResult();
+            output.Seek(0);
+            using var stream = output.AsStreamForRead();
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            return memory.ToArray();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static UVTransform BuildUvTransform(CanonicalTexture? texture)
@@ -1568,6 +1723,16 @@ public sealed partial class MainWindow : Window
 
         var scope = new CanonicalMaterial("Scoped", textures);
         return SelectSpecularTexture(scope);
+    }
+
+    private static CanonicalTexture? SelectColorShiftMaskTexture(IReadOnlyList<CanonicalTexture> textures)
+    {
+        if (textures.Count == 0)
+        {
+            return null;
+        }
+
+        return textures.FirstOrDefault(static texture => texture.Slot.Equals("color_shift_mask", StringComparison.OrdinalIgnoreCase));
     }
 
     private static CanonicalTexture? SelectLayeredColorTexture(CanonicalMaterial? material)

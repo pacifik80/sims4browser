@@ -1654,7 +1654,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     private async Task<IReadOnlyList<CanonicalTexture>> ResolveFallbackTexturesAsync(
         ResourceMetadata ownerResource,
         Dictionary<string, CanonicalTexture?> textureCache,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        List<string>? diagnostics = null)
     {
         var packageResources = await GetPackageInstanceResourcesAsync(ownerResource.PackagePath, ownerResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
         var textureCandidates = packageResources
@@ -1705,19 +1706,27 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             var cacheKey = candidate.Key.FullTgi;
             if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
             {
-                var pngBytes = await resourceCatalogService.GetTexturePngAsync(candidate.PackagePath, candidate.Key, cancellationToken).ConfigureAwait(false);
-                cachedTexture = pngBytes is null
-                    ? null
-                    : new CanonicalTexture(
-                        results.Count == 0 ? "diffuse" : $"extra_{results.Count}",
-                        BuildTextureFileName(results.Count == 0 ? "diffuse" : $"extra_{results.Count}", new Ts4ResourceKey(candidate.Key.Type, candidate.Key.Group, candidate.Key.FullInstance)),
-                        pngBytes,
-                        candidate.Key,
-                        candidate.PackagePath,
-                        results.Count == 0 ? CanonicalTextureSemantic.BaseColor : CanonicalTextureSemantic.Unknown,
-                        textureCandidates.Count == 1 && candidate.PackagePath.Equals(ownerResource.PackagePath, StringComparison.OrdinalIgnoreCase)
-                            ? CanonicalTextureSourceKind.FallbackSameInstanceLocal
-                            : CanonicalTextureSourceKind.FallbackSameInstanceIndexed);
+                try
+                {
+                    var pngBytes = await resourceCatalogService.GetTexturePngAsync(candidate.PackagePath, candidate.Key, cancellationToken).ConfigureAwait(false);
+                    cachedTexture = pngBytes is null
+                        ? null
+                        : new CanonicalTexture(
+                            results.Count == 0 ? "diffuse" : $"extra_{results.Count}",
+                            BuildTextureFileName(results.Count == 0 ? "diffuse" : $"extra_{results.Count}", new Ts4ResourceKey(candidate.Key.Type, candidate.Key.Group, candidate.Key.FullInstance)),
+                            pngBytes,
+                            candidate.Key,
+                            candidate.PackagePath,
+                            results.Count == 0 ? CanonicalTextureSemantic.BaseColor : CanonicalTextureSemantic.Unknown,
+                            textureCandidates.Count == 1 && candidate.PackagePath.Equals(ownerResource.PackagePath, StringComparison.OrdinalIgnoreCase)
+                                ? CanonicalTextureSourceKind.FallbackSameInstanceLocal
+                                : CanonicalTextureSourceKind.FallbackSameInstanceIndexed);
+                }
+                catch (Exception ex)
+                {
+                    diagnostics?.Add($"Skipped same-instance fallback texture {candidate.Key.FullTgi} from {Path.GetFileName(candidate.PackagePath)}: {ex.Message}");
+                    cachedTexture = null;
+                }
 
                 textureCache[cacheKey] = cachedTexture;
             }
