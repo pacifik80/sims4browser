@@ -3,6 +3,8 @@
     x:Class="Sims4ResourceExplorer.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:core="using:Sims4ResourceExplorer.Core"
+    xmlns:viewModels="using:Sims4ResourceExplorer.App.ViewModels"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Title="Sims4 Resource Explorer"
@@ -15,11 +17,7 @@
         </Grid.RowDefinitions>
 
         <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Click="AddGameSource_Click" Content="Add Game Folder" IsEnabled="{Binding IsNotBusy}" />
-            <Button Click="AddDlcSource_Click" Content="Add DLC Folder" IsEnabled="{Binding IsNotBusy}" />
-            <Button Click="AddModsSource_Click" Content="Add Mods Folder" IsEnabled="{Binding IsNotBusy}" />
-            <ComboBox Width="140" Header="Workers" ItemsSource="{Binding AvailableWorkerCounts}" SelectedItem="{Binding SelectedWorkerCount, Mode=TwoWay}" />
-            <Button Click="Index_Click" Content="Index" IsEnabled="{Binding IsNotBusy}" />
+            <Button Click="Index_Click" Content="Update Index" IsEnabled="{Binding IsNotBusy}" />
             <Button Click="Refresh_Click" Content="Apply / Refresh" IsEnabled="{Binding IsNotBusy}" />
         </StackPanel>
 
@@ -45,7 +43,8 @@
                     </StackPanel>
 
                     <StackPanel Spacing="6">
-                        <TextBlock Text="Indexed sources" FontWeight="SemiBold" />
+                        <TextBlock Text="Configured folders" FontWeight="SemiBold" />
+                        <TextBlock Text="Folders are managed from Update Index. Source kind is inferred from the path and can still be filtered below as Game, DLC, or Mods." Opacity="0.7" TextWrapping="WrapWholeWords" />
                         <ListView MaxHeight="220" ItemsSource="{Binding DataSources}">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
@@ -186,7 +185,7 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding SupportLabel}" FontWeight="SemiBold" />
-                                    <TextBlock Grid.Column="1" Text="{Binding AssetKind}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding KindLabel}" />
                                     <TextBlock Grid.Column="2" Text="{Binding PrimaryGeometryType}" />
                                     <TextBlock Grid.Column="3" Text="{Binding VariantCount}" />
                                     <TextBlock Grid.Column="4" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
@@ -315,6 +314,421 @@
                                                TextWrapping="WrapWholeWords" />
                                 </Grid>
                             </Border>
+                        </StackPanel>
+                    </Border>
+                    <Border Visibility="{Binding SimArchetypeInspectorVisibility}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Sim Archetype" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding SimArchetypeInspectorSummary}" Opacity="0.7" TextWrapping="WrapWholeWords" />
+                            <TabView SelectedIndex="{Binding SelectedSimArchetypeTabIndex, Mode=TwoWay}"
+                                     IsAddTabButtonVisible="False"
+                                     CanReorderTabs="False">
+                                <TabViewItem Header="Body" IsClosable="False">
+                                    <ScrollViewer MaxHeight="240"
+                                                  VerticalScrollMode="Auto"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <StackPanel Spacing="10" Padding="0,4,0,0">
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Template Variations" FontWeight="SemiBold" />
+                                                <TextBlock Text="Archetypes group multiple SimInfo templates. Pick one template to inspect its body inputs and drive the current base-body preview."
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <ComboBox ItemsSource="{Binding SelectedSimTemplateOptions}"
+                                                          SelectedItem="{Binding SelectedSimTemplateOption, Mode=TwoWay}"
+                                                          DisplayMemberPath="DisplayLabel"
+                                                          PlaceholderText="No grouped SimInfo templates resolved yet" />
+                                                <TextBlock Text="{Binding SelectedSimTemplateNotesText}"
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords"
+                                                           MaxLines="3"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding SelectedSimTemplateDetailsText}"
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords"
+                                                           MaxLines="2"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Body Foundation" FontWeight="SemiBold" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimBodyFoundation}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="core:SimBodyFoundationSummary">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind Notes}" Opacity="0.7" TextWrapping="WrapWholeWords" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Current Slot References" FontWeight="SemiBold" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimSlotGroups}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="core:SimSlotGroupSummary">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind Notes}" Opacity="0.7" TextWrapping="WrapWholeWords" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Body Source References" FontWeight="SemiBold" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimBodySources}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="core:SimBodySourceSummary">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind Notes}" Opacity="0.7" TextWrapping="WrapWholeWords" MaxLines="3" TextTrimming="CharacterEllipsis" FontFamily="Consolas" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Resolved Body Candidate Assets" FontWeight="SemiBold" />
+                                                <TextBlock Text="These body-assembly families drive the current base-body preview. Authoritative SimInfo outfit/body-part selections are inspected first, but only a real body foundation should drive preview; if that is still missing, the app falls back to compatible default body candidates inferred from the template and catalog facts."
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimBodyCandidateFamilies}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="viewModels:SimBodyCandidateFamilyPickerItem">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind Notes}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords"
+                                                                               MaxLines="2"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                    <ComboBox ItemsSource="{x:Bind Options}"
+                                                                              SelectedItem="{x:Bind SelectedOption, Mode=TwoWay}"
+                                                                              DisplayMemberPath="DisplayLabel"
+                                                                              PlaceholderText="No resolved body asset is available yet"
+                                                                              IsEnabled="{x:Bind HasOptions}" />
+                                                                    <TextBlock Text="{x:Bind SelectedOptionLabel}"
+                                                                               FontWeight="SemiBold"
+                                                                               TextWrapping="NoWrap"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Text="{x:Bind SelectionDetailsText}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords"
+                                                                               MaxLines="3"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Current Body Assembly Recipe" FontWeight="SemiBold" />
+                                                <TextBlock Text="This is the current base-body recipe that feeds the preview. Active layers participate in the current body foundation path; overridden layers stay available for inspection but are not used in the current rendered body scene."
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <TextBlock Text="{Binding SimBodyAssemblyModeText}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimBodyAssemblyRecipe}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="viewModels:SimBodyAssemblyRecipeItem">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind ActivityLabel}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind Contribution}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords" />
+                                                                    <TextBlock Text="{x:Bind SelectedAssetLabel}"
+                                                                               FontWeight="SemiBold"
+                                                                               TextWrapping="NoWrap"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Text="{x:Bind SourceLabel}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords" />
+                                                                    <TextBlock Text="{x:Bind Notes}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords"
+                                                                               MaxLines="3"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Resolved Base-Body Graph" FontWeight="SemiBold" />
+                                                <TextBlock Text="This is the current runtime layer graph derived from the selected body families: which layers act as shell, which remain overlays, and which are only alternates right now."
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <TextBlock Text="{Binding SimResolvedBodyGraphSummaryText}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                        CornerRadius="6"
+                                                        Padding="8">
+                                                    <TextBlock Text="{Binding SimResolvedBodyGraphDetailsText}"
+                                                               FontFamily="Consolas"
+                                                               TextWrapping="WrapWholeWords"
+                                                               MaxLines="10"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </Border>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Body Graph" FontWeight="SemiBold" />
+                                                <TextBlock Text="These are the current base-body assembly stages for the selected template: what is already resolved, what is still approximate, and what remains pending."
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <TextBlock Text="{Binding SimBodyGraphSummaryText}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimBodyGraphNodes}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="core:SimBodyGraphNodeSummary">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind State}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind Notes}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords"
+                                                                               MaxLines="3"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Proxy Preview Coverage" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding SimBodyPreviewCoverageText}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimBodyPreviewCoverage}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="viewModels:SimBodyPreviewCoverageItem">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind StatusLabel}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind Notes}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords"
+                                                                               MaxLines="3"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="Active Preview Layers" FontWeight="SemiBold" />
+                                                <TextBlock Text="These are the actual body-related CAS assets that made it into the current base-body preview after family selection and GEOM validation."
+                                                           Opacity="0.7"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <ItemsControl ItemsSource="{Binding SelectedSimBodyPreviewLayers}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="viewModels:SimBodyPreviewLayerItem">
+                                                            <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                    CornerRadius="6"
+                                                                    Padding="8"
+                                                                    Margin="0,0,0,6">
+                                                                <StackPanel Spacing="4">
+                                                                    <Grid ColumnSpacing="8">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                        <TextBlock Grid.Column="1" Text="{x:Bind StatusLabel}" Opacity="0.85" />
+                                                                    </Grid>
+                                                                    <TextBlock Text="{x:Bind AssetLabel}"
+                                                                               FontWeight="SemiBold"
+                                                                               TextWrapping="NoWrap"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Text="{x:Bind Notes}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords" />
+                                                                    <TextBlock Text="{x:Bind PackageLabel}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords" />
+                                                                    <TextBlock Text="{x:Bind RootTgi}"
+                                                                               Opacity="0.7"
+                                                                               TextWrapping="WrapWholeWords"
+                                                                               FontFamily="Consolas"
+                                                                               MaxLines="2"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                                <TabViewItem Header="Morphs" IsClosable="False">
+                                    <ScrollViewer MaxHeight="240"
+                                                  VerticalScrollMode="Auto"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <StackPanel Spacing="6" Padding="0,4,0,0">
+                                            <TextBlock Text="Morph Groups" FontWeight="SemiBold" />
+                                            <ItemsControl ItemsSource="{Binding SelectedSimMorphGroups}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="core:SimMorphGroupSummary">
+                                                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                CornerRadius="6"
+                                                                Padding="8"
+                                                                Margin="0,0,0,6">
+                                                            <StackPanel Spacing="4">
+                                                                <Grid ColumnSpacing="8">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="Auto" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                    <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
+                                                                </Grid>
+                                                                <TextBlock Text="{x:Bind Notes}" Opacity="0.7" TextWrapping="WrapWholeWords" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                                <TabViewItem Header="CAS" IsClosable="False">
+                                    <ScrollViewer MaxHeight="240"
+                                                  VerticalScrollMode="Auto"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <StackPanel Spacing="6" Padding="0,4,0,0">
+                                            <TextBlock Text="Clothing and accessory slots stay secondary for now; body assembly should start from the Body tab foundations and morph stack. Authoritative SimInfo outfit/body-part selections win first here too, with compatibility search only filling the gaps." Opacity="0.7" TextWrapping="WrapWholeWords" />
+                                            <TextBlock Text="CAS Slot Candidates" FontWeight="SemiBold" />
+                                            <ItemsControl ItemsSource="{Binding SelectedSimCasSlotFamilies}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="viewModels:SimCasSlotFamilyPickerItem">
+                                                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                                                CornerRadius="6"
+                                                                Padding="8"
+                                                                Margin="0,0,0,6">
+                                                            <StackPanel Spacing="4">
+                                                                <Grid ColumnSpacing="8">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="Auto" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                                                    <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
+                                                                </Grid>
+                                                                <TextBlock Text="{x:Bind Notes}" Opacity="0.7" TextWrapping="WrapWholeWords" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{x:Bind SourceLabel}" Opacity="0.7" TextWrapping="WrapWholeWords" />
+                                                                <ComboBox ItemsSource="{x:Bind Options}"
+                                                                          SelectedItem="{x:Bind SelectedOption, Mode=TwoWay}"
+                                                                          DisplayMemberPath="DisplayLabel"
+                                                                          PlaceholderText="No indexed candidates yet"
+                                                                          IsEnabled="{x:Bind HasOptions}" />
+                                                                <TextBlock Text="{x:Bind SelectedOptionLabel}"
+                                                                           FontWeight="SemiBold"
+                                                                           TextWrapping="NoWrap"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{x:Bind SelectionDetailsText}"
+                                                                           Opacity="0.7"
+                                                                           TextWrapping="WrapWholeWords"
+                                                                           FontFamily="Consolas"
+                                                                           MaxLines="2"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                            </TabView>
                         </StackPanel>
                     </Border>
                     <StackPanel Orientation="Horizontal" Spacing="8">

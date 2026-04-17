@@ -2,8 +2,7 @@
 
 ## Current workflow
 
-1. Add one or more Game, DLC, and/or Mods folders.
-2. Run indexing.
+1. Click `Update Index`, add one or more folders, and run indexing.
 3. Switch to `Asset Browser` and set `Domain` to `Build/Buy`.
 4. Search or filter for the object you want. Capability filters are cheap cache hints, not a final scene-readiness verdict.
 5. Select the asset and wait for graph resolution plus 3D preview. If scene reconstruction fails, the details pane stays diagnostic-first and the preview can fall back to image/diagnostics.

@@ -1,9 +1,11 @@
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Sims4ResourceExplorer.App.ViewModels;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using Windows.Graphics;
+using Windows.Storage.Pickers;
 using WinRT.Interop;
 
 namespace Sims4ResourceExplorer.App;
@@ -41,6 +43,7 @@ public sealed partial class IndexingDialog : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        ViewModel.NotifyDialogClosed();
         closeCompletionSource.TrySetResult();
     }
 
@@ -52,8 +55,14 @@ public sealed partial class IndexingDialog : Window
         }
     }
 
-    private void OnCancelClick(object sender, RoutedEventArgs e)
+    private void OnPrimaryActionClick(object sender, RoutedEventArgs e)
     {
+        if (!ViewModel.IsRunStarted)
+        {
+            ViewModel.RequestStart();
+            return;
+        }
+
         if (ViewModel.CanCancel)
         {
             ViewModel.RequestCancel();
@@ -62,10 +71,35 @@ public sealed partial class IndexingDialog : Window
 
     private void OnCloseClick(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.CanClose)
+        if (ViewModel.CanDismiss)
         {
             allowClose = true;
             Close();
+        }
+    }
+
+    private async void AddFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var path = await PickFolderPathAsync();
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            ViewModel.AddOrEnableSource(path);
+        }
+    }
+
+    private void RemoveSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Tag is Guid sourceId)
+        {
+            ViewModel.RemoveSource(sourceId);
+        }
+    }
+
+    private void SourceEnabled_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox checkBox && checkBox.Tag is Guid sourceId)
+        {
+            ViewModel.SetSourceEnabled(sourceId, checkBox.IsChecked == true);
         }
     }
 
@@ -74,7 +108,7 @@ public sealed partial class IndexingDialog : Window
         try
         {
             var appWindow = GetAppWindow();
-            appWindow.Title = "Indexing Progress";
+            appWindow.Title = "Update Index";
 
             if (appWindow.Presenter is OverlappedPresenter presenter)
             {
@@ -99,7 +133,7 @@ public sealed partial class IndexingDialog : Window
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (!allowClose && !ViewModel.CanClose)
+        if (!allowClose && ViewModel.IsRunStarted && !ViewModel.CanClose)
         {
             args.Cancel = true;
         }
@@ -126,5 +160,21 @@ public sealed partial class IndexingDialog : Window
         var hwnd = WindowNative.GetWindowHandle(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
         return AppWindow.GetFromWindowId(windowId);
+    }
+
+    private async Task<string?> PickFolderPathAsync()
+    {
+        try
+        {
+            var picker = new FolderPicker();
+            picker.FileTypeFilter.Add("*");
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var folder = await picker.PickSingleFolderAsync();
+            return folder?.Path;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

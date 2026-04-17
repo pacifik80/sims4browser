@@ -199,6 +199,7 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
         var key = ToLlamaKey(resource.Key);
 
         string? name = resource.Name;
+        string? description = resource.Description;
         long? uncompressedSize = resource.UncompressedSize;
         long? compressedSize = resource.CompressedSize;
         bool? isCompressed = resource.IsCompressed;
@@ -230,9 +231,38 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
             }
         }
 
+        if (Ts4StructuredResourceMetadataExtractor.RequiresStructuredDescription(resource.Key.TypeName) &&
+            string.IsNullOrWhiteSpace(description))
+        {
+            try
+            {
+                var bytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(key, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+                var structuredMetadata = Ts4StructuredResourceMetadataExtractor.Describe(resource.Key.TypeName, bytes.ToArray());
+                if (!string.IsNullOrWhiteSpace(structuredMetadata.SuggestedName) && string.IsNullOrWhiteSpace(name))
+                {
+                    name = structuredMetadata.SuggestedName;
+                }
+
+                if (!string.IsNullOrWhiteSpace(structuredMetadata.Description))
+                {
+                    description = structuredMetadata.Description;
+                }
+
+                if (!string.IsNullOrWhiteSpace(structuredMetadata.Diagnostic))
+                {
+                    diagnostics = AppendDiagnostic(diagnostics, $"{resource.Key.TypeName} parse: {structuredMetadata.Diagnostic}");
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics = AppendDiagnostic(diagnostics, $"{resource.Key.TypeName} metadata parse failed: {ex.Message}");
+            }
+        }
+
         return resource with
         {
             Name = name,
+            Description = description,
             CompressedSize = compressedSize,
             UncompressedSize = uncompressedSize,
             IsCompressed = isCompressed,
@@ -448,6 +478,21 @@ internal static class ResourceTypeHints
         typeName.Contains("StringTable", StringComparison.OrdinalIgnoreCase) ||
         typeName.Contains("Recipe", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsSimAssemblySeed(string typeName) =>
+        typeName is "SimData"
+            or "SimInfo"
+            or "SimPreset";
+
+    public static bool IsSimAssemblyComponent(string typeName) =>
+        typeName is "CASPreset"
+            or "SimModifier"
+            or "BlendGeometry"
+            or "DeformerMap"
+            or "BoneDelta"
+            or "BonePose"
+            or "Skintone"
+            or "RegionMap";
+
     public static string GetAssetLinkageSummary(string typeName)
     {
         if (typeName is nameof(ResourceType.ObjectCatalog) or nameof(ResourceType.ObjectDefinition))
@@ -458,6 +503,16 @@ internal static class ResourceTypeHints
         if (typeName is nameof(ResourceType.CASPart))
         {
             return "CAS seed";
+        }
+
+        if (IsSimAssemblySeed(typeName))
+        {
+            return "Sim/character seed";
+        }
+
+        if (IsSimAssemblyComponent(typeName))
+        {
+            return "Sim assembly component";
         }
 
         if (IsSceneLike(typeName))

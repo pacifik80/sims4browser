@@ -259,34 +259,48 @@ internal sealed class Ts4GeomResource
         if (shader != 0)
         {
             var shaderSize = reader.ReadUInt32();
-            stream.Position += shaderSize;
+            SkipBytes(reader, shaderSize, "shader payload");
         }
 
         _ = reader.ReadUInt32();
         _ = reader.ReadUInt32();
-        var vertexCount = reader.ReadInt32();
+        var vertexCount = ReadNonNegativeInt32(reader, "vertex count");
         var formats = ReadFormats(reader);
         var vertices = ReadVertices(reader, version, vertexCount, formats);
 
-        _ = reader.ReadInt32();
-        _ = reader.ReadByte();
-        var indices = ReadIndices(reader);
+        var indices = ReadSubMeshIndices(reader);
 
         if (version == 0x00000005)
         {
             _ = reader.ReadInt32();
         }
-        else
+        else if (version >= 0x0000000C)
         {
-            SkipUnknownThingList(reader);
-            SkipUnknownThing2List(reader);
+            SkipUvStitchData(reader);
+            if (version >= 0x0000000D)
+            {
+                SkipSeamStitchData(reader);
+            }
+
+            SkipSlotIntersectionData(reader, version);
         }
 
-        var boneHashCount = reader.ReadInt32();
+        var boneHashCount = ReadNonNegativeInt32(reader, "bone hash count");
+        EnsureBytesAvailable(reader, checked((long)boneHashCount * sizeof(uint)), "bone hash table");
         var boneHashes = new List<uint>(boneHashCount);
         for (var index = 0; index < boneHashCount; index++)
         {
             boneHashes.Add(reader.ReadUInt32());
+        }
+
+        if (version >= 0x0000000F)
+        {
+            SkipGeometryStates(reader);
+        }
+
+        if (reader.BaseStream.Position < reader.BaseStream.Length)
+        {
+            SkipResourceKeyTable(reader);
         }
 
         return new Ts4GeomResource
@@ -327,7 +341,8 @@ internal sealed class Ts4GeomResource
 
     private static IReadOnlyList<Ts4GeomFormat> ReadFormats(BinaryReader reader)
     {
-        var count = reader.ReadInt32();
+        var count = ReadNonNegativeInt32(reader, "format count");
+        EnsureBytesAvailable(reader, checked((long)count * 9), "format table");
         var results = new List<Ts4GeomFormat>(count);
         for (var index = 0; index < count; index++)
         {
@@ -342,6 +357,8 @@ internal sealed class Ts4GeomResource
 
     private static IReadOnlyList<Ts4GeomVertex> ReadVertices(BinaryReader reader, uint version, int vertexCount, IReadOnlyList<Ts4GeomFormat> formats)
     {
+        var vertexStride = GetVertexStride(version, formats);
+        EnsureBytesAvailable(reader, checked((long)vertexCount * vertexStride), "vertex buffer");
         var results = new List<Ts4GeomVertex>(vertexCount);
         for (var index = 0; index < vertexCount; index++)
         {
@@ -379,7 +396,7 @@ internal sealed class Ts4GeomResource
                         break;
                     case 0x07:
                     case 0x0A:
-                        streamSkip(reader, 4);
+                        SkipBytes(reader, 4, $"vertex {index} usage 0x{format.Usage:X8}");
                         break;
                     default:
                         throw new InvalidDataException($"Unsupported GEOM usage 0x{format.Usage:X8}.");
@@ -395,40 +412,129 @@ internal sealed class Ts4GeomResource
         return results;
     }
 
-    private static IReadOnlyList<int> ReadIndices(BinaryReader reader)
+    private static IReadOnlyList<int> ReadSubMeshIndices(BinaryReader reader)
     {
-        var indexCount = reader.ReadInt32();
-        var results = new List<int>(indexCount);
-        for (var index = 0; index < indexCount; index++)
+        var subMeshCount = ReadNonNegativeInt32(reader, "submesh count");
+        var results = new List<int>();
+        for (var subMeshIndex = 0; subMeshIndex < subMeshCount; subMeshIndex++)
         {
-            results.Add(reader.ReadUInt16());
+            EnsureBytesAvailable(reader, sizeof(byte) + sizeof(int), $"submesh header #{subMeshIndex}");
+            var indexSize = reader.ReadByte();
+            var indexCount = ReadNonNegativeInt32(reader, $"submesh index count #{subMeshIndex}");
+            var indexByteCount = indexSize switch
+            {
+                2 => checked((long)indexCount * sizeof(ushort)),
+                4 => checked((long)indexCount * sizeof(uint)),
+                _ => throw new InvalidDataException($"GEOM index size {indexSize} is invalid.")
+            };
+
+            EnsureBytesAvailable(reader, indexByteCount, $"submesh index buffer #{subMeshIndex}");
+            for (var index = 0; index < indexCount; index++)
+            {
+                var value = indexSize == 2 ? reader.ReadUInt16() : reader.ReadUInt32();
+                if (value > int.MaxValue)
+                {
+                    throw new InvalidDataException($"GEOM index value {value} is too large.");
+                }
+
+                results.Add((int)value);
+            }
         }
 
         return results;
     }
 
-    private static void SkipUnknownThingList(BinaryReader reader)
+    private static void SkipUvStitchData(BinaryReader reader)
     {
-        var count = reader.ReadInt32();
-        for (var index = 0; index < count; index++)
+        var stitchCount = ReadNonNegativeInt32(reader, "uv stitch count");
+        for (var stitchIndex = 0; stitchIndex < stitchCount; stitchIndex++)
         {
+            EnsureBytesAvailable(reader, sizeof(uint) + sizeof(int), $"uv stitch header #{stitchIndex}");
             _ = reader.ReadUInt32();
-            var vectorCount = reader.ReadInt32();
-            streamSkip(reader, vectorCount * 8);
+            var coordinateCount = ReadNonNegativeInt32(reader, $"uv stitch coordinate count #{stitchIndex}");
+            SkipBytes(reader, checked((long)coordinateCount * 8), $"uv stitch payload #{stitchIndex}");
         }
     }
 
-    private static void SkipUnknownThing2List(BinaryReader reader)
+    private static void SkipSeamStitchData(BinaryReader reader)
     {
-        var count = reader.ReadInt32();
-        streamSkip(reader, count * 53);
+        var seamStitchCount = ReadNonNegativeInt32(reader, "seam stitch count");
+        SkipBytes(reader, checked((long)seamStitchCount * 6), "seam stitch payload");
     }
 
-    private static void streamSkip(BinaryReader reader, int byteCount) =>
+    private static void SkipSlotIntersectionData(BinaryReader reader, uint version)
+    {
+        var slotCount = ReadNonNegativeInt32(reader, "slot intersection count");
+        var slotIntersectionSize = version >= 0x0000000E ? 66 : 63;
+        SkipBytes(reader, checked((long)slotCount * slotIntersectionSize), "slot intersection payload");
+    }
+
+    private static void SkipGeometryStates(BinaryReader reader)
+    {
+        var geometryStateCount = ReadNonNegativeInt32(reader, "geometry state count");
+        SkipBytes(reader, checked((long)geometryStateCount * 20), "geometry state payload");
+    }
+
+    private static void SkipResourceKeyTable(BinaryReader reader)
+    {
+        var keyCount = ReadNonNegativeInt32(reader, "resource key count");
+        SkipBytes(reader, checked((long)keyCount * 16), "resource key table");
+    }
+
+    private static int GetVertexStride(uint version, IReadOnlyList<Ts4GeomFormat> formats)
+    {
+        var stride = 0;
+        foreach (var format in formats)
+        {
+            stride += format.Usage switch
+            {
+                0x01 or 0x02 or 0x06 => 12,
+                0x03 => 8,
+                0x04 => 4,
+                0x05 when version == 0x00000005 => 16,
+                0x05 => 4,
+                0x07 or 0x0A => 4,
+                _ => throw new InvalidDataException($"Unsupported GEOM usage 0x{format.Usage:X8}.")
+            };
+        }
+
+        return stride;
+    }
+
+    private static int ReadNonNegativeInt32(BinaryReader reader, string label)
+    {
+        var value = reader.ReadInt32();
+        if (value < 0)
+        {
+            throw new InvalidDataException($"GEOM {label} {value} is invalid.");
+        }
+
+        return value;
+    }
+
+    private static void EnsureBytesAvailable(BinaryReader reader, long byteCount, string label)
+    {
+        if (byteCount < 0)
+        {
+            throw new InvalidDataException($"GEOM {label} length {byteCount} is invalid.");
+        }
+
+        var remaining = reader.BaseStream.Length - reader.BaseStream.Position;
+        if (byteCount > remaining)
+        {
+            throw new InvalidDataException($"GEOM {label} extends beyond the payload.");
+        }
+    }
+
+    private static void SkipBytes(BinaryReader reader, long byteCount, string label)
+    {
+        EnsureBytesAvailable(reader, byteCount, label);
         reader.BaseStream.Position += byteCount;
+    }
 
     private static void ExpectTag(BinaryReader reader, string expected)
     {
+        EnsureBytesAvailable(reader, expected.Length, "tag");
         var tag = Encoding.ASCII.GetString(reader.ReadBytes(expected.Length));
         if (!string.Equals(tag, expected, StringComparison.Ordinal))
         {

@@ -40,6 +40,21 @@ public sealed class BrowsingTests : IDisposable
     }
 
     [Fact]
+    public void AssetBrowserState_UsesSimMetadataDomainLabel()
+    {
+        var state = new AssetBrowserState
+        {
+            Domain = AssetBrowserDomain.Sim
+        };
+
+        var chips = state.BuildFilterChips(new SourceScope());
+        var summary = state.BuildSummary(new SourceScope(), 42, 42);
+
+        Assert.Contains(chips, chip => chip.Key == "domain" && chip.Label.Contains("Sim Archetypes", StringComparison.Ordinal));
+        Assert.Contains("Assets > Sim Archetypes >", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RawResourceBrowserState_RemoveFilter_ClearsOnlyRequestedFacet()
     {
         var state = new RawResourceBrowserState

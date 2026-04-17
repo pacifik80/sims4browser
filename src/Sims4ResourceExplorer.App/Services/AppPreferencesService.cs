@@ -3,7 +3,7 @@ using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.App.Services;
 
-public sealed record AppPreferences(int IndexWorkerCount);
+public sealed record AppPreferences(int IndexWorkerCount, int IndexMemoryUsagePercent = 25);
 
 public interface IAppPreferencesService
 {
@@ -31,21 +31,29 @@ public sealed class JsonAppPreferencesService : IAppPreferencesService
         var path = GetSettingsPath();
         if (!File.Exists(path))
         {
-            return new AppPreferences(IndexingRunOptions.GetDefaultWorkerCount());
+            return new AppPreferences(IndexingRunOptions.GetDefaultWorkerCount(), IndexingMemoryBudgetCalculator.NormalizePercent(25));
         }
 
         await using var stream = File.OpenRead(path);
         var preferences = await JsonSerializer.DeserializeAsync<AppPreferences>(stream, JsonOptions, cancellationToken);
         return preferences is null
-            ? new AppPreferences(IndexingRunOptions.GetDefaultWorkerCount())
-            : preferences with { IndexWorkerCount = IndexingRunOptions.ClampWorkerCount(preferences.IndexWorkerCount) };
+            ? new AppPreferences(IndexingRunOptions.GetDefaultWorkerCount(), IndexingMemoryBudgetCalculator.NormalizePercent(25))
+            : preferences with
+            {
+                IndexWorkerCount = IndexingRunOptions.ClampWorkerCount(preferences.IndexWorkerCount),
+                IndexMemoryUsagePercent = IndexingMemoryBudgetCalculator.NormalizePercent(preferences.IndexMemoryUsagePercent)
+            };
     }
 
     public async Task SaveAsync(AppPreferences preferences, CancellationToken cancellationToken)
     {
         cacheService.EnsureCreated();
         var path = GetSettingsPath();
-        var normalized = preferences with { IndexWorkerCount = IndexingRunOptions.ClampWorkerCount(preferences.IndexWorkerCount) };
+        var normalized = preferences with
+        {
+            IndexWorkerCount = IndexingRunOptions.ClampWorkerCount(preferences.IndexWorkerCount),
+            IndexMemoryUsagePercent = IndexingMemoryBudgetCalculator.NormalizePercent(preferences.IndexMemoryUsagePercent)
+        };
         await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, normalized, JsonOptions, cancellationToken);
     }

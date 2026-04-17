@@ -10,6 +10,7 @@ public enum AssetBrowserDomain
 {
     BuildBuy,
     Cas,
+    Sim,
     General3D
 }
 
@@ -468,6 +469,7 @@ public sealed class AssetBrowserState
     {
         AssetBrowserDomain.BuildBuy => "Build/Buy",
         AssetBrowserDomain.Cas => "CAS",
+        AssetBrowserDomain.Sim => "Sim Archetypes",
         AssetBrowserDomain.General3D => "General 3D",
         _ => domain.ToString()
     };

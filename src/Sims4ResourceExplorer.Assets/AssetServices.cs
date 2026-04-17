@@ -4,6 +4,16 @@ using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.Assets;
 
+internal sealed record SimArchetypeCandidate(
+    ResourceMetadata Resource,
+    string? Species,
+    string? Age,
+    string? Gender,
+    int OutfitPartCount,
+    int BodyModifierCount,
+    int FaceModifierCount,
+    bool HasSkintone);
+
 public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
 {
     private readonly IResourceCatalogService resourceCatalogService;
@@ -26,6 +36,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         var summaries = new List<AssetSummary>();
         summaries.AddRange(BuildBuildBuySummaries(sameInstanceLookup, claimedInstances));
         summaries.AddRange(BuildCasSummaries(resources, sameInstanceLookup, claimedInstances, packageScan.AssetVariants));
+        summaries.AddRange(BuildSimSummaries(resources, claimedInstances));
         summaries.AddRange(BuildGeneral3DSummaries(sameInstanceLookup, claimedInstances));
         return summaries;
     }
@@ -36,6 +47,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         {
             AssetKind.BuildBuy => await BuildBuildBuyGraphAsync(summary, packageResources, cancellationToken).ConfigureAwait(false),
             AssetKind.Cas => await BuildCasGraphAsync(summary, packageResources, cancellationToken).ConfigureAwait(false),
+            AssetKind.Sim => await BuildSimGraphAsync(summary, packageResources, cancellationToken).ConfigureAwait(false),
             AssetKind.General3D => await BuildGeneral3DGraphAsync(summary, packageResources, cancellationToken).ConfigureAwait(false),
             _ => new AssetGraph(summary, [], [$"Unsupported asset kind: {summary.AssetKind}."])
         };
@@ -186,7 +198,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             .ThenBy(static member => member.RootKey.FullTgi, StringComparer.OrdinalIgnoreCase)
             .First();
 
-    private static IEnumerable<AssetSummary> BuildCasSummaries(
+    private IEnumerable<AssetSummary> BuildCasSummaries(
         IReadOnlyList<ResourceMetadata> resources,
         IReadOnlyDictionary<ulong, ResourceMetadata[]> sameInstanceLookup,
         ISet<ulong> claimedInstances,
@@ -218,6 +230,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 diagnostics.Add("No exact-instance CAS thumbnail was indexed for this CAS part.");
             }
 
+            var slotCategory = Ts4SeedMetadataExtractor.TryExtractCasPartSlotCategory(casPart.Description) ?? "CAS";
             claimedInstances.Add(casPart.Key.FullInstance);
             var geometry = related.FirstOrDefault(static resource => resource.Key.TypeName == "Geometry");
             var materials = related.Where(static resource => resource.Key.TypeName == "MaterialDefinition").ToArray();
@@ -228,7 +241,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 casPart.SourceKind,
                 AssetKind.Cas,
                 displayName,
-                "CAS",
+                slotCategory,
                 casPart.PackagePath,
                 casPart.Key,
                 thumbnail?.Key.FullTgi,
@@ -254,7 +267,8 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 ThumbnailTypeName: thumbnail?.Key.TypeName,
                 PrimaryGeometryType: geometry?.Key.TypeName,
                 IdentityType: casPart.Key.TypeName,
-                CategoryNormalized: "cas");
+                CategoryNormalized: NormalizeAssetCategory(slotCategory),
+                Description: casPart.Description);
         }
     }
 
@@ -353,6 +367,2783 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         resources.FirstOrDefault(static resource => resource.Key.TypeName == "Model") ??
         resources.FirstOrDefault(static resource => resource.Key.TypeName == "ModelLOD") ??
         resources.FirstOrDefault(static resource => resource.Key.TypeName == "Geometry");
+
+    private static IEnumerable<AssetSummary> BuildSimSummaries(
+        IReadOnlyList<ResourceMetadata> resources,
+        ISet<ulong> claimedInstances)
+    {
+        var simGroups = resources
+            .Where(static resource => resource.Key.TypeName == "SimInfo")
+            .OrderBy(static resource => resource.Key.FullInstance)
+            .Select(static resource => new SimArchetypeCandidate(
+                resource,
+                Ts4SimInfoParser.TryExtractSpeciesLabelFromSummary(resource.Description),
+                Ts4SimInfoParser.TryExtractAgeLabelFromSummary(resource.Description),
+                Ts4SimInfoParser.TryExtractGenderLabelFromSummary(resource.Description),
+                Ts4SimInfoParser.TryExtractOutfitPartCountFromSummary(resource.Description) ?? 0,
+                Ts4SimInfoParser.TryExtractBodyModifierCountFromSummary(resource.Description) ?? 0,
+                Ts4SimInfoParser.TryExtractFaceModifierCountFromSummary(resource.Description) ?? 0,
+                !string.IsNullOrWhiteSpace(Ts4SimInfoParser.TryExtractSkintoneInstanceFromSummary(resource.Description))))
+            .Where(static candidate => HasSimArchetypeIdentity(candidate))
+            .GroupBy(
+                static candidate => BuildSimArchetypeGroupingKey(candidate),
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in simGroups)
+        {
+            var members = group.ToArray();
+            foreach (var member in members)
+            {
+                if (!claimedInstances.Contains(member.Resource.Key.FullInstance))
+                {
+                    claimedInstances.Add(member.Resource.Key.FullInstance);
+                }
+            }
+
+            var representative = SelectSimArchetypeRepresentative(members);
+            var species = representative.Species ?? "Sim";
+            var age = representative.Age ?? "Unknown";
+            var gender = representative.Gender ?? "Unknown";
+            var category = species;
+            var categoryNormalized = category
+                .Replace(" ", string.Empty, StringComparison.Ordinal)
+                .ToLowerInvariant();
+            var displayName = Ts4SimInfoParser.BuildArchetypeDisplayName(species, age, gender);
+            var logicalRoot = group.Key.StartsWith("sim-archetype:", StringComparison.OrdinalIgnoreCase)
+                ? group.Key
+                : $"{group.Key}|instance={representative.Resource.Key.FullInstance:X16}";
+            var missingMetadataCount = members.Count(static member => string.IsNullOrWhiteSpace(member.Resource.Description));
+            var diagnostics = new List<string>();
+            if (missingMetadataCount > 0)
+            {
+                diagnostics.Add($"{missingMetadataCount} SimInfo row(s) in this archetype did not provide enriched metadata.");
+            }
+
+            diagnostics.Add($"Grouped {members.Length} SimInfo template row(s) into archetype {displayName}.");
+
+            var description = BuildSimArchetypeDescription(
+                species,
+                age,
+                gender,
+                members.Length,
+                representative.Resource.Description);
+
+            yield return new AssetSummary(
+                StableEntityIds.ForAsset(representative.Resource.DataSourceId, AssetKind.Sim, representative.Resource.PackagePath, representative.Resource.Key),
+                representative.Resource.DataSourceId,
+                representative.Resource.SourceKind,
+                AssetKind.Sim,
+                displayName,
+                category,
+                representative.Resource.PackagePath,
+                representative.Resource.Key,
+                ThumbnailTgi: null,
+                VariantCount: members.Length,
+                LinkedResourceCount: Math.Max(0, members.Length - 1),
+                Diagnostics: string.Join(" ", diagnostics),
+                Capabilities: new AssetCapabilitySnapshot(
+                    HasSceneRoot: false,
+                    HasExactGeometryCandidate: false,
+                    HasMaterialReferences: false,
+                    HasTextureReferences: false,
+                    HasThumbnail: false,
+                    HasVariants: members.Length > 1,
+                    HasIdentityMetadata: true,
+                    HasRigReference: false,
+                    HasGeometryReference: false,
+                    HasMaterialResourceCandidate: false,
+                    HasTextureResourceCandidate: false,
+                    IsPackageLocalGraph: true,
+                    HasDiagnostics: diagnostics.Count > 0),
+                PackageName: Path.GetFileName(representative.Resource.PackagePath),
+                RootTypeName: "SimArchetype",
+                ThumbnailTypeName: null,
+                PrimaryGeometryType: null,
+                IdentityType: "SimInfo",
+                CategoryNormalized: categoryNormalized,
+                Description: description,
+                LogicalRootTgi: logicalRoot);
+        }
+    }
+
+    private static string BuildSimArchetypeGroupingKey(SimArchetypeCandidate candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate.Species) &&
+            string.IsNullOrWhiteSpace(candidate.Age) &&
+            string.IsNullOrWhiteSpace(candidate.Gender))
+        {
+            return $"sim-unparsed:{candidate.Resource.Key.FullInstance:X16}";
+        }
+
+        return Ts4SimInfoParser.BuildArchetypeLogicalKey(
+            candidate.Species ?? "Unknown",
+            candidate.Age ?? "Unknown",
+            candidate.Gender ?? "Unknown");
+    }
+
+    private static bool HasSimArchetypeIdentity(SimArchetypeCandidate candidate) =>
+        !string.IsNullOrWhiteSpace(candidate.Species) ||
+        !string.IsNullOrWhiteSpace(candidate.Age) ||
+        !string.IsNullOrWhiteSpace(candidate.Gender);
+
+    private static SimArchetypeCandidate SelectSimArchetypeRepresentative(IReadOnlyList<SimArchetypeCandidate> members) =>
+        members
+            .OrderByDescending(static member => member.OutfitPartCount)
+            .ThenByDescending(static member => member.BodyModifierCount + member.FaceModifierCount)
+            .ThenByDescending(static member => member.HasSkintone)
+            .ThenByDescending(static member => !string.IsNullOrWhiteSpace(member.Resource.Description))
+            .ThenByDescending(static member => member.Resource.Description?.Length ?? 0)
+            .ThenByDescending(static member => member.Resource.Name?.Length ?? 0)
+            .ThenBy(static member => member.Resource.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static member => member.Resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .First();
+
+    private static string BuildSimArchetypeDescription(
+        string species,
+        string age,
+        string gender,
+        int templateCount,
+        string? representativeDescription)
+    {
+        var parts = new List<string>
+        {
+            "Sim archetype",
+            $"species={species}",
+            $"age={age}",
+            $"gender={gender}",
+            $"templates={templateCount}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(representativeDescription))
+        {
+            parts.Add($"representative={representativeDescription}");
+        }
+
+        return string.Join(" | ", parts);
+    }
+
+    private async Task<AssetGraph> BuildSimGraphAsync(
+        AssetSummary summary,
+        IReadOnlyList<ResourceMetadata> packageResources,
+        CancellationToken cancellationToken) =>
+        await BuildSimGraphAsync(summary, packageResources, allowPreferredTemplateRedirect: true, cancellationToken).ConfigureAwait(false);
+
+    private async Task<AssetGraph> BuildSimGraphAsync(
+        AssetSummary summary,
+        IReadOnlyList<ResourceMetadata> packageResources,
+        bool allowPreferredTemplateRedirect,
+        CancellationToken cancellationToken)
+    {
+        var simInfoResource = packageResources.FirstOrDefault(resource =>
+            string.Equals(resource.Key.FullTgi, summary.RootKey.FullTgi, StringComparison.OrdinalIgnoreCase) ||
+            (resource.Key.TypeName == "SimInfo" && resource.Key.FullInstance == summary.RootKey.FullInstance));
+        if (simInfoResource is null)
+        {
+            return new AssetGraph(summary, packageResources, ["Selected SimInfo root could not be loaded from the package."]);
+        }
+
+        var diagnostics = new List<string>();
+        Ts4SimInfo? parsedSimInfo = null;
+        SimInfoSummary? metadata = null;
+        try
+        {
+            var bytes = await resourceCatalogService
+                .GetResourceBytesAsync(simInfoResource.PackagePath, simInfoResource.Key, raw: false, cancellationToken)
+                .ConfigureAwait(false);
+            parsedSimInfo = Ts4SimInfoParser.Parse(bytes);
+            metadata = parsedSimInfo.ToSummary();
+        }
+        catch (InvalidDataException ex)
+        {
+            diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
+        }
+        catch (EndOfStreamException ex)
+        {
+            diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
+        }
+
+        metadata ??= new SimInfoSummary(
+            Version: 0,
+            SpeciesLabel: summary.Category ?? "Sim",
+            AgeLabel: "Unknown",
+            GenderLabel: "Unknown",
+            PronounCount: 0,
+            OutfitCategoryCount: 0,
+            OutfitEntryCount: 0,
+            OutfitPartCount: 0,
+            TraitCount: 0,
+            FaceModifierCount: 0,
+            BodyModifierCount: 0,
+            GeneticFaceModifierCount: 0,
+            GeneticBodyModifierCount: 0,
+            SculptCount: 0,
+            GeneticSculptCount: 0,
+            GeneticPartCount: 0,
+            GrowthPartCount: 0,
+            PeltLayerCount: 0);
+
+        if (summary.VariantCount > 1)
+        {
+            diagnostics.Add($"This archetype currently groups {summary.VariantCount} SimInfo template row(s) under one top-level entry.");
+        }
+
+        var templateOptions = await BuildSimTemplateOptionsAsync(metadata, simInfoResource, cancellationToken).ConfigureAwait(false);
+        if (allowPreferredTemplateRedirect)
+        {
+            var preferredTemplate = await ResolvePreferredTemplateOptionAsync(
+                templateOptions,
+                simInfoResource,
+                cancellationToken).ConfigureAwait(false);
+            if (preferredTemplate is not null &&
+                preferredTemplate.ResourceId != simInfoResource.Id)
+            {
+                var redirectedGraph = await TryBuildSimGraphForPreferredTemplateAsync(summary, preferredTemplate, cancellationToken).ConfigureAwait(false);
+                if (redirectedGraph?.SimGraph is not null)
+                {
+                    var redirectNote = $"Automatically selected body-driving SimInfo template: {preferredTemplate.DisplayName} from {preferredTemplate.PackageName ?? Path.GetFileName(preferredTemplate.PackagePath)}.";
+                    return redirectedGraph with
+                    {
+                        Diagnostics = [.. redirectedGraph.Diagnostics, redirectNote],
+                        SimGraph = redirectedGraph.SimGraph with
+                        {
+                            Diagnostics = [.. redirectedGraph.SimGraph.Diagnostics, redirectNote]
+                        }
+                    };
+                }
+            }
+        }
+
+        var bodyFoundation = BuildSimBodyFoundation(metadata);
+        var bodySources = BuildSimBodySources(parsedSimInfo);
+        var bodyCandidates = await BuildSimBodyCandidatesAsync(
+            parsedSimInfo,
+            simInfoResource.PackagePath,
+            cancellationToken).ConfigureAwait(false);
+        var casSlotCandidates = await BuildSimCasSlotCandidatesAsync(
+            parsedSimInfo,
+            metadata,
+            simInfoResource.PackagePath,
+            cancellationToken).ConfigureAwait(false);
+        var bodyAssembly = BuildSimBodyAssembly(metadata, bodyCandidates, casSlotCandidates);
+        var slotGroups = BuildSimSlotGroups(metadata);
+        var morphGroups = BuildSimMorphGroups(metadata);
+        if (!string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            diagnostics.Add($"Indexed CAS slot-family matching currently targets human archetypes first; {metadata.SpeciesLabel} coverage is still in progress.");
+        }
+
+        var supportedSubset = "Metadata-first Sim archetypes derived from grouped SimInfo rows. This slice now prioritizes body assembly inputs first: base frame, skintone, body-layer counts, and morph-stack counts are surfaced before apparel slot editing; full named/preset character assembly is not implemented yet.";
+        var simGraph = new SimAssetGraph(
+            simInfoResource,
+            metadata,
+            templateOptions,
+            bodyFoundation,
+            bodySources,
+            bodyCandidates,
+            bodyAssembly,
+            slotGroups,
+            morphGroups,
+            casSlotCandidates,
+            [simInfoResource],
+            diagnostics,
+            IsSupported: true,
+            supportedSubset);
+        return new AssetGraph(summary, [simInfoResource], diagnostics, SimGraph: simGraph);
+    }
+
+    private async Task<AssetGraph?> TryBuildSimGraphForPreferredTemplateAsync(
+        AssetSummary summary,
+        SimTemplateOptionSummary preferredTemplate,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return null;
+        }
+
+        var preferredResource = await indexStore
+            .GetResourceByTgiAsync(preferredTemplate.PackagePath, preferredTemplate.RootTgi, cancellationToken)
+            .ConfigureAwait(false);
+        if (preferredResource is null)
+        {
+            return null;
+        }
+
+        var preferredPackageResources = await indexStore
+            .GetResourcesByInstanceAsync(preferredResource.PackagePath, preferredResource.Key.FullInstance, cancellationToken)
+            .ConfigureAwait(false);
+        var preferredSummary = summary with
+        {
+            PackagePath = preferredResource.PackagePath,
+            PackageName = Path.GetFileName(preferredResource.PackagePath),
+            RootKey = preferredResource.Key
+        };
+
+        return await BuildSimGraphAsync(
+            preferredSummary,
+            preferredPackageResources,
+            allowPreferredTemplateRedirect: false,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyList<SimTemplateOptionSummary>> BuildSimTemplateOptionsAsync(
+        SimInfoSummary metadata,
+        ResourceMetadata representativeResource,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return [CreateTemplateOption(representativeResource, isRepresentative: true)];
+        }
+
+        var matches = new List<ResourceMetadata>();
+        try
+        {
+            var exactVariantMatches = await indexStore
+                .GetResourcesByTgiAsync(representativeResource.Key.FullTgi, cancellationToken)
+                .ConfigureAwait(false);
+            matches.AddRange(
+                exactVariantMatches.Where(resource =>
+                    string.Equals(resource.Key.TypeName, "SimInfo", StringComparison.OrdinalIgnoreCase) &&
+                    MatchesSimTemplateResource(resource, metadata)));
+
+            const int pageSize = 1024;
+            const int maxSearchWindow = 8192;
+            var searchText = BuildSimTemplateSearchText(metadata);
+            for (var offset = 0; offset < maxSearchWindow; offset += pageSize)
+            {
+                var result = await indexStore.QueryResourcesAsync(
+                    new RawResourceBrowserQuery(
+                        new SourceScope(),
+                        searchText,
+                        RawResourceDomain.All,
+                        "SimInfo",
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        false,
+                        false,
+                        false,
+                        ResourceLinkFilter.Any,
+                        RawResourceSort.TypeName,
+                        offset,
+                        pageSize),
+                    cancellationToken).ConfigureAwait(false);
+                matches.AddRange(
+                    result.Items.Where(resource =>
+                        string.Equals(resource.Key.TypeName, "SimInfo", StringComparison.OrdinalIgnoreCase) &&
+                        MatchesSimTemplateResource(resource, metadata)));
+
+                if (offset + pageSize >= result.TotalCount)
+                {
+                    break;
+                }
+            }
+        }
+        catch (NotSupportedException)
+        {
+            return [CreateTemplateOption(representativeResource, isRepresentative: true)];
+        }
+
+        if (!matches.Any(resource => resource.Id == representativeResource.Id))
+        {
+            matches.Add(representativeResource);
+        }
+
+        var options = matches
+            .GroupBy(
+                static resource => $"{resource.PackagePath}|{resource.Key.FullTgi}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .Select(resource => CreateTemplateOption(
+                resource,
+                resource.Id == representativeResource.Id))
+            .ToArray();
+
+        var representativeOption = options.FirstOrDefault(option => option.ResourceId == representativeResource.Id);
+        var exactVariantOptions = options
+            .Where(option => string.Equals(option.RootTgi, representativeResource.Key.FullTgi, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var exactVariantPreferred = SimTemplateSelectionPolicy.SelectPreferredTemplate(exactVariantOptions);
+        var preferredOption = exactVariantPreferred is not null &&
+                              exactVariantPreferred.ResourceId != representativeResource.Id &&
+                              SimTemplateSelectionPolicy.IsPreferredOver(exactVariantPreferred, representativeOption)
+            ? exactVariantPreferred
+            : SimTemplateSelectionPolicy.SelectPreferredTemplate(options);
+        var orderedOptions = SimTemplateSelectionPolicy.OrderTemplates(options).ToArray();
+        var orderedExactVariantOptions = SimTemplateSelectionPolicy.OrderTemplates(exactVariantOptions).ToArray();
+
+        var finalOptions = new List<SimTemplateOptionSummary>(capacity: Math.Min(256, orderedOptions.Length));
+        if (preferredOption is not null)
+        {
+            finalOptions.Add(preferredOption);
+        }
+
+        if (representativeOption is not null &&
+            !finalOptions.Any(option => option.ResourceId == representativeOption.ResourceId))
+        {
+            finalOptions.Add(representativeOption);
+        }
+
+        foreach (var option in orderedExactVariantOptions)
+        {
+            if (finalOptions.Count >= 256)
+            {
+                break;
+            }
+
+            if (finalOptions.Any(existing => existing.ResourceId == option.ResourceId))
+            {
+                continue;
+            }
+
+            finalOptions.Add(option);
+        }
+
+        foreach (var option in orderedOptions)
+        {
+            if (finalOptions.Count >= 256)
+            {
+                break;
+            }
+
+            if (finalOptions.Any(existing => existing.ResourceId == option.ResourceId))
+            {
+                continue;
+            }
+
+            finalOptions.Add(option);
+        }
+
+        return finalOptions;
+    }
+
+    private async Task<SimTemplateOptionSummary?> ResolvePreferredTemplateOptionAsync(
+        IReadOnlyList<SimTemplateOptionSummary> templateOptions,
+        ResourceMetadata representativeResource,
+        CancellationToken cancellationToken)
+    {
+        var summaryPreferred = SimTemplateSelectionPolicy.SelectPreferredTemplate(templateOptions);
+        if (indexStore is null || templateOptions.Count == 0)
+        {
+            return summaryPreferred;
+        }
+
+        var optionsToInspect = new List<SimTemplateOptionSummary>(capacity: Math.Min(32, templateOptions.Count));
+
+        void AddOption(SimTemplateOptionSummary option)
+        {
+            if (optionsToInspect.Any(existing => existing.ResourceId == option.ResourceId))
+            {
+                return;
+            }
+
+            optionsToInspect.Add(option);
+        }
+
+        if (summaryPreferred is not null)
+        {
+            AddOption(summaryPreferred);
+        }
+
+        foreach (var option in SimTemplateSelectionPolicy.OrderTemplates(
+                     templateOptions.Where(option =>
+                         string.Equals(option.RootTgi, representativeResource.Key.FullTgi, StringComparison.OrdinalIgnoreCase))))
+        {
+            if (optionsToInspect.Count >= 32)
+            {
+                break;
+            }
+
+            AddOption(option);
+        }
+
+        foreach (var option in SimTemplateSelectionPolicy.OrderTemplates(
+                     templateOptions.Where(static option => option.HasAuthoritativeBodyParts)))
+        {
+            if (optionsToInspect.Count >= 32)
+            {
+                break;
+            }
+
+            AddOption(option);
+        }
+
+        var inspectedCandidates = new List<SimTemplateSelectionCandidate>(optionsToInspect.Count);
+        foreach (var option in optionsToInspect)
+        {
+            var candidate = await TryLoadSimTemplateSelectionCandidateAsync(option, cancellationToken).ConfigureAwait(false);
+            if (candidate is not null)
+            {
+                inspectedCandidates.Add(candidate);
+            }
+        }
+
+        if (inspectedCandidates.Count == 0)
+        {
+            return summaryPreferred;
+        }
+
+        return inspectedCandidates
+            .OrderByDescending(static candidate =>
+                candidate.Metadata.OutfitPartCount > 0 ||
+                candidate.Metadata.OutfitEntryCount > 0 ||
+                candidate.Metadata.OutfitCategoryCount > 0)
+            .ThenByDescending(static candidate => candidate.Metadata.OutfitPartCount)
+            .ThenByDescending(static candidate => candidate.Metadata.OutfitEntryCount)
+            .ThenByDescending(static candidate => candidate.Metadata.OutfitCategoryCount)
+            .ThenByDescending(static candidate => candidate.Metadata.BodyModifierCount + candidate.Metadata.SculptCount)
+            .ThenByDescending(static candidate => candidate.Metadata.FaceModifierCount)
+            .ThenByDescending(static candidate => candidate.Metadata.SkintoneInstance != 0 || candidate.Metadata.SkintoneShift.HasValue)
+            .ThenBy(static candidate => GetSimTemplatePackagePreference(candidate.Resource.PackagePath))
+            .ThenByDescending(static candidate => candidate.Option.IsRepresentative)
+            .ThenBy(static candidate => candidate.Option.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(static candidate => candidate.Option)
+            .FirstOrDefault()
+            ?? summaryPreferred;
+    }
+
+    private async Task<SimTemplateSelectionCandidate?> TryLoadSimTemplateSelectionCandidateAsync(
+        SimTemplateOptionSummary option,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return null;
+        }
+
+        var resource = await indexStore
+            .GetResourceByTgiAsync(option.PackagePath, option.RootTgi, cancellationToken)
+            .ConfigureAwait(false);
+        if (resource is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var bytes = await resourceCatalogService
+                .GetResourceBytesAsync(resource.PackagePath, resource.Key, raw: false, cancellationToken)
+                .ConfigureAwait(false);
+            return new SimTemplateSelectionCandidate(
+                option,
+                resource,
+                Ts4SimInfoParser.Parse(bytes));
+        }
+        catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException or ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private static int GetSimTemplatePackagePreference(string packagePath)
+    {
+        var normalized = packagePath.Replace('/', '\\');
+        if (normalized.Contains("\\Delta\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return 300;
+        }
+
+        if (normalized.Contains("SimulationDeltaBuild", StringComparison.OrdinalIgnoreCase))
+        {
+            return 250;
+        }
+
+        if (normalized.Contains("ClientDeltaBuild", StringComparison.OrdinalIgnoreCase))
+        {
+            return 240;
+        }
+
+        if (normalized.Contains("SimulationPreload", StringComparison.OrdinalIgnoreCase))
+        {
+            return 120;
+        }
+
+        if (normalized.Contains("SimulationFullBuild", StringComparison.OrdinalIgnoreCase))
+        {
+            return 10;
+        }
+
+        if (normalized.Contains("ClientFullBuild", StringComparison.OrdinalIgnoreCase))
+        {
+            return 20;
+        }
+
+        return 100;
+    }
+
+    private static IReadOnlyList<SimBodyFoundationSummary> BuildSimBodyFoundation(SimInfoSummary metadata)
+    {
+        var groups = new List<SimBodyFoundationSummary>
+        {
+            new(
+                "Base frame",
+                1,
+                $"{metadata.SpeciesLabel} | {metadata.AgeLabel} | {metadata.GenderLabel}")
+        };
+
+        if (!string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex) || metadata.SkintoneShift.HasValue)
+        {
+            var skintoneNotes = new List<string>();
+            if (!string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex))
+            {
+                skintoneNotes.Add($"instance {metadata.SkintoneInstanceHex}");
+            }
+
+            if (metadata.SkintoneShift.HasValue)
+            {
+                skintoneNotes.Add($"shift {metadata.SkintoneShift.Value:0.###}");
+            }
+
+            groups.Add(new SimBodyFoundationSummary(
+                "Skin pipeline",
+                1,
+                string.Join(" | ", skintoneNotes)));
+        }
+
+        var layerCount = metadata.GeneticPartCount + metadata.GrowthPartCount + metadata.PeltLayerCount;
+        if (layerCount > 0)
+        {
+            groups.Add(new SimBodyFoundationSummary(
+                "Body layers",
+                layerCount,
+                $"{metadata.GeneticPartCount} genetic, {metadata.GrowthPartCount} growth, {metadata.PeltLayerCount} pelt/fur"));
+        }
+
+        var bodyMorphCount = metadata.BodyModifierCount + metadata.GeneticBodyModifierCount + metadata.SculptCount + metadata.GeneticSculptCount;
+        if (bodyMorphCount > 0)
+        {
+            groups.Add(new SimBodyFoundationSummary(
+                "Body morph stack",
+                bodyMorphCount,
+                $"{metadata.BodyModifierCount} direct body modifier(s), {metadata.GeneticBodyModifierCount} genetic body modifier(s), {metadata.SculptCount} sculpt(s), {metadata.GeneticSculptCount} genetic sculpt(s)"));
+        }
+
+        var faceMorphCount = metadata.FaceModifierCount + metadata.GeneticFaceModifierCount;
+        if (faceMorphCount > 0)
+        {
+            groups.Add(new SimBodyFoundationSummary(
+                "Face / head morph stack",
+                faceMorphCount,
+                $"{metadata.FaceModifierCount} direct face modifier(s), {metadata.GeneticFaceModifierCount} genetic face modifier(s)"));
+        }
+
+        if (metadata.OutfitCategoryCount > 0 || metadata.OutfitEntryCount > 0 || metadata.OutfitPartCount > 0)
+        {
+            groups.Add(new SimBodyFoundationSummary(
+                "Current body-part references",
+                metadata.OutfitPartCount,
+                $"{metadata.OutfitCategoryCount} category, {metadata.OutfitEntryCount} outfit, {metadata.OutfitPartCount} part reference(s) currently point into the body/outfit graph"));
+        }
+
+        return groups;
+    }
+
+    private static IReadOnlyList<SimBodySourceSummary> BuildSimBodySources(Ts4SimInfo? metadata)
+    {
+        if (metadata is null)
+        {
+            return [];
+        }
+
+        var groups = new List<SimBodySourceSummary>();
+        var bodyDrivingOutfits = GetAuthoritativeBodyDrivingOutfits(metadata);
+
+        groups.Add(new SimBodySourceSummary(
+            "Body-driving outfit records",
+            bodyDrivingOutfits.Count,
+            bodyDrivingOutfits.Count > 0
+                ? string.Join(", ", bodyDrivingOutfits.Take(3).Select(static outfit => $"{outfit.CategoryLabel} ({outfit.Parts.Count} parts)"))
+                : "No authoritative nude/body-driving outfit record is currently present in this SimInfo template."));
+
+        if (!string.IsNullOrWhiteSpace(metadata.ToSummary().SkintoneInstanceHex))
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Skintone reference",
+                1,
+                metadata.SkintoneShift.HasValue
+                    ? $"{metadata.SkintoneInstance:X16} | shift {metadata.SkintoneShift.Value:0.###}"
+                    : $"{metadata.SkintoneInstance:X16}"));
+        }
+
+        if (metadata.OutfitParts.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Body-part instances",
+                metadata.OutfitParts.Count,
+                FormatOutfitPartExamples(metadata.OutfitParts, 4)));
+        }
+
+        if (metadata.GeneticPartBodyTypes.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Genetic body-type tokens",
+                metadata.GeneticPartBodyTypes.Count,
+                FormatBodyTypeList(metadata.GeneticPartBodyTypes, 6)));
+        }
+
+        if (metadata.GrowthPartBodyTypes.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Growth body-type tokens",
+                metadata.GrowthPartBodyTypes.Count,
+                FormatBodyTypeList(metadata.GrowthPartBodyTypes, 6)));
+        }
+
+        if (metadata.PeltLayers.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Pelt layer references",
+                metadata.PeltLayers.Count,
+                string.Join(", ", metadata.PeltLayers.Take(3).Select(static layer => $"{layer.Instance:X16}/0x{layer.Variant:X8}"))));
+        }
+
+        if (metadata.BodyModifiers.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Direct body channels",
+                metadata.BodyModifiers.Count,
+                FormatModifierEntries(metadata.BodyModifiers, 4)));
+        }
+
+        if (metadata.FaceModifiers.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Direct face channels",
+                metadata.FaceModifiers.Count,
+                FormatModifierEntries(metadata.FaceModifiers, 4)));
+        }
+
+        if (metadata.GeneticBodyModifiers.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Genetic body channels",
+                metadata.GeneticBodyModifiers.Count,
+                FormatModifierEntries(metadata.GeneticBodyModifiers, 4)));
+        }
+
+        if (metadata.GeneticFaceModifiers.Count > 0)
+        {
+            groups.Add(new SimBodySourceSummary(
+                "Genetic face channels",
+                metadata.GeneticFaceModifiers.Count,
+                FormatModifierEntries(metadata.GeneticFaceModifiers, 4)));
+        }
+
+        return groups;
+    }
+
+    private static string FormatOutfitPartExamples(IReadOnlyList<Ts4SimOutfitPart> parts, int maxItems) =>
+        string.Join(
+            ", ",
+            parts.Take(maxItems).Select(static part => $"bodyType {part.BodyType}: {part.PartInstance:X16}"));
+
+    private static string FormatBodyTypeList(IReadOnlyList<uint> bodyTypes, int maxItems) =>
+        string.Join(", ", bodyTypes.Take(maxItems).Select(static bodyType => $"bodyType {bodyType}"));
+
+    private static string FormatModifierEntries(IReadOnlyList<Ts4SimModifierEntry> entries, int maxItems) =>
+        string.Join(", ", entries.Take(maxItems).Select(static entry => $"ch {entry.ChannelId}={entry.Value:0.###}"));
+
+    private static string BuildSimTemplateSearchText(SimInfoSummary metadata)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(metadata.SpeciesLabel) &&
+            !string.Equals(metadata.SpeciesLabel, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add(metadata.SpeciesLabel);
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.AgeLabel) &&
+            !string.Equals(metadata.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add(metadata.AgeLabel);
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.GenderLabel) &&
+            !string.Equals(metadata.GenderLabel, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add(metadata.GenderLabel);
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static bool MatchesSimTemplateResource(ResourceMetadata resource, SimInfoSummary metadata)
+    {
+        var species = Ts4SimInfoParser.TryExtractSpeciesLabelFromSummary(resource.Description);
+        var age = Ts4SimInfoParser.TryExtractAgeLabelFromSummary(resource.Description);
+        var gender = Ts4SimInfoParser.TryExtractGenderLabelFromSummary(resource.Description);
+        return string.Equals(species ?? "Unknown", metadata.SpeciesLabel ?? "Unknown", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(age ?? "Unknown", metadata.AgeLabel ?? "Unknown", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(gender ?? "Unknown", metadata.GenderLabel ?? "Unknown", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static SimTemplateOptionSummary CreateTemplateOption(ResourceMetadata resource, bool isRepresentative)
+    {
+        var displayName = string.IsNullOrWhiteSpace(resource.Name)
+            ? $"SimInfo template [{(uint)(resource.Key.FullInstance & 0xFFFFFFFF):X8}]"
+            : resource.Name!;
+        var notes = string.IsNullOrWhiteSpace(resource.Description)
+            ? "SimInfo template metadata"
+            : resource.Description!;
+        var outfitCategoryCount = Ts4SimInfoParser.TryExtractOutfitCategoryCountFromSummary(resource.Description) ?? 0;
+        var outfitEntryCount = Ts4SimInfoParser.TryExtractOutfitEntryCountFromSummary(resource.Description) ?? 0;
+        var outfitPartCount = Ts4SimInfoParser.TryExtractOutfitPartCountFromSummary(resource.Description) ?? 0;
+        var bodyModifierCount = Ts4SimInfoParser.TryExtractBodyModifierCountFromSummary(resource.Description) ?? 0;
+        var faceModifierCount = Ts4SimInfoParser.TryExtractFaceModifierCountFromSummary(resource.Description) ?? 0;
+        var sculptCount = Ts4SimInfoParser.TryExtractSculptCountFromSummary(resource.Description) ?? 0;
+        var hasSkintone = !string.IsNullOrWhiteSpace(Ts4SimInfoParser.TryExtractSkintoneInstanceFromSummary(resource.Description));
+        return new SimTemplateOptionSummary(
+            resource.Id,
+            displayName,
+            resource.PackagePath,
+            Path.GetFileName(resource.PackagePath),
+            resource.Key.FullTgi,
+            isRepresentative,
+            notes,
+            outfitCategoryCount,
+            outfitEntryCount,
+            outfitPartCount,
+            bodyModifierCount,
+            faceModifierCount,
+            sculptCount,
+            hasSkintone);
+    }
+
+    private async Task<IReadOnlyList<SimBodyCandidateSummary>> BuildSimBodyCandidatesAsync(
+        Ts4SimInfo? metadata,
+        string? preferredPackagePath,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null || metadata is null)
+        {
+            return [];
+        }
+
+        var summariesByLabel = new Dictionary<string, SimBodyCandidateSummary>(StringComparer.OrdinalIgnoreCase);
+        var seenAssetIds = new HashSet<Guid>();
+        var exactCandidatesByLabel = new Dictionary<string, List<AssetSummary>>(StringComparer.OrdinalIgnoreCase);
+        var authoritativeBodyDrivingOutfits = GetAuthoritativeBodyDrivingOutfits(metadata);
+        var authoritativeBodyDrivingParts = authoritativeBodyDrivingOutfits
+            .SelectMany(static outfit => outfit.Parts)
+            .ToArray();
+        foreach (var part in authoritativeBodyDrivingParts
+                     .GroupBy(static outfitPart => (outfitPart.BodyType, outfitPart.PartInstance))
+                     .Select(static group => group.First()))
+        {
+            var label = MapCasBodyType((int)part.BodyType);
+            if (!IsBodyAssemblySlotCategory(label))
+            {
+                continue;
+            }
+
+            var resolvedExactAssets = await ResolveExactSimBodyPartAssetsAsync(
+                label!,
+                part.PartInstance,
+                cancellationToken).ConfigureAwait(false);
+            foreach (var asset in resolvedExactAssets.Where(asset => MatchesBodyAssemblySlotCategory(asset, label!)))
+            {
+                if (!exactCandidatesByLabel.TryGetValue(label!, out var exactGroup))
+                {
+                    exactGroup = [];
+                    exactCandidatesByLabel.Add(label!, exactGroup);
+                }
+
+                if (seenAssetIds.Add(asset.Id))
+                {
+                    exactGroup.Add(asset);
+                }
+            }
+
+            if (exactCandidatesByLabel.TryGetValue(label!, out var resolvedGroup) && resolvedGroup.Count > 0)
+            {
+                continue;
+            }
+
+            var query = new AssetBrowserQuery(
+                new SourceScope(),
+                $"{part.PartInstance:X16}",
+                AssetBrowserDomain.Cas,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                16);
+            var result = await indexStore.QueryAssetsAsync(query, cancellationToken).ConfigureAwait(false);
+            foreach (var asset in result.Items.Where(asset =>
+                         asset.RootKey.FullInstance == part.PartInstance &&
+                         MatchesBodyAssemblySlotCategory(asset, label!)))
+            {
+                if (!exactCandidatesByLabel.TryGetValue(label!, out var exactGroup))
+                {
+                    exactGroup = [];
+                    exactCandidatesByLabel.Add(label!, exactGroup);
+                }
+
+                if (!seenAssetIds.Add(asset.Id))
+                {
+                    continue;
+                }
+
+                exactGroup.Add(asset);
+            }
+        }
+
+        var compatibilityMetadata = metadata.ToSummary();
+        foreach (var pair in exactCandidatesByLabel
+                     .OrderBy(static pair => GetBodyAssemblySlotSortOrder(pair.Key))
+                     .ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            summariesByLabel[pair.Key] = await CreateBodyCandidateSummaryAsync(
+                pair.Key,
+                pair.Value,
+                "Resolved from authoritative SimInfo outfit/body-part instances",
+                SimBodyCandidateSourceKind.ExactPartLink,
+                compatibilityMetadata,
+                preferredPackagePath,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        var hasCompatibilitySearch =
+            authoritativeBodyDrivingOutfits.Count > 0 &&
+            string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase);
+
+        if (hasCompatibilitySearch)
+        {
+            foreach (var slotCategory in GetBodyAssemblySlotCategories().Where(SimBodyAssemblyPolicy.IsShellFamilyLabel))
+            {
+                if (summariesByLabel.TryGetValue(slotCategory, out var existingShellSummary) &&
+                    existingShellSummary.Count > 0)
+                {
+                    continue;
+                }
+
+                var canonicalPool = await QueryCanonicalHumanFoundationCandidatePoolAsync(
+                    compatibilityMetadata,
+                    slotCategory,
+                    cancellationToken).ConfigureAwait(false);
+                if (canonicalPool.Count == 0)
+                {
+                    continue;
+                }
+
+                var distinctCandidates = canonicalPool
+                    .Where(asset => MatchesBodyAssemblySlotCategory(asset, slotCategory))
+                    .Where(asset => seenAssetIds.Add(asset.Id))
+                    .ToArray();
+                if (distinctCandidates.Length == 0)
+                {
+                    continue;
+                }
+
+                var canonicalSummary = await CreateBodyCandidateSummaryAsync(
+                    slotCategory,
+                    distinctCandidates,
+                    "Resolved from canonical default human foundation CASParts",
+                    SimBodyCandidateSourceKind.CanonicalFoundation,
+                    compatibilityMetadata,
+                    preferredPackagePath,
+                    cancellationToken).ConfigureAwait(false);
+                if (canonicalSummary.Count == 0)
+                {
+                    continue;
+                }
+
+                if (!summariesByLabel.TryGetValue(slotCategory, out var existingSummary) ||
+                    existingSummary.Count == 0)
+                {
+                    summariesByLabel[slotCategory] = canonicalSummary;
+                }
+            }
+        }
+
+        if (hasCompatibilitySearch)
+        {
+            var fallbackSources = BuildSimBodyFallbackSources(metadata);
+            foreach (var entry in fallbackSources
+                         .OrderBy(static pair => GetBodyAssemblySlotSortOrder(pair.Key))
+                         .ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                if (summariesByLabel.ContainsKey(entry.Key))
+                {
+                    continue;
+                }
+
+                var candidatePool = await QuerySimBodyCandidatePoolAsync(
+                    compatibilityMetadata,
+                    entry.Key,
+                    cancellationToken).ConfigureAwait(false);
+                if (candidatePool.Count == 0)
+                {
+                    continue;
+                }
+
+                var distinctCandidates = candidatePool
+                    .Where(asset => MatchesBodyAssemblySlotCategory(asset, entry.Key))
+                    .Where(asset => seenAssetIds.Add(asset.Id))
+                    .ToArray();
+                if (distinctCandidates.Length == 0)
+                {
+                    continue;
+                }
+
+                var sourceNotes = string.Join(", ", entry.Value.Take(3));
+                if (entry.Value.Count > 3)
+                {
+                    sourceNotes += $", +{entry.Value.Count - 3:N0} more";
+                }
+
+                var notePrefix = $"Fallback compatible candidates inferred from {sourceNotes}";
+                summariesByLabel[entry.Key] = await CreateBodyCandidateSummaryAsync(
+                    entry.Key,
+                    distinctCandidates,
+                    notePrefix,
+                    SimBodyCandidateSourceKind.BodyTypeFallback,
+                    compatibilityMetadata,
+                    preferredPackagePath,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (hasCompatibilitySearch)
+        {
+            foreach (var slotCategory in GetBodyAssemblySlotCategories())
+            {
+                if (summariesByLabel.ContainsKey(slotCategory))
+                {
+                    continue;
+                }
+
+                var candidatePool = await QuerySimBodyCandidatePoolAsync(
+                    compatibilityMetadata,
+                    slotCategory,
+                    cancellationToken).ConfigureAwait(false);
+                if (candidatePool.Count == 0)
+                {
+                    continue;
+                }
+
+                var compatibleCandidates = candidatePool
+                    .Where(asset => MatchesBodyAssemblySlotCategory(asset, slotCategory))
+                    .Where(asset => seenAssetIds.Add(asset.Id))
+                    .ToArray();
+                if (compatibleCandidates.Length == 0)
+                {
+                    continue;
+                }
+
+                summariesByLabel[slotCategory] = await CreateBodyCandidateSummaryAsync(
+                    slotCategory,
+                    compatibleCandidates,
+                    "Fallback compatible body candidates inferred directly from archetype species/age/gender compatibility",
+                    SimBodyCandidateSourceKind.ArchetypeCompatibilityFallback,
+                    compatibilityMetadata,
+                    preferredPackagePath,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return summariesByLabel.Values
+            .OrderBy(static summary => GetBodyAssemblySlotSortOrder(summary.Label))
+            .ThenBy(static summary => summary.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<Ts4SimOutfitPart> GetAuthoritativeBodyDrivingOutfitParts(Ts4SimInfo metadata)
+    {
+        return GetAuthoritativeBodyDrivingOutfits(metadata)
+            .SelectMany(static outfit => outfit.Parts)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<Ts4SimOutfit> GetAuthoritativeBodyDrivingOutfits(Ts4SimInfo metadata)
+    {
+        var nudeOutfits = metadata.Outfits
+            .Where(static outfit => outfit.CategoryValue == 5 && outfit.Parts.Count > 0)
+            .ToArray();
+        if (nudeOutfits.Length > 0)
+        {
+            return nudeOutfits;
+        }
+
+        return [];
+    }
+
+    private async Task<IReadOnlyList<AssetSummary>> ResolveExactSimBodyPartAssetsAsync(
+        string label,
+        ulong partInstance,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return [];
+        }
+
+        var result = await indexStore.QueryResourcesAsync(
+            new RawResourceBrowserQuery(
+                new SourceScope(),
+                string.Empty,
+                RawResourceDomain.All,
+                "CASPart",
+                string.Empty,
+                string.Empty,
+                partInstance.ToString("X16"),
+                false,
+                false,
+                false,
+                ResourceLinkFilter.Any,
+                RawResourceSort.Tgi,
+                0,
+                64),
+            cancellationToken).ConfigureAwait(false);
+
+        var assets = new List<AssetSummary>();
+        foreach (var resource in result.Items.Where(resource =>
+                     string.Equals(resource.Key.TypeName, "CASPart", StringComparison.OrdinalIgnoreCase) &&
+                     resource.Key.FullInstance == partInstance))
+        {
+            var asset = await CreateExactCasAssetSummaryAsync(resource, label, cancellationToken).ConfigureAwait(false);
+            if (asset is not null)
+            {
+                assets.Add(asset);
+            }
+        }
+
+        return assets;
+    }
+
+    private async Task<AssetSummary?> CreateExactCasAssetSummaryAsync(
+        ResourceMetadata casPart,
+        string authoritativeLabel,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return null;
+        }
+
+        var related = await indexStore
+            .GetResourcesByInstanceAsync(casPart.PackagePath, casPart.Key.FullInstance, cancellationToken)
+            .ConfigureAwait(false);
+        var thumbnail = related.FirstOrDefault(static resource => resource.Key.TypeName is "CASPartThumbnail" or "BodyPartThumbnail");
+        var geometry = related.FirstOrDefault(static resource => resource.Key.TypeName == "Geometry");
+        var materials = related.Where(static resource => resource.Key.TypeName == "MaterialDefinition").ToArray();
+        var textures = related.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
+        var diagnostics = new List<string>();
+        if (geometry is null)
+        {
+            diagnostics.Add("No exact-instance Geometry resource was indexed for this CAS part.");
+        }
+
+        if (materials.Length == 0)
+        {
+            diagnostics.Add("No exact-instance MaterialDefinition resources were indexed for this CAS part.");
+        }
+
+        if (textures.Length == 0)
+        {
+            diagnostics.Add("No exact-instance texture resources were indexed for this CAS part.");
+        }
+
+        return new AssetSummary(
+            StableEntityIds.ForAsset(casPart.DataSourceId, AssetKind.Cas, casPart.PackagePath, casPart.Key),
+            casPart.DataSourceId,
+            casPart.SourceKind,
+            AssetKind.Cas,
+            casPart.Name ?? $"{authoritativeLabel} {casPart.Key.FullInstance:X16}",
+            authoritativeLabel,
+            casPart.PackagePath,
+            casPart.Key,
+            thumbnail?.Key.FullTgi,
+            1,
+            Math.Max(0, related.Count - 1),
+            string.Join(" ", diagnostics),
+            new AssetCapabilitySnapshot(
+                HasSceneRoot: geometry is not null,
+                HasExactGeometryCandidate: geometry is not null,
+                HasMaterialReferences: materials.Length > 0,
+                HasTextureReferences: textures.Length > 0,
+                HasThumbnail: thumbnail is not null,
+                HasVariants: false,
+                HasIdentityMetadata: true,
+                HasRigReference: false,
+                HasGeometryReference: geometry is not null,
+                HasMaterialResourceCandidate: materials.Length > 0,
+                HasTextureResourceCandidate: textures.Length > 0,
+                IsPackageLocalGraph: true,
+                HasDiagnostics: diagnostics.Count > 0),
+            PackageName: Path.GetFileName(casPart.PackagePath),
+            RootTypeName: casPart.Key.TypeName,
+            ThumbnailTypeName: thumbnail?.Key.TypeName,
+            PrimaryGeometryType: geometry?.Key.TypeName,
+            IdentityType: casPart.Key.TypeName,
+            CategoryNormalized: NormalizeAssetCategory(authoritativeLabel),
+            Description: casPart.Description);
+    }
+
+    private async Task<IReadOnlyList<AssetSummary>> QuerySimBodyCandidatePoolAsync(
+        SimInfoSummary metadata,
+        string slotCategory,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return [];
+        }
+
+        var pool = new List<AssetSummary>();
+        var seenIds = new HashSet<Guid>();
+        foreach (var searchText in BuildSimBodyCompatibilitySearchTexts(metadata, slotCategory))
+        {
+            if (string.IsNullOrWhiteSpace(searchText))
+            {
+                continue;
+            }
+
+            var query = new AssetBrowserQuery(
+                new SourceScope(),
+                searchText,
+                AssetBrowserDomain.Cas,
+                slotCategory,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                GetBodyAssemblyCandidateQueryWindowSize(slotCategory));
+            var result = await indexStore.QueryAssetsAsync(query, cancellationToken).ConfigureAwait(false);
+            foreach (var asset in result.Items)
+            {
+                if (seenIds.Add(asset.Id))
+                {
+                    pool.Add(asset);
+                }
+            }
+        }
+
+        return pool;
+    }
+
+    private async Task<IReadOnlyList<AssetSummary>> QueryCanonicalHumanFoundationCandidatePoolAsync(
+        SimInfoSummary metadata,
+        string slotCategory,
+        CancellationToken cancellationToken)
+    {
+        if (!SimBodyAssemblyPolicy.IsShellFamilyLabel(slotCategory))
+        {
+            return [];
+        }
+
+        var pageSize = GetBodyAssemblyCandidateQueryWindowSize(slotCategory);
+        var maxSearchWindow = GetCanonicalFoundationCandidateMaxSearchWindow(slotCategory);
+        var seenIds = new HashSet<Guid>();
+        var preferredCandidates = new List<AssetSummary>();
+        var heuristicFallbackCandidates = new List<AssetSummary>();
+
+        foreach (var searchText in BuildSimBodyCompatibilitySearchTexts(metadata, slotCategory))
+        {
+            if (string.IsNullOrWhiteSpace(searchText))
+            {
+                continue;
+            }
+
+            for (var offset = 0; offset < maxSearchWindow; offset += pageSize)
+            {
+                var query = new AssetBrowserQuery(
+                    new SourceScope(),
+                    searchText,
+                    AssetBrowserDomain.Cas,
+                    slotCategory,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    offset,
+                    pageSize);
+                var result = await indexStore!.QueryAssetsAsync(query, cancellationToken).ConfigureAwait(false);
+                var page = result.Items
+                    .Where(asset => MatchesBodyAssemblySlotCategory(asset, slotCategory))
+                    .Where(asset => seenIds.Add(asset.Id))
+                    .ToArray();
+                if (page.Length > 0)
+                {
+                    var factsByAssetId = await LoadBodyAssemblyCandidateFactsAsync(page, cancellationToken).ConfigureAwait(false);
+                    foreach (var asset in page)
+                    {
+                        factsByAssetId.TryGetValue(asset.Id, out var facts);
+                        if (facts is not null && IsPreferredDefaultBodyShellCandidate(slotCategory, facts, metadata))
+                        {
+                            preferredCandidates.Add(asset);
+                            continue;
+                        }
+
+                        if (IsHeuristicCanonicalHumanFoundationCandidate(slotCategory, asset, facts, metadata))
+                        {
+                            heuristicFallbackCandidates.Add(asset);
+                        }
+                    }
+
+                    if (preferredCandidates.Count > 0)
+                    {
+                        return preferredCandidates;
+                    }
+                }
+
+                if (offset + pageSize >= result.TotalCount)
+                {
+                    break;
+                }
+            }
+        }
+
+        return heuristicFallbackCandidates;
+    }
+
+    private async Task<SimBodyCandidateSummary> CreateBodyCandidateSummaryAsync(
+        string label,
+        IReadOnlyList<AssetSummary> assets,
+        string notePrefix,
+        SimBodyCandidateSourceKind sourceKind,
+        SimInfoSummary metadata,
+        string? preferredPackagePath,
+        CancellationToken cancellationToken)
+    {
+        var (filteredAssets, filteringNote, factsByAssetId) = await FilterPreferredBodyAssemblyAssetsAsync(
+            label,
+            assets,
+            sourceKind,
+            metadata,
+            cancellationToken).ConfigureAwait(false);
+        var candidates = filteredAssets
+            .OrderByDescending(asset => GetBodyAssemblyCandidatePriority(label, asset, factsByAssetId, metadata))
+            .ThenBy(asset => GetBodyAssemblyPackagePreference(asset.PackagePath, preferredPackagePath))
+            .ThenBy(static asset => asset.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .Select(static asset => new SimCasSlotOptionSummary(
+                asset.Id,
+                asset.DisplayName,
+                asset.PackagePath,
+                asset.PackageName,
+                asset.RootKey.FullTgi))
+            .ToArray();
+        var noteParts = new List<string> { notePrefix };
+        if (!string.IsNullOrWhiteSpace(filteringNote))
+        {
+            noteParts.Add(filteringNote!);
+        }
+
+        if (candidates.Length < filteredAssets.Count)
+        {
+            noteParts.Add($"showing first {candidates.Length:N0} of {filteredAssets.Count:N0}");
+        }
+
+        return new SimBodyCandidateSummary(label, filteredAssets.Count, string.Join(" | ", noteParts), sourceKind, candidates);
+    }
+
+    private async Task<(IReadOnlyList<AssetSummary> Assets, string? FilteringNote, IReadOnlyDictionary<Guid, SimBodyAssemblyCandidateFacts> FactsByAssetId)> FilterPreferredBodyAssemblyAssetsAsync(
+        string label,
+        IReadOnlyList<AssetSummary> assets,
+        SimBodyCandidateSourceKind sourceKind,
+        SimInfoSummary metadata,
+        CancellationToken cancellationToken)
+    {
+        string? filteringNote = null;
+        var factsByAssetId = await LoadBodyAssemblyCandidateFactsAsync(assets, cancellationToken).ConfigureAwait(false);
+
+        if (!SimBodyAssemblyPolicy.IsShellFamilyLabel(label))
+        {
+            return (assets, sourceKind == SimBodyCandidateSourceKind.ExactPartLink ? null : null, factsByAssetId);
+        }
+
+        var isExactShellSelection = sourceKind == SimBodyCandidateSourceKind.ExactPartLink;
+        var isCanonicalFoundationSelection = sourceKind == SimBodyCandidateSourceKind.CanonicalFoundation;
+
+        var defaultShells = assets
+            .Where(asset => factsByAssetId.TryGetValue(asset.Id, out var facts) && IsPreferredDefaultBodyShellCandidate(label, facts, metadata))
+            .ToArray();
+        if (defaultShells.Length > 0)
+        {
+            filteringNote = isExactShellSelection
+                ? "restricted to authoritative default/nude body shells so body-first preview does not treat outfit-only shells as the base body"
+                : "restricted to CASPart default/nude body shells";
+            return (defaultShells, filteringNote, factsByAssetId);
+        }
+
+        if (isExactShellSelection &&
+            string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            filteringNote = "withheld authoritative non-default shell candidates until a real default/nude human body shell is found";
+            return ([], filteringNote, factsByAssetId);
+        }
+
+        if (!isCanonicalFoundationSelection &&
+            SimBodyAssemblyPolicy.IsShellFamilyLabel(label) &&
+            string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            if (assets.Count > 0)
+            {
+                filteringNote = isExactShellSelection
+                    ? "withheld authoritative clothing-like shell candidates until a real default human body shell is found"
+                    : "withheld compatibility-only shell candidates until an authoritative default human body shell is found";
+            }
+
+            return ([], filteringNote, factsByAssetId);
+        }
+
+        var baseShells = assets
+            .Where(asset =>
+            {
+                var facts = factsByAssetId.TryGetValue(asset.Id, out var candidateFacts) ? candidateFacts : null;
+                return IsLikelyBaseBodyShell(label, asset, facts, metadata);
+            })
+            .ToArray();
+        if (baseShells.Length > 0)
+        {
+            var genericBaseShells = baseShells
+                .Where(asset =>
+                {
+                var facts = factsByAssetId.TryGetValue(asset.Id, out var candidateFacts) ? candidateFacts : null;
+                return !ContainsOccultOrSpecialBodyKeyword(BuildCandidateSearchText(asset, facts));
+            })
+            .ToArray();
+            if (genericBaseShells.Length > 0 && genericBaseShells.Length < baseShells.Length)
+            {
+                filteringNote = isExactShellSelection
+                    ? "restricted to authoritative likely nude/base human body shells"
+                    : "restricted to likely nude/base human body shells";
+                return (genericBaseShells, filteringNote, factsByAssetId);
+            }
+
+            filteringNote = isExactShellSelection
+                ? "restricted to authoritative likely nude/base body shells"
+                : "restricted to likely nude/base body shells";
+            return (baseShells, filteringNote, factsByAssetId);
+        }
+
+        var nonClothing = assets
+            .Where(asset =>
+            {
+                var facts = factsByAssetId.TryGetValue(asset.Id, out var candidateFacts) ? candidateFacts : null;
+                return !LooksLikeClothingLikeBodyCandidate(asset.DisplayName ?? string.Empty, asset.Description ?? string.Empty, facts?.InternalName);
+            })
+            .ToArray();
+        if (nonClothing.Length > 0 && nonClothing.Length < assets.Count)
+        {
+            filteringNote = isExactShellSelection
+                ? "filtered away clothing-like authoritative shell candidates"
+                : "filtered away clothing-like shell candidates";
+            return (nonClothing, filteringNote, factsByAssetId);
+        }
+
+        if (nonClothing.Length == assets.Count && nonClothing.Length > 0)
+        {
+            return (nonClothing, null, factsByAssetId);
+        }
+
+        if (assets.Count > 0)
+        {
+            filteringNote = isExactShellSelection
+                ? "withheld authoritative clothing-like shell candidates until a real base-body shell is found"
+                : "withheld clothing-like shell candidates until a real base-body shell is found";
+            return ([], filteringNote, factsByAssetId);
+        }
+
+        return (assets, null, factsByAssetId);
+    }
+
+    private static bool MatchesBodyAssemblySlotCategory(AssetSummary asset, string slotCategory)
+    {
+        if (string.IsNullOrWhiteSpace(slotCategory))
+        {
+            return false;
+        }
+
+        return string.Equals(asset.Category, slotCategory, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(NormalizeAssetCategory(asset.Category), NormalizeAssetCategory(slotCategory), StringComparison.Ordinal);
+    }
+
+    private static int GetBodyAssemblyCandidatePriority(
+        string label,
+        AssetSummary asset,
+        IReadOnlyDictionary<Guid, SimBodyAssemblyCandidateFacts> factsByAssetId,
+        SimInfoSummary metadata)
+    {
+        var score = 0;
+        var displayName = asset.DisplayName ?? string.Empty;
+        var description = asset.Description ?? string.Empty;
+        var packageName = asset.PackageName ?? Path.GetFileName(asset.PackagePath) ?? string.Empty;
+        factsByAssetId.TryGetValue(asset.Id, out var facts);
+        var combined = BuildCandidateSearchText(asset, facts);
+
+        if (label is "Full Body" or "Body")
+        {
+            if (facts is not null && IsPreferredDefaultBodyShellCandidate(label, facts, metadata))
+            {
+                score += 700;
+            }
+
+            if (IsLikelyBaseBodyShell(label, asset, facts, metadata))
+            {
+                score += 400;
+            }
+            else if (LooksLikeClothingLikeBodyCandidate(displayName, description, facts?.InternalName))
+            {
+                score -= 300;
+            }
+
+            if (displayName.Contains("Body", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 80;
+            }
+
+            if (displayName.Contains("Nude", StringComparison.OrdinalIgnoreCase) ||
+                displayName.Contains("Default", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 30;
+            }
+
+            if (facts is not null && facts.BodyType == 5)
+            {
+                score += 40;
+            }
+        }
+
+        if (combined.Contains("Human", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 10;
+        }
+
+        if (packageName.Contains("ClientFullBuild0", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 10;
+        }
+
+        if (ContainsOccultOrSpecialBodyKeyword(combined))
+        {
+            score -= 200;
+        }
+
+        return score;
+    }
+
+    private static int GetBodyAssemblyPackagePreference(string packagePath, string? preferredPackagePath)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredPackagePath) &&
+            string.Equals(packagePath, preferredPackagePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return -1000;
+        }
+
+        return GetSimTemplatePackagePreference(packagePath);
+    }
+
+    private static string BuildCandidateSearchText(AssetSummary asset, SimBodyAssemblyCandidateFacts? facts)
+    {
+        var displayName = asset.DisplayName ?? string.Empty;
+        var description = asset.Description ?? string.Empty;
+        var packageName = asset.PackageName ?? Path.GetFileName(asset.PackagePath) ?? string.Empty;
+        return $"{displayName} {description} {facts?.InternalName} {packageName}";
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, SimBodyAssemblyCandidateFacts>> LoadBodyAssemblyCandidateFactsAsync(
+        IReadOnlyList<AssetSummary> assets,
+        CancellationToken cancellationToken)
+    {
+        var factsByAssetId = new Dictionary<Guid, SimBodyAssemblyCandidateFacts>();
+        foreach (var asset in assets)
+        {
+            if (!string.Equals(asset.RootKey.TypeName, "CASPart", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                var bytes = await resourceCatalogService
+                    .GetResourceBytesAsync(asset.PackagePath, asset.RootKey, raw: false, cancellationToken)
+                    .ConfigureAwait(false);
+                var casPart = Ts4CasPart.Parse(bytes);
+                factsByAssetId[asset.Id] = new SimBodyAssemblyCandidateFacts(
+                    casPart.BodyType,
+                    casPart.InternalName,
+                    casPart.DefaultForBodyType,
+                    casPart.DefaultForBodyTypeFemale,
+                    casPart.DefaultForBodyTypeMale,
+                    casPart.HasNakedLink,
+                    casPart.RestrictOppositeGender,
+                    casPart.RestrictOppositeFrame,
+                    casPart.SortLayer,
+                    casPart.SpeciesLabel,
+                    casPart.AgeLabel,
+                    casPart.GenderLabel);
+            }
+            catch (InvalidDataException)
+            {
+            }
+            catch (EndOfStreamException)
+            {
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+            }
+            catch (KeyNotFoundException)
+            {
+            }
+        }
+
+        return factsByAssetId;
+    }
+
+    private static bool IsPreferredDefaultBodyShellCandidate(
+        string label,
+        SimBodyAssemblyCandidateFacts facts,
+        SimInfoSummary metadata)
+    {
+        if (!SimBodyAssemblyPolicy.IsShellFamilyLabel(label) ||
+            facts.BodyType != 5 ||
+            !IsCasPartCompatibleWithSimMetadata(facts, metadata) ||
+            !MatchesExpectedBodyShellPrefix(facts, metadata))
+        {
+            return false;
+        }
+
+        if (facts.HasNakedLink || facts.DefaultForBodyType)
+        {
+            return true;
+        }
+
+        return metadata.GenderLabel switch
+        {
+            "Female" => facts.DefaultForBodyTypeFemale,
+            "Male" => facts.DefaultForBodyTypeMale,
+            _ => false
+        };
+    }
+
+    private static bool IsHeuristicCanonicalHumanFoundationCandidate(
+        string label,
+        AssetSummary asset,
+        SimBodyAssemblyCandidateFacts? facts,
+        SimInfoSummary metadata)
+    {
+        if (!SimBodyAssemblyPolicy.IsShellFamilyLabel(label) ||
+            !string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (facts is not null)
+        {
+            if (facts.BodyType != 5 || !IsCasPartCompatibleWithSimMetadata(facts, metadata))
+            {
+                return false;
+            }
+        }
+
+        var displayName = asset.DisplayName ?? string.Empty;
+        var description = asset.Description ?? string.Empty;
+        var internalName = facts?.InternalName;
+        if (!LooksLikeBaseBodyShell(displayName, description, internalName) ||
+            LooksLikeClothingLikeBodyCandidate(displayName, description, internalName))
+        {
+            return false;
+        }
+
+        if (ContainsOccultOrSpecialBodyKeyword(BuildCandidateSearchText(asset, facts)))
+        {
+            return false;
+        }
+
+        var prefixText = internalName ?? displayName;
+        return MatchesGenericHumanFoundationPrefix(prefixText, metadata);
+    }
+
+    private static bool IsLikelyBaseBodyShell(
+        string label,
+        AssetSummary asset,
+        SimBodyAssemblyCandidateFacts? facts,
+        SimInfoSummary metadata)
+    {
+        if (!SimBodyAssemblyPolicy.IsShellFamilyLabel(label))
+        {
+            return false;
+        }
+
+        if (facts is null)
+        {
+            return false;
+        }
+
+        if (facts.BodyType != 5 ||
+            !IsCasPartCompatibleWithSimMetadata(facts, metadata) ||
+            !MatchesExpectedBodyShellPrefix(facts, metadata))
+        {
+            return false;
+        }
+
+        var internalName = facts?.InternalName;
+        if (LooksLikeClothingLikeBodyCandidate(asset.DisplayName ?? string.Empty, asset.Description ?? string.Empty, internalName))
+        {
+            return false;
+        }
+
+        if (LooksLikeBaseBodyShell(asset.DisplayName ?? string.Empty, asset.Description ?? string.Empty, internalName))
+        {
+            return true;
+        }
+
+        if (facts is not null && IsPreferredDefaultBodyShellCandidate(label, facts, metadata))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsCasPartCompatibleWithSimMetadata(
+        SimBodyAssemblyCandidateFacts facts,
+        SimInfoSummary metadata)
+    {
+        if (!string.IsNullOrWhiteSpace(facts.SpeciesLabel) &&
+            !string.Equals(facts.SpeciesLabel, metadata.SpeciesLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.AgeLabel) &&
+            !string.Equals(metadata.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(facts.AgeLabel) &&
+            !string.Equals(facts.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !facts.AgeLabel.Contains(metadata.AgeLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.GenderLabel) &&
+            !string.Equals(metadata.GenderLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(metadata.GenderLabel, "Unisex", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(facts.GenderLabel) &&
+            !string.Equals(facts.GenderLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(facts.GenderLabel, "Unisex", StringComparison.OrdinalIgnoreCase) &&
+            !facts.GenderLabel.Contains(metadata.GenderLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool MatchesExpectedBodyShellPrefix(
+        SimBodyAssemblyCandidateFacts facts,
+        SimInfoSummary metadata)
+    {
+        var expectedPrefixes = BuildExpectedBodyShellPrefixes(metadata);
+        if (expectedPrefixes.Count == 0 || string.IsNullOrWhiteSpace(facts.InternalName))
+        {
+            return true;
+        }
+
+        return expectedPrefixes.Any(prefix =>
+            facts.InternalName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool LooksLikeBaseBodyShell(string displayName, string description, string? internalName = null)
+    {
+        var combined = $"{displayName} {description} {internalName}";
+        return combined.Contains("Nude", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("Default Body", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("Base Body", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("Bare", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("_Nude", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("yfBody_", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("ymBody_", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("afBody_", StringComparison.OrdinalIgnoreCase) ||
+               combined.Contains("amBody_", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeClothingLikeBodyCandidate(string displayName, string description, string? internalName = null)
+    {
+        var combined = $"{displayName} {description} {internalName}";
+        foreach (var keyword in new[]
+                 {
+                     "dress",
+                     "gown",
+                     "doctor",
+                     "detective",
+                     "bartender",
+                     "barista",
+                     "costume",
+                     "hoodie",
+                     "coat",
+                     "robe",
+                     "onesie",
+                     "uniform",
+                     "swimsuit",
+                     "nightie",
+                     "trench",
+                     "patient",
+                     "blazer",
+                     "skirt",
+                     "jeans",
+                     "shorts",
+                     "pants",
+                     "leggings",
+                     "shirt",
+                     "sweater",
+                     "blouse",
+                     "bodysuit",
+                     "yfTop_",
+                     "ymTop_",
+                     "afTop_",
+                     "amTop_",
+                     "yfBottom_",
+                     "ymBottom_",
+                     "afBottom_",
+                     "amBottom_"
+                 })
+        {
+            if (combined.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsOccultOrSpecialBodyKeyword(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        foreach (var keyword in new[]
+                 {
+                     "alien",
+                     "mermaid",
+                     "vampire",
+                     "werewolf",
+                     "servo",
+                     "robot",
+                     "skeleton",
+                     "ghost",
+                     "plantsim",
+                     "occult"
+                 })
+        {
+            if (text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static SimBodyAssemblySummary BuildSimBodyAssembly(
+        SimInfoSummary metadata,
+        IReadOnlyList<SimBodyCandidateSummary> bodyCandidates,
+        IReadOnlyList<SimCasSlotCandidateSummary> casSlotCandidates)
+    {
+        if (bodyCandidates.Count == 0)
+        {
+            return new SimBodyAssemblySummary(
+                SimBodyAssemblyMode.None,
+                "No compatible base-body candidates are currently resolved.",
+                [],
+                BuildSimBodyGraphNodes(metadata, SimBodyAssemblyMode.None, [], casSlotCandidates));
+        }
+
+        var activeLabels = SimBodyAssemblyPolicy.ResolveActiveLabels(
+            bodyCandidates
+                .Where(static candidate => candidate.Count > 0)
+                .Select(static candidate => candidate.Label));
+        var mode = SimBodyAssemblyPolicy.GetMode(activeLabels);
+        var layers = bodyCandidates
+            .OrderBy(static candidate => GetBodyAssemblySlotSortOrder(candidate.Label))
+            .ThenBy(static candidate => candidate.Label, StringComparer.OrdinalIgnoreCase)
+            .Select(candidate =>
+            {
+                var state = SimBodyAssemblyPolicy.GetLayerState(candidate.Label, activeLabels);
+                return new SimBodyAssemblyLayerSummary(
+                    candidate.Label,
+                    candidate.Count,
+                    BuildBodyAssemblyContributionLabel(candidate.Label),
+                    candidate.SourceKind,
+                    state,
+                    BuildBodyAssemblyLayerStateNotes(candidate, state, mode),
+                    candidate.Candidates);
+            })
+            .ToArray();
+
+        return new SimBodyAssemblySummary(
+            mode,
+            BuildBodyAssemblySummary(mode, layers),
+            layers,
+            BuildSimBodyGraphNodes(metadata, mode, layers, casSlotCandidates));
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> BuildSimBodyFallbackSources(Ts4SimInfo metadata)
+    {
+        var sources = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        void AddSource(string sourceKind, uint bodyType)
+        {
+            var label = MapCasBodyType((int)bodyType);
+            if (!IsBodyAssemblySlotCategory(label))
+            {
+                return;
+            }
+
+            if (!sources.TryGetValue(label!, out var entries))
+            {
+                entries = [];
+                sources.Add(label!, entries);
+            }
+
+            entries.Add($"{sourceKind} bodyType {bodyType}");
+        }
+
+        foreach (var part in GetAuthoritativeBodyDrivingOutfitParts(metadata))
+        {
+            AddSource("outfit", part.BodyType);
+        }
+
+        foreach (var bodyType in metadata.GeneticPartBodyTypes)
+        {
+            AddSource("genetic", bodyType);
+        }
+
+        foreach (var bodyType in metadata.GrowthPartBodyTypes)
+        {
+            AddSource("growth", bodyType);
+        }
+
+        return sources.ToDictionary(
+            static pair => pair.Key,
+            static pair => (IReadOnlyList<string>)pair.Value
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBodyAssemblySlotCategory(string? label) =>
+        label is not null && label switch
+        {
+            "Full Body" => true,
+            "Body" => true,
+            "Head" => true,
+            "Top" => true,
+            "Bottom" => true,
+            "Shoes" => true,
+            _ => false
+        };
+
+    private static int GetBodyAssemblySlotSortOrder(string? label) => label switch
+    {
+        "Full Body" => 0,
+        "Body" => 1,
+        "Head" => 2,
+        "Top" => 3,
+        "Bottom" => 4,
+        "Shoes" => 5,
+        _ => 10
+    };
+
+    private static IReadOnlyList<string> GetBodyAssemblySlotCategories() =>
+        ["Full Body", "Body", "Top", "Bottom", "Shoes"];
+
+    private static string BuildBodyAssemblyContributionLabel(string label) => label switch
+    {
+        "Full Body" => "Whole-body shell",
+        "Body" => "Primary body shell",
+        "Head" => "Head shell",
+        "Top" => "Upper-body layer",
+        "Bottom" => "Lower-body layer",
+        "Shoes" => "Footwear layer",
+        _ => "Body assembly layer"
+    };
+
+    private static string BuildBodyAssemblyLayerStateNotes(
+        SimBodyCandidateSummary candidate,
+        SimBodyAssemblyLayerState state,
+        SimBodyAssemblyMode mode)
+    {
+        if ((string.Equals(candidate.Label, "Top", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(candidate.Label, "Bottom", StringComparison.OrdinalIgnoreCase)) &&
+            state != SimBodyAssemblyLayerState.Active)
+        {
+            return $"Held back from the current body-first shell path until a real torso/body assembly exists. {candidate.Notes}";
+        }
+
+        if (string.Equals(candidate.Label, "Head", StringComparison.OrdinalIgnoreCase))
+        {
+            return candidate.Count == 0
+                ? $"No dedicated head shell is currently resolved. {candidate.Notes}"
+                : $"This head-shell candidate stays separate from the torso/body shell path and can be assembled on top of the current body foundation. {candidate.Notes}";
+        }
+
+        return state switch
+        {
+            SimBodyAssemblyLayerState.Active => candidate.Notes,
+            SimBodyAssemblyLayerState.Blocked when mode == SimBodyAssemblyMode.FullBodyShell =>
+                $"Currently suppressed by the active full-body shell. {candidate.Notes}",
+            SimBodyAssemblyLayerState.Blocked when mode == SimBodyAssemblyMode.BodyShell =>
+                $"Currently suppressed by the active primary body shell. {candidate.Notes}",
+            _ => $"Available as an alternate body layer. {candidate.Notes}"
+        };
+    }
+
+    private static string BuildBodyAssemblySummary(
+        SimBodyAssemblyMode mode,
+        IReadOnlyList<SimBodyAssemblyLayerSummary> layers)
+    {
+        return mode switch
+        {
+            SimBodyAssemblyMode.FullBodyShell =>
+                $"A full-body CAS shell is currently the highest-priority base-body layer. Clothing and footwear overlays stay out of the body-first preview while {CountBlockedLayers(layers)} other lower-priority layer(s) remain suppressed.",
+            SimBodyAssemblyMode.BodyShell =>
+                $"A primary body shell is active. Clothing and footwear overlays stay out of the body-first preview while split top/bottom layers remain alternates.",
+            SimBodyAssemblyMode.SplitBodyLayers =>
+                $"The current base-body recipe is split across {layers.Count(static layer => layer.State == SimBodyAssemblyLayerState.Active):N0} active layer(s).",
+            SimBodyAssemblyMode.FallbackSingleLayer =>
+                $"A single fallback body layer is active because a fuller body-shell recipe is not resolved yet.",
+            _ =>
+                layers.Any(layer =>
+                    string.Equals(layer.Label, "Top", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(layer.Label, "Bottom", StringComparison.OrdinalIgnoreCase))
+                    ? "No renderable torso/body shell is currently resolved. Clothing-like split layers are intentionally held back until a real body shell path exists."
+                    : "No base-body assembly recipe is currently resolved."
+        };
+    }
+
+    private static int CountBlockedLayers(IReadOnlyList<SimBodyAssemblyLayerSummary> layers) =>
+        layers.Count(static layer => layer.State == SimBodyAssemblyLayerState.Blocked);
+
+    private static IReadOnlyList<SimBodyGraphNodeSummary> BuildSimBodyGraphNodes(
+        SimInfoSummary metadata,
+        SimBodyAssemblyMode mode,
+        IReadOnlyList<SimBodyAssemblyLayerSummary> layers,
+        IReadOnlyList<SimCasSlotCandidateSummary> casSlotCandidates)
+    {
+        var nodes = new List<SimBodyGraphNodeSummary>
+        {
+            new(
+                "Base frame",
+                0,
+                SimBodyGraphNodeState.Resolved,
+                $"{metadata.SpeciesLabel} | {metadata.AgeLabel} | {metadata.GenderLabel}")
+        };
+
+        nodes.Add(
+            string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex) && !metadata.SkintoneShift.HasValue
+                ? new SimBodyGraphNodeSummary(
+                    "Skin pipeline",
+                    1,
+                    SimBodyGraphNodeState.Pending,
+                    "No explicit skintone reference is surfaced for this template yet.")
+                : new SimBodyGraphNodeSummary(
+                    "Skin pipeline",
+                    1,
+                    SimBodyGraphNodeState.Resolved,
+                    metadata.SkintoneShift.HasValue
+                        ? $"skintone {metadata.SkintoneInstanceHex ?? "(unknown)"} | shift {metadata.SkintoneShift.Value:0.###}"
+                        : $"skintone {metadata.SkintoneInstanceHex}"));
+
+        var activeGeometryLayers = layers
+            .Where(static layer =>
+                layer.State == SimBodyAssemblyLayerState.Active &&
+                !string.Equals(layer.Label, "Shoes", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var hasAuthoritativeGeometrySelection = activeGeometryLayers.Any(static layer =>
+            layer.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        nodes.Add(
+            activeGeometryLayers.Length == 0
+                ? new SimBodyGraphNodeSummary(
+                    "Geometry shell",
+                    2,
+                    SimBodyGraphNodeState.Unavailable,
+                    "No active body-shell layer is currently resolved.")
+                : new SimBodyGraphNodeSummary(
+                    "Geometry shell",
+                    2,
+                    SimBodyGraphNodeState.Approximate,
+                    mode switch
+                    {
+                        SimBodyAssemblyMode.FullBodyShell when hasAuthoritativeGeometrySelection =>
+                            "Full-body shell selected from authoritative SimInfo outfit/body-part selections.",
+                        SimBodyAssemblyMode.FullBodyShell => "Full-body shell selected from compatible CAS body candidates.",
+                        SimBodyAssemblyMode.BodyShell when hasAuthoritativeGeometrySelection =>
+                            "Primary body shell selected from authoritative SimInfo outfit/body-part selections.",
+                        SimBodyAssemblyMode.BodyShell => "Primary body shell selected from compatible CAS body candidates.",
+                        SimBodyAssemblyMode.SplitBodyLayers when hasAuthoritativeGeometrySelection =>
+                            $"Split body shell composed from {activeGeometryLayers.Length:N0} active layer(s), including authoritative SimInfo selections.",
+                        SimBodyAssemblyMode.SplitBodyLayers => $"Split body shell composed from {activeGeometryLayers.Length:N0} active layer(s).",
+                        _ => "Fallback body layer selected from compatible CAS candidates."
+                    }));
+
+        var headCasSelections = casSlotCandidates
+            .Where(static candidate =>
+                string.Equals(candidate.Label, "Hair", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(candidate.Label, "Accessory", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var authoritativeHeadSelections = headCasSelections
+            .Where(static candidate =>
+                candidate.Count > 0 &&
+                candidate.SourceKind == SimCasSlotCandidateSourceKind.ExactPartLink)
+            .ToArray();
+        nodes.Add(
+            authoritativeHeadSelections.Length > 0
+                ? new SimBodyGraphNodeSummary(
+                    "Head CAS selections",
+                    3,
+                    SimBodyGraphNodeState.Resolved,
+                    $"Authoritative head-related CAS selections resolved from SimInfo: {string.Join(", ", authoritativeHeadSelections.Select(static candidate => $"{candidate.Label} ({candidate.Count})"))}.")
+                : headCasSelections.Any(static candidate => candidate.Count > 0)
+                    ? new SimBodyGraphNodeSummary(
+                        "Head CAS selections",
+                        3,
+                        SimBodyGraphNodeState.Approximate,
+                        $"Head-related CAS selections are currently compatibility-derived: {string.Join(", ", headCasSelections.Where(static candidate => candidate.Count > 0).Select(static candidate => $"{candidate.Label} ({candidate.Count})"))}.")
+                    : new SimBodyGraphNodeSummary(
+                        "Head CAS selections",
+                        3,
+                        SimBodyGraphNodeState.Pending,
+                        "No head-related CAS selections are surfaced for this template yet."));
+
+        var headShellLayer = layers.FirstOrDefault(layer =>
+            string.Equals(layer.Label, "Head", StringComparison.OrdinalIgnoreCase) &&
+            layer.CandidateCount > 0);
+        nodes.Add(
+            headShellLayer is not null && headShellLayer.SourceKind == SimBodyCandidateSourceKind.ExactPartLink
+                ? new SimBodyGraphNodeSummary(
+                    "Head shell",
+                    4,
+                    SimBodyGraphNodeState.Resolved,
+                    "Authoritative head shell candidate resolved from SimInfo outfit/body-part selections.")
+                : headShellLayer is not null
+                    ? new SimBodyGraphNodeSummary(
+                        "Head shell",
+                        4,
+                        SimBodyGraphNodeState.Approximate,
+                        "A head shell candidate is resolved, but it is not yet guaranteed by authoritative SimInfo head-part selection.")
+                    : authoritativeHeadSelections.Length > 0
+                        ? new SimBodyGraphNodeSummary(
+                            "Head shell",
+                            4,
+                            SimBodyGraphNodeState.Approximate,
+                            "Authoritative head-related CAS selections are resolved, but no dedicated head shell candidate is surfaced yet.")
+                        : new SimBodyGraphNodeSummary(
+                            "Head shell",
+                            4,
+                            SimBodyGraphNodeState.Pending,
+                            "A dedicated head layer is not assembled yet; current body-first preview focuses on the torso/body shell path."));
+
+        var activeFootwear = layers.FirstOrDefault(layer =>
+            layer.State == SimBodyAssemblyLayerState.Active &&
+            string.Equals(layer.Label, "Shoes", StringComparison.OrdinalIgnoreCase));
+        nodes.Add(
+            activeFootwear is null
+                ? new SimBodyGraphNodeSummary(
+                    "Footwear overlay",
+                    5,
+                    SimBodyGraphNodeState.Pending,
+                    "No separate footwear layer is currently active in the base-body preview.")
+                : new SimBodyGraphNodeSummary(
+                    "Footwear overlay",
+                    5,
+                    SimBodyGraphNodeState.Approximate,
+                    "A separate shoes layer is active on top of the current body shell."));
+
+        var bodyMorphCount = metadata.BodyModifierCount + metadata.GeneticBodyModifierCount + metadata.SculptCount + metadata.GeneticSculptCount;
+        nodes.Add(
+            bodyMorphCount == 0
+                ? new SimBodyGraphNodeSummary(
+                    "Body morph application",
+                    6,
+                    SimBodyGraphNodeState.Unavailable,
+                    "This template does not currently expose body-shape channels or sculpt payloads.")
+                : new SimBodyGraphNodeSummary(
+                    "Body morph application",
+                    6,
+                    SimBodyGraphNodeState.Pending,
+                    $"{bodyMorphCount:N0} body-shape/sculpt input(s) are known but not applied to the rendered body yet."));
+
+        var faceMorphCount = metadata.FaceModifierCount + metadata.GeneticFaceModifierCount;
+        nodes.Add(
+            faceMorphCount == 0
+                ? new SimBodyGraphNodeSummary(
+                    "Face morph application",
+                    7,
+                    SimBodyGraphNodeState.Unavailable,
+                    "This template does not currently expose face-shape channels.")
+                : new SimBodyGraphNodeSummary(
+                    "Face morph application",
+                    7,
+                    SimBodyGraphNodeState.Pending,
+                    $"{faceMorphCount:N0} face-shape input(s) are known but not applied to the rendered body yet."));
+
+        return nodes;
+    }
+
+    private static IReadOnlyList<SimSlotGroupSummary> BuildSimSlotGroups(SimInfoSummary metadata)
+    {
+        var groups = new List<SimSlotGroupSummary>();
+
+        if (metadata.OutfitCategoryCount > 0 || metadata.OutfitEntryCount > 0 || metadata.OutfitPartCount > 0)
+        {
+            groups.Add(new SimSlotGroupSummary(
+                "Outfit / body part selections",
+                metadata.OutfitPartCount,
+                $"{metadata.OutfitCategoryCount} category, {metadata.OutfitEntryCount} outfit, {metadata.OutfitPartCount} part reference(s)"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex))
+        {
+            groups.Add(new SimSlotGroupSummary(
+                "Skintone",
+                1,
+                $"Instance {metadata.SkintoneInstanceHex}"));
+        }
+
+        if (metadata.GeneticPartCount > 0)
+        {
+            groups.Add(new SimSlotGroupSummary(
+                "Genetic body part layer",
+                metadata.GeneticPartCount,
+                "Genetic part references that shape the archetype base body"));
+        }
+
+        if (metadata.GrowthPartCount > 0)
+        {
+            groups.Add(new SimSlotGroupSummary(
+                "Growth / progression parts",
+                metadata.GrowthPartCount,
+                "Additional part references tied to growth progression"));
+        }
+
+        if (metadata.PeltLayerCount > 0)
+        {
+            groups.Add(new SimSlotGroupSummary(
+                "Pelt / fur layers",
+                metadata.PeltLayerCount,
+                "Layered coat or fur overlays"));
+        }
+
+        return groups;
+    }
+
+    private static IReadOnlyList<SimMorphGroupSummary> BuildSimMorphGroups(SimInfoSummary metadata)
+    {
+        var groups = new List<SimMorphGroupSummary>();
+
+        if (metadata.FaceModifierCount > 0)
+        {
+            groups.Add(new SimMorphGroupSummary(
+                "Face modifiers",
+                metadata.FaceModifierCount,
+                "Direct face-shape morph channels"));
+        }
+
+        if (metadata.BodyModifierCount > 0)
+        {
+            groups.Add(new SimMorphGroupSummary(
+                "Body modifiers",
+                metadata.BodyModifierCount,
+                "Direct body-shape morph channels"));
+        }
+
+        if (metadata.SculptCount > 0)
+        {
+            groups.Add(new SimMorphGroupSummary(
+                "Sculpts",
+                metadata.SculptCount,
+                "Explicit sculpt entries applied to the archetype"));
+        }
+
+        if (metadata.GeneticFaceModifierCount > 0)
+        {
+            groups.Add(new SimMorphGroupSummary(
+                "Genetic face modifiers",
+                metadata.GeneticFaceModifierCount,
+                "Inherited face-shape channels"));
+        }
+
+        if (metadata.GeneticBodyModifierCount > 0)
+        {
+            groups.Add(new SimMorphGroupSummary(
+                "Genetic body modifiers",
+                metadata.GeneticBodyModifierCount,
+                "Inherited body-shape channels"));
+        }
+
+        if (metadata.GeneticSculptCount > 0)
+        {
+            groups.Add(new SimMorphGroupSummary(
+                "Genetic sculpts",
+                metadata.GeneticSculptCount,
+                "Inherited sculpt references"));
+        }
+
+        return groups;
+    }
+
+    private async Task<IReadOnlyList<SimCasSlotCandidateSummary>> BuildSimCasSlotCandidatesAsync(
+        Ts4SimInfo? simInfo,
+        SimInfoSummary metadata,
+        string? preferredPackagePath,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null ||
+            !string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var summariesByLabel = new Dictionary<string, SimCasSlotCandidateSummary>(StringComparer.OrdinalIgnoreCase);
+        var seenAssetIds = new HashSet<Guid>();
+        if (simInfo is not null)
+        {
+            var exactCandidatesByLabel = new Dictionary<string, List<AssetSummary>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in GetAuthoritativeBodyDrivingOutfitParts(simInfo)
+                         .GroupBy(static outfitPart => (outfitPart.BodyType, outfitPart.PartInstance))
+                         .Select(static group => group.First()))
+            {
+                var label = MapCasBodyType((int)part.BodyType);
+                if (!IsHumanCasSlotCategory(label))
+                {
+                    continue;
+                }
+
+                var resolvedExactAssets = await ResolveExactSimBodyPartAssetsAsync(
+                    label!,
+                    part.PartInstance,
+                    cancellationToken).ConfigureAwait(false);
+                foreach (var asset in resolvedExactAssets.Where(asset => MatchesHumanCasSlotCategory(asset, label!)))
+                {
+                    if (!exactCandidatesByLabel.TryGetValue(label!, out var group))
+                    {
+                        group = [];
+                        exactCandidatesByLabel.Add(label!, group);
+                    }
+
+                    if (seenAssetIds.Add(asset.Id))
+                    {
+                        group.Add(asset);
+                    }
+                }
+
+                if (exactCandidatesByLabel.TryGetValue(label!, out var resolvedGroup) && resolvedGroup.Count > 0)
+                {
+                    continue;
+                }
+
+                var query = new AssetBrowserQuery(
+                    new SourceScope(),
+                    $"{part.PartInstance:X16}",
+                    AssetBrowserDomain.Cas,
+                    label!,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    AssetBrowserSort.Name,
+                    0,
+                    16);
+                var result = await indexStore.QueryAssetsAsync(query, cancellationToken).ConfigureAwait(false);
+                foreach (var asset in result.Items.Where(asset =>
+                         asset.RootKey.FullInstance == part.PartInstance &&
+                         MatchesHumanCasSlotCategory(asset, label!)))
+                {
+                    if (!exactCandidatesByLabel.TryGetValue(label!, out var assetGroup))
+                    {
+                        assetGroup = [];
+                        exactCandidatesByLabel.Add(label!, assetGroup);
+                    }
+
+                    if (seenAssetIds.Add(asset.Id))
+                    {
+                        assetGroup.Add(asset);
+                    }
+                }
+            }
+
+            foreach (var pair in exactCandidatesByLabel
+                         .OrderBy(static pair => GetHumanCasSlotSortOrder(pair.Key))
+                         .ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                summariesByLabel[pair.Key] = CreateSimCasSlotCandidateSummary(
+                    pair.Key,
+                    pair.Value,
+                    "Resolved from authoritative SimInfo outfit/body-part instances",
+                    SimCasSlotCandidateSourceKind.ExactPartLink,
+                    preferredPackagePath);
+            }
+        }
+
+        var searchText = BuildSimCasCompatibilitySearchText(metadata);
+        if (string.IsNullOrWhiteSpace(searchText))
+        {
+            return summariesByLabel.Values
+                .OrderBy(static summary => GetHumanCasSlotSortOrder(summary.Label))
+                .ThenBy(static summary => summary.Label, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        foreach (var slotCategory in GetHumanCasSlotCategories())
+        {
+            if (summariesByLabel.ContainsKey(slotCategory))
+            {
+                continue;
+            }
+
+            var query = new AssetBrowserQuery(
+                new SourceScope(),
+                searchText,
+                AssetBrowserDomain.Cas,
+                slotCategory,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                AssetBrowserSort.Name,
+                0,
+                6);
+            var result = await indexStore.QueryAssetsAsync(query, cancellationToken).ConfigureAwait(false);
+            if (result.TotalCount == 0)
+            {
+                continue;
+            }
+
+            var candidates = result.Items
+                .Where(asset => seenAssetIds.Add(asset.Id))
+                .ToArray();
+            if (candidates.Length == 0)
+            {
+                continue;
+            }
+
+            var noteParts = new List<string>
+            {
+                $"compatible with {metadata.SpeciesLabel} | {metadata.AgeLabel} | {metadata.GenderLabel}"
+            };
+            if (result.TotalCount > candidates.Length)
+            {
+                noteParts.Add($"showing first {candidates.Length:N0} of {result.TotalCount:N0}");
+            }
+
+            summariesByLabel[slotCategory] = CreateSimCasSlotCandidateSummary(
+                slotCategory,
+                candidates,
+                string.Join(" | ", noteParts),
+                SimCasSlotCandidateSourceKind.CompatibilityFallback,
+                preferredPackagePath,
+                totalCountOverride: result.TotalCount);
+        }
+
+        return summariesByLabel.Values
+            .OrderBy(static summary => GetHumanCasSlotSortOrder(summary.Label))
+            .ThenBy(static summary => summary.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> GetHumanCasSlotCategories() =>
+        ["Hair", "Full Body", "Top", "Bottom", "Shoes", "Accessory"];
+
+    private static bool IsHumanCasSlotCategory(string? label) =>
+        label is not null && GetHumanCasSlotCategories().Contains(label, StringComparer.OrdinalIgnoreCase);
+
+    private static bool MatchesHumanCasSlotCategory(AssetSummary asset, string slotCategory)
+    {
+        var normalizedCategory = NormalizeAssetCategory(asset.CategoryNormalized ?? asset.Category);
+        return slotCategory switch
+        {
+            "Hair" => string.Equals(normalizedCategory, "hair", StringComparison.OrdinalIgnoreCase),
+            "Accessory" => string.Equals(normalizedCategory, "accessory", StringComparison.OrdinalIgnoreCase),
+            _ => MatchesBodyAssemblySlotCategory(asset, slotCategory)
+        };
+    }
+
+    private static int GetHumanCasSlotSortOrder(string? label) => label switch
+    {
+        "Hair" => 0,
+        "Full Body" => 1,
+        "Top" => 2,
+        "Bottom" => 3,
+        "Shoes" => 4,
+        "Accessory" => 5,
+        _ => 10
+    };
+
+    private static SimCasSlotCandidateSummary CreateSimCasSlotCandidateSummary(
+        string label,
+        IReadOnlyList<AssetSummary> assets,
+        string notePrefix,
+        SimCasSlotCandidateSourceKind sourceKind,
+        string? preferredPackagePath,
+        int? totalCountOverride = null)
+    {
+        var orderedAssets = assets
+            .OrderBy(asset => GetBodyAssemblyPackagePreference(asset.PackagePath, preferredPackagePath))
+            .ThenBy(static asset => asset.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var candidates = orderedAssets
+            .Take(6)
+            .Select(static asset => new SimCasSlotOptionSummary(
+                asset.Id,
+                asset.DisplayName,
+                asset.PackagePath,
+                asset.PackageName,
+                asset.RootKey.FullTgi))
+            .ToArray();
+        var totalCount = totalCountOverride ?? orderedAssets.Length;
+        var noteParts = new List<string> { notePrefix };
+        if (totalCount > candidates.Length)
+        {
+            noteParts.Add($"showing first {candidates.Length:N0} of {totalCount:N0}");
+        }
+
+        return new SimCasSlotCandidateSummary(
+            label,
+            totalCount,
+            string.Join(" | ", noteParts),
+            sourceKind,
+            candidates);
+    }
+
+    private static IReadOnlyList<string> BuildSimBodyCompatibilitySearchTexts(SimInfoSummary metadata, string slotCategory)
+    {
+        var searches = new List<string>();
+        var exact = BuildSimCasCompatibilitySearchText(metadata);
+        if (!string.IsNullOrWhiteSpace(exact))
+        {
+            searches.Add(exact);
+        }
+
+        if (SimBodyAssemblyPolicy.IsShellFamilyLabel(slotCategory) &&
+            string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(metadata.AgeLabel) &&
+            !string.Equals(metadata.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(metadata.GenderLabel) &&
+            !string.Equals(metadata.GenderLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(metadata.GenderLabel, "Unisex", StringComparison.OrdinalIgnoreCase))
+        {
+            var relaxed = BuildSimCasCompatibilitySearchText(metadata, includeGender: false);
+            if (!string.IsNullOrWhiteSpace(relaxed) &&
+                !searches.Contains(relaxed, StringComparer.OrdinalIgnoreCase))
+            {
+                searches.Add(relaxed);
+            }
+
+            foreach (var keyword in new[] { "Nude", "Default", "\"Base Body\"", "\"Default Body\"", "Bare" })
+            {
+                var targetedExact = $"{exact} {keyword}";
+                if (!searches.Contains(targetedExact, StringComparer.OrdinalIgnoreCase))
+                {
+                    searches.Add(targetedExact);
+                }
+
+                if (!string.IsNullOrWhiteSpace(relaxed))
+                {
+                    var targetedRelaxed = $"{relaxed} {keyword}";
+                    if (!searches.Contains(targetedRelaxed, StringComparer.OrdinalIgnoreCase))
+                    {
+                        searches.Add(targetedRelaxed);
+                    }
+                }
+            }
+        }
+
+        if (SimBodyAssemblyPolicy.IsShellFamilyLabel(slotCategory))
+        {
+            foreach (var prefix in BuildExpectedBodyShellPrefixes(metadata))
+            {
+                if (!searches.Contains(prefix, StringComparer.OrdinalIgnoreCase))
+                {
+                    searches.Add(prefix);
+                }
+
+                foreach (var keyword in new[] { "Nude", "Default", "\"Base Body\"", "\"Default Body\"", "Bare" })
+                {
+                    var targetedPrefix = $"{prefix} {keyword}";
+                    if (!searches.Contains(targetedPrefix, StringComparer.OrdinalIgnoreCase))
+                    {
+                        searches.Add(targetedPrefix);
+                    }
+                }
+            }
+
+            foreach (var prefix in BuildGenericHumanFoundationPrefixes(metadata))
+            {
+                if (!searches.Contains(prefix, StringComparer.OrdinalIgnoreCase))
+                {
+                    searches.Add(prefix);
+                }
+
+                foreach (var keyword in new[] { "Nude", "Default", "\"Base Body\"", "\"Default Body\"", "Bare" })
+                {
+                    var targetedPrefix = $"{prefix} {keyword}";
+                    if (!searches.Contains(targetedPrefix, StringComparer.OrdinalIgnoreCase))
+                    {
+                        searches.Add(targetedPrefix);
+                    }
+                }
+            }
+        }
+
+        return searches;
+    }
+
+    private static int GetBodyAssemblyCandidateQueryWindowSize(string slotCategory) =>
+        SimBodyAssemblyPolicy.IsShellFamilyLabel(slotCategory) ? 256 : 32;
+
+    private static int GetCanonicalFoundationCandidateMaxSearchWindow(string slotCategory) =>
+        SimBodyAssemblyPolicy.IsShellFamilyLabel(slotCategory) ? 2048 : GetBodyAssemblyCandidateQueryWindowSize(slotCategory);
+
+    private static string BuildSimCasCompatibilitySearchText(SimInfoSummary metadata, bool includeGender = true)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(metadata.SpeciesLabel))
+        {
+            parts.Add(metadata.SpeciesLabel);
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.AgeLabel) &&
+            !string.Equals(metadata.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add(metadata.AgeLabel);
+        }
+
+        if (includeGender &&
+            !string.IsNullOrWhiteSpace(metadata.GenderLabel) &&
+            !string.Equals(metadata.GenderLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(metadata.GenderLabel, "Unisex", StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add(metadata.GenderLabel);
+        }
+
+        return string.Join(' ', parts);
+    }
+
+    private static IReadOnlyList<string> BuildExpectedBodyShellPrefixes(SimInfoSummary metadata)
+    {
+        if (TryBuildBodyShellPrefix(metadata, out var prefix))
+        {
+            return [$"{prefix}Body_", $"{prefix}Body"];
+        }
+
+        return [];
+    }
+
+    private static bool TryBuildBodyShellPrefix(SimInfoSummary metadata, out string prefix)
+    {
+        prefix = string.Empty;
+        if (string.IsNullOrWhiteSpace(metadata.SpeciesLabel) ||
+            string.IsNullOrWhiteSpace(metadata.AgeLabel) ||
+            string.Equals(metadata.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder();
+        if (string.Equals(metadata.AgeLabel, "Toddler", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append(string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) ? 'p' : 'c');
+        }
+        else if (string.Equals(metadata.AgeLabel, "Child", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append('c');
+        }
+        else
+        {
+            builder.Append(string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) ? 'y' : 'a');
+        }
+
+        if (!string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append(GetNonHumanBodyShellPrefix(metadata.SpeciesLabel, metadata.AgeLabel));
+        }
+        else if (string.Equals(metadata.AgeLabel, "Baby", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(metadata.AgeLabel, "Infant", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(metadata.AgeLabel, "Toddler", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(metadata.AgeLabel, "Child", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append('u');
+        }
+        else
+        {
+            builder.Append(string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase) ? 'm' : 'f');
+        }
+
+        prefix = builder.ToString();
+        return prefix.Length > 0;
+    }
+
+    private static bool MatchesGenericHumanFoundationPrefix(string? text, SimInfoSummary metadata)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        return BuildGenericHumanFoundationPrefixes(metadata).Any(prefix =>
+            text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyList<string> BuildGenericHumanFoundationPrefixes(SimInfoSummary metadata)
+    {
+        if (!string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(metadata.AgeLabel, "Baby", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(metadata.AgeLabel, "Infant", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(metadata.AgeLabel, "Toddler", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(metadata.AgeLabel, "Child", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var prefixes = new List<string> { "acBody_", "acBody", "ahBody_", "ahBody" };
+        if (string.Equals(metadata.GenderLabel, "Female", StringComparison.OrdinalIgnoreCase))
+        {
+            prefixes.Add("afBody_");
+            prefixes.Add("afBody");
+        }
+        else if (string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase))
+        {
+            prefixes.Add("amBody_");
+            prefixes.Add("amBody");
+        }
+
+        return prefixes;
+    }
+
+    private static char GetNonHumanBodyShellPrefix(string speciesLabel, string ageLabel)
+    {
+        if (string.Equals(ageLabel, "Child", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(speciesLabel, "Little Dog", StringComparison.OrdinalIgnoreCase))
+        {
+            return 'd';
+        }
+
+        return speciesLabel switch
+        {
+            "Dog" => 'd',
+            "Cat" => 'c',
+            "Little Dog" => 'l',
+            "Fox" => 'f',
+            "Horse" => 'h',
+            _ => 'a'
+        };
+    }
 
     private async Task<AssetGraph> BuildBuildBuyGraphAsync(
         AssetSummary summary,
@@ -556,7 +3347,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             summary,
             linkedResources,
             diagnostics,
-            new BuildBuyAssetGraph(
+            BuildBuyGraph: new BuildBuyAssetGraph(
                 effectiveRoot,
                 identityResources,
                 modelLods,
@@ -778,9 +3569,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             summary,
             linkedResources,
             diagnostics,
-            null,
-            null,
-            new General3DAssetGraph(
+            General3DGraph: new General3DAssetGraph(
                 root,
                 sceneRoot,
                 modelResources,
@@ -951,8 +3740,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             summary,
             linkedResources,
             diagnostics,
-            null,
-            new CasAssetGraph(
+            CasGraph: new CasAssetGraph(
                 root,
                 geometryResources.FirstOrDefault(),
                 rigResources.FirstOrDefault(),
@@ -1036,8 +3824,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             summary,
             linkedResources,
             diagnostics,
-            null,
-            new CasAssetGraph(
+            CasGraph: new CasAssetGraph(
                 root,
                 geometryResources.FirstOrDefault(),
                 rigResources.FirstOrDefault(),
@@ -1337,6 +4124,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
     private static string? MapCasBodyType(int bodyType) => bodyType switch
     {
         2 => "Hair",
+        3 => "Head",
         5 => "Full Body",
         6 => "Top",
         7 => "Bottom",
@@ -1344,6 +4132,16 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         12 => "Accessory",
         _ => null
     };
+
+    private static string NormalizeAssetCategory(string? category)
+    {
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            return string.Empty;
+        }
+
+        return category.Trim().ToLowerInvariant().Replace(' ', '-');
+    }
 
     private static string GuessCasTextureSlot(string typeName) => typeName switch
     {
@@ -1476,8 +4274,12 @@ public static class Ts4SeedMetadataExtractor
         try
         {
             var casPart = Ts4CasPart.Parse(bytes);
+            var slotCategory = MapCasPartSlotCategory(casPart.BodyType) ?? $"Body Type {casPart.BodyType}";
             return new Ts4CasPartSeedMetadata(
                 casPart.InternalName,
+                BuildCasPartSeedDescription(casPart),
+                slotCategory,
+                NormalizeCasPartCategory(slotCategory),
                 BuildCasPartVariants(resource, casPart));
         }
         catch (InvalidDataException)
@@ -1491,6 +4293,29 @@ public static class Ts4SeedMetadataExtractor
         catch (ArgumentOutOfRangeException)
         {
             return TryExtractCasPartHeaderOnlySeedMetadata(bytes);
+        }
+    }
+
+    public static Ts4SimInfoSeedMetadata? TryExtractSimInfoSeedMetadata(ResourceMetadata resource, byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        try
+        {
+            return Ts4SimInfoParser.BuildSeedMetadata(resource, bytes);
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (EndOfStreamException)
+        {
+            return null;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
         }
     }
 
@@ -1593,7 +4418,7 @@ public static class Ts4SeedMetadataExtractor
     {
         try
         {
-            return new Ts4CasPartSeedMetadata(Ts4CasPart.TryReadInternalName(bytes), []);
+            return new Ts4CasPartSeedMetadata(Ts4CasPart.TryReadInternalName(bytes), null, null, null, []);
         }
         catch (InvalidDataException)
         {
@@ -1607,6 +4432,123 @@ public static class Ts4SeedMetadataExtractor
         {
             return null;
         }
+    }
+
+    public static string? TryExtractCasPartSlotCategory(string? description) =>
+        TryExtractCasPartSummaryField(description, "slot");
+
+    public static bool? TryExtractCasPartSummaryBool(string? description, string key)
+    {
+        var value = TryExtractCasPartSummaryField(description, key);
+        return bool.TryParse(value, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static string? TryExtractCasPartSummaryField(string? description, string key)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return null;
+        }
+
+        foreach (var part in description.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!part.StartsWith($"{key}=", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return part[(key.Length + 1)..].Trim();
+        }
+
+        return null;
+    }
+
+    private static string BuildCasPartSeedDescription(Ts4CasPart casPart)
+    {
+        var parts = new List<string>
+        {
+            $"slot={MapCasPartSlotCategory(casPart.BodyType) ?? $"Body Type {casPart.BodyType}"}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(casPart.SpeciesLabel))
+        {
+            parts.Add($"species={casPart.SpeciesLabel}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(casPart.AgeLabel))
+        {
+            parts.Add($"age={casPart.AgeLabel}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(casPart.GenderLabel))
+        {
+            parts.Add($"gender={casPart.GenderLabel}");
+        }
+
+        if (casPart.SwatchColors.Count > 0)
+        {
+            parts.Add($"swatches={casPart.SwatchColors.Count}");
+        }
+
+        if (casPart.PresetCount > 0)
+        {
+            parts.Add($"presets={casPart.PresetCount}");
+        }
+
+        if (casPart.DefaultForBodyType)
+        {
+            parts.Add("defaultBodyType=true");
+        }
+
+        if (casPart.DefaultForBodyTypeFemale)
+        {
+            parts.Add("defaultBodyTypeFemale=true");
+        }
+
+        if (casPart.DefaultForBodyTypeMale)
+        {
+            parts.Add("defaultBodyTypeMale=true");
+        }
+
+        if (casPart.HasNakedLink)
+        {
+            parts.Add("nakedLink=true");
+        }
+
+        if (casPart.RestrictOppositeGender)
+        {
+            parts.Add("restrictOppositeGender=true");
+        }
+
+        if (casPart.RestrictOppositeFrame)
+        {
+            parts.Add("restrictOppositeFrame=true");
+        }
+
+        return string.Join(" | ", parts);
+    }
+
+    private static string? MapCasPartSlotCategory(int bodyType) => bodyType switch
+    {
+        2 => "Hair",
+        5 => "Full Body",
+        6 => "Top",
+        7 => "Bottom",
+        8 => "Shoes",
+        12 => "Accessory",
+        _ => null
+    };
+
+    private static string NormalizeCasPartCategory(string? category)
+    {
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            return string.Empty;
+        }
+
+        return category.Trim().ToLowerInvariant().Replace(' ', '-');
     }
 
     private static IReadOnlyList<DiscoveredAssetVariant> BuildCasPartVariants(ResourceMetadata resource, Ts4CasPart casPart)
@@ -1648,7 +4590,31 @@ public static class Ts4SeedMetadataExtractor
 
 public sealed record Ts4ObjectDefinitionSeedMetadata(string? TechnicalName, string? SceneRootTgiHint);
 
-public sealed record Ts4CasPartSeedMetadata(string? TechnicalName, IReadOnlyList<DiscoveredAssetVariant> Variants);
+public sealed record Ts4CasPartSeedMetadata(
+    string? TechnicalName,
+    string? Description,
+    string? SlotCategory,
+    string? CategoryNormalized,
+    IReadOnlyList<DiscoveredAssetVariant> Variants);
+
+internal sealed record SimBodyAssemblyCandidateFacts(
+    int BodyType,
+    string? InternalName,
+    bool DefaultForBodyType,
+    bool DefaultForBodyTypeFemale,
+    bool DefaultForBodyTypeMale,
+    bool HasNakedLink,
+    bool RestrictOppositeGender,
+    bool RestrictOppositeFrame,
+    int SortLayer,
+    string? SpeciesLabel,
+    string AgeLabel,
+    string GenderLabel);
+
+internal sealed record SimTemplateSelectionCandidate(
+    SimTemplateOptionSummary Option,
+    ResourceMetadata Resource,
+    Ts4SimInfo Metadata);
 
 internal sealed class Ts4CasPart
 {
@@ -1660,8 +4626,15 @@ internal sealed class Ts4CasPart
 
     public required int BodyType { get; init; }
     public required uint AgeGenderFlags { get; init; }
+    public required uint SpeciesValue { get; init; }
     public required string? InternalName { get; init; }
     public required uint PresetCount { get; init; }
+    public required byte PartFlags1 { get; init; }
+    public required byte PartFlags2 { get; init; }
+    public required ulong OppositeGenderPart { get; init; }
+    public required ulong FallbackPart { get; init; }
+    public required byte NakedKey { get; init; }
+    public required int SortLayer { get; init; }
     public required IReadOnlyList<ResourceKeyRecord> TgiList { get; init; }
     public required IReadOnlyList<Ts4CasLod> Lods { get; init; }
     public required IReadOnlyList<Ts4CasTextureCandidate> TextureReferences { get; init; }
@@ -1671,6 +4644,15 @@ internal sealed class Ts4CasPart
 
     public bool IsAdultOrYoungAdult => (AgeGenderFlags & (YoungAdultFlag | AdultFlag)) != 0;
     public bool IsMasculineOrFeminineHumanPresentation => (AgeGenderFlags & (MaleFlag | FemaleFlag)) != 0;
+    public string? SpeciesLabel => FormatSpecies(SpeciesValue);
+    public string AgeLabel => FormatAge(AgeGenderFlags);
+    public string GenderLabel => FormatGender(AgeGenderFlags);
+    public bool DefaultForBodyType => (PartFlags1 & 0x01) != 0;
+    public bool DefaultForBodyTypeMale => (PartFlags2 & 0x02) != 0;
+    public bool DefaultForBodyTypeFemale => (PartFlags2 & 0x04) != 0;
+    public bool RestrictOppositeGender => (PartFlags1 & 0x80) != 0;
+    public bool RestrictOppositeFrame => (PartFlags2 & 0x01) != 0;
+    public bool HasNakedLink => TryResolveTgi(TgiList, NakedKey) is not null;
 
     public static string? TryReadInternalName(byte[] bytes)
     {
@@ -1695,10 +4677,11 @@ internal sealed class Ts4CasPart
         _ = reader.ReadUInt16();
         _ = reader.ReadUInt32();
         _ = reader.ReadUInt32();
-        _ = reader.ReadByte();
+        var partFlags1 = reader.ReadByte();
+        var partFlags2 = (byte)0;
         if (header.Version >= 39)
         {
-            _ = reader.ReadByte();
+            partFlags2 = reader.ReadByte();
         }
 
         _ = reader.ReadUInt64();
@@ -1730,9 +4713,10 @@ internal sealed class Ts4CasPart
         var bodyType = reader.ReadInt32();
         _ = reader.ReadInt32();
         var ageGender = reader.ReadUInt32();
+        var speciesValue = 1u;
         if (header.Version >= 32)
         {
-            _ = reader.ReadUInt32();
+            speciesValue = reader.ReadUInt32();
         }
 
         if (header.Version >= 34)
@@ -1778,14 +4762,16 @@ internal sealed class Ts4CasPart
             _ = reader.ReadUInt32();
         }
 
+        var oppositeGenderPart = 0ul;
         if (header.Version >= 38)
         {
-            _ = reader.ReadUInt64();
+            oppositeGenderPart = reader.ReadUInt64();
         }
 
+        var fallbackPart = 0ul;
         if (header.Version >= 39)
         {
-            _ = reader.ReadUInt64();
+            fallbackPart = reader.ReadUInt64();
         }
 
         if (header.Version >= 44)
@@ -1799,9 +4785,9 @@ internal sealed class Ts4CasPart
             SkipBytes(stream, linkedPartCount, "CASPart linked part list");
         }
 
+        var nakedKey = reader.ReadByte();
         _ = reader.ReadByte();
-        _ = reader.ReadByte();
-        _ = reader.ReadInt32();
+        var sortLayer = reader.ReadInt32();
         var lodCount = reader.ReadByte();
         var lods = new List<Ts4CasLod>(lodCount);
         for (var lodIndex = 0; lodIndex < lodCount; lodIndex++)
@@ -1870,8 +4856,15 @@ internal sealed class Ts4CasPart
         {
             BodyType = bodyType,
             AgeGenderFlags = ageGender,
+            SpeciesValue = speciesValue,
             InternalName = NormalizeName(internalName),
             PresetCount = header.PresetCount,
+            PartFlags1 = partFlags1,
+            PartFlags2 = partFlags2,
+            OppositeGenderPart = oppositeGenderPart,
+            FallbackPart = fallbackPart,
+            NakedKey = nakedKey,
+            SortLayer = sortLayer,
             TgiList = tgiList,
             Lods = lods,
             TextureReferences = BuildTextureReferences(
@@ -1887,6 +4880,53 @@ internal sealed class Ts4CasPart
             SwatchSummary = BuildSwatchSummary(swatches),
             VariantThumbnailTgi = TryResolveTgi(tgiList, variantThumbnailKey)?.FullTgi
         };
+    }
+
+    private static string? FormatSpecies(uint value) => value switch
+    {
+        0 => "Human",
+        1 => "Human",
+        2 => "Dog",
+        3 => "Cat",
+        4 => "Little Dog",
+        5 => "Fox",
+        6 => "Horse",
+        _ => null
+    };
+
+    private static string FormatAge(uint flags)
+    {
+        var labels = new List<string>();
+        AppendFlagLabel(labels, flags, 0x00000001u, "Baby");
+        AppendFlagLabel(labels, flags, 0x00000080u, "Infant");
+        AppendFlagLabel(labels, flags, 0x00000002u, "Toddler");
+        AppendFlagLabel(labels, flags, 0x00000004u, "Child");
+        AppendFlagLabel(labels, flags, 0x00000008u, "Teen");
+        AppendFlagLabel(labels, flags, 0x00000010u, "Young Adult");
+        AppendFlagLabel(labels, flags, 0x00000020u, "Adult");
+        AppendFlagLabel(labels, flags, 0x00000040u, "Elder");
+        return labels.Count == 0 ? "Unknown" : string.Join(" / ", labels);
+    }
+
+    private static string FormatGender(uint flags)
+    {
+        var hasMale = (flags & MaleFlag) != 0;
+        var hasFemale = (flags & FemaleFlag) != 0;
+        return (hasMale, hasFemale) switch
+        {
+            (true, true) => "Unisex",
+            (true, false) => "Male",
+            (false, true) => "Female",
+            _ => "Unknown"
+        };
+    }
+
+    private static void AppendFlagLabel(List<string> labels, uint value, uint flag, string label)
+    {
+        if ((value & flag) != 0)
+        {
+            labels.Add(label);
+        }
     }
 
     private static IReadOnlyList<Ts4CasTextureCandidate> BuildTextureReferences(

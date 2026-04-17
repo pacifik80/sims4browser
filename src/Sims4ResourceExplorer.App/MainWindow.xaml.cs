@@ -43,6 +43,7 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? uvPreviewRenderCancellation;
     private long previewSurfaceGeneration;
     private bool isDraggingMainSplitter;
+    private bool isAdjustingMainContentColumns;
     private double mainSplitterStartX;
     private double mainSplitterStartResultsWidth;
     private double mainSplitterTotalResizableWidth;
@@ -91,13 +92,21 @@ public sealed partial class MainWindow : Window
         await ViewModel.InitializeAsync();
     }
 
-    private async void AddGameSource_Click(object sender, RoutedEventArgs e) => await AddFolderAsync(SourceKind.Game);
-    private async void AddDlcSource_Click(object sender, RoutedEventArgs e) => await AddFolderAsync(SourceKind.Dlc);
-    private async void AddModsSource_Click(object sender, RoutedEventArgs e) => await AddFolderAsync(SourceKind.Mods);
     private async void Index_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new IndexingDialog(new IndexingDialogViewModel(ViewModel.SelectedWorkerCount, ViewModel.CancelIndexing));
+        var dialog = new IndexingDialog(ViewModel.CreateIndexingDialogViewModel());
         dialog.Activate();
+        var shouldStart = await dialog.ViewModel.WaitForStartAsync();
+        if (!shouldStart)
+        {
+            await dialog.WaitForCloseAsync();
+            return;
+        }
+
+        await ViewModel.ApplyIndexingConfigurationAsync(
+            dialog.ViewModel.GetConfiguredSources(),
+            dialog.ViewModel.SelectedWorkerCount,
+            dialog.ViewModel.SelectedMemoryUsagePercent);
         await ViewModel.RunIndexAsync(dialog.ViewModel);
         await dialog.WaitForCloseAsync();
     }
@@ -233,15 +242,6 @@ public sealed partial class MainWindow : Window
         sender.IsSuggestionListOpen = filtered.Any() && (!userInputOnly || !string.Equals(text, "All", StringComparison.OrdinalIgnoreCase));
     }
 
-    private async Task AddFolderAsync(SourceKind kind)
-    {
-        var path = await PickFolderPathAsync();
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            await ViewModel.AddSourceAsync(path, kind);
-        }
-    }
-
     private async Task<string?> PickFolderPathAsync()
     {
         var picker = new FolderPicker();
@@ -254,29 +254,51 @@ public sealed partial class MainWindow : Window
 
     private void MainContentGrid_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (ResultsColumn.Width.GridUnitType != GridUnitType.Pixel &&
-            PreviewColumn.Width.GridUnitType != GridUnitType.Pixel)
+        if (isAdjustingMainContentColumns ||
+            (ResultsColumn.Width.GridUnitType != GridUnitType.Pixel &&
+             PreviewColumn.Width.GridUnitType != GridUnitType.Pixel))
         {
             return;
         }
 
-        var resultsMinWidth = ResultsColumn.MinWidth > 0 ? ResultsColumn.MinWidth : 360;
-        var previewMinWidth = PreviewColumn.MinWidth > 0 ? PreviewColumn.MinWidth : 460;
-        var availableWidth = Math.Max(resultsMinWidth + previewMinWidth, MainContentGrid.ActualWidth - MainContentGrid.ColumnDefinitions[2].ActualWidth);
-        var targetResizableWidth = Math.Max(resultsMinWidth + previewMinWidth, availableWidth);
-        var currentResultsWidth = ResultsColumn.ActualWidth;
-        var currentPreviewWidth = PreviewColumn.ActualWidth;
-        var currentTotalWidth = currentResultsWidth + currentPreviewWidth;
-        if (currentTotalWidth <= 0)
+        try
         {
-            return;
-        }
+            isAdjustingMainContentColumns = true;
+            var resultsMinWidth = ResultsColumn.MinWidth > 0 ? ResultsColumn.MinWidth : 360;
+            var previewMinWidth = PreviewColumn.MinWidth > 0 ? PreviewColumn.MinWidth : 460;
+            var splitterWidth = MainContentGrid.ColumnDefinitions.Count > 2
+                ? MainContentGrid.ColumnDefinitions[2].ActualWidth
+                : 0d;
+            var availableWidth = Math.Max(resultsMinWidth + previewMinWidth, MainContentGrid.ActualWidth - splitterWidth);
+            var targetResizableWidth = Math.Max(resultsMinWidth + previewMinWidth, availableWidth);
+            var currentResultsWidth = ResultsColumn.ActualWidth;
+            var currentPreviewWidth = PreviewColumn.ActualWidth;
+            var currentTotalWidth = currentResultsWidth + currentPreviewWidth;
+            if (currentTotalWidth <= 0)
+            {
+                return;
+            }
 
-        var resultsRatio = currentResultsWidth / currentTotalWidth;
-        var newResultsWidth = Math.Clamp(targetResizableWidth * resultsRatio, resultsMinWidth, targetResizableWidth - previewMinWidth);
-        var newPreviewWidth = Math.Max(previewMinWidth, targetResizableWidth - newResultsWidth);
-        ResultsColumn.Width = new GridLength(newResultsWidth, GridUnitType.Pixel);
-        PreviewColumn.Width = new GridLength(newPreviewWidth, GridUnitType.Pixel);
+            var resultsRatio = currentResultsWidth / currentTotalWidth;
+            var newResultsWidth = Math.Clamp(targetResizableWidth * resultsRatio, resultsMinWidth, targetResizableWidth - previewMinWidth);
+            var newPreviewWidth = Math.Max(previewMinWidth, targetResizableWidth - newResultsWidth);
+            if (Math.Abs(newResultsWidth - currentResultsWidth) < 0.5 &&
+                Math.Abs(newPreviewWidth - currentPreviewWidth) < 0.5)
+            {
+                return;
+            }
+
+            ResultsColumn.Width = new GridLength(newResultsWidth, GridUnitType.Pixel);
+            PreviewColumn.Width = new GridLength(newPreviewWidth, GridUnitType.Pixel);
+        }
+        catch (Exception ex)
+        {
+            ShowPreviewFailureDiagnostics("Preview layout update failed during window resize.", ex);
+        }
+        finally
+        {
+            isAdjustingMainContentColumns = false;
+        }
     }
 
     private void TryApplyWindowIcon()
@@ -368,53 +390,60 @@ public sealed partial class MainWindow : Window
 
     private async void UpdatePreviewSurface()
     {
-        var generation = Interlocked.Increment(ref previewSurfaceGeneration);
-        uvPreviewRenderCancellation?.Cancel();
-        uvPreviewRenderCancellation = null;
-
-        if (ViewModel.IsScenePreviewActive && ViewModel.CurrentScene is not null)
+        try
         {
-            if (ViewModel.SelectedSceneRenderMode is SceneRenderMode.RawUv or SceneRenderMode.MaterialUv)
+            var generation = Interlocked.Increment(ref previewSurfaceGeneration);
+            uvPreviewRenderCancellation?.Cancel();
+            uvPreviewRenderCancellation = null;
+
+            if (ViewModel.IsScenePreviewActive && ViewModel.CurrentScene is not null)
             {
-                sceneViewport.Items.Clear();
-                sceneViewport.Visibility = Visibility.Collapsed;
-                PreviewImage.Visibility = Visibility.Collapsed;
-                UvPreviewImage.Visibility = Visibility.Visible;
-                UvPreviewImage.Source = null;
-                var cancellation = new CancellationTokenSource();
-                uvPreviewRenderCancellation = cancellation;
-                try
+                if (ViewModel.SelectedSceneRenderMode is SceneRenderMode.RawUv or SceneRenderMode.MaterialUv)
                 {
-                    var uvPreview = await GenerateUvPreviewAsync(ViewModel.CurrentScene, cancellation.Token);
-                    if (!cancellation.IsCancellationRequested &&
-                        generation == Interlocked.Read(ref previewSurfaceGeneration) &&
-                        ViewModel.IsScenePreviewActive &&
-                        ViewModel.CurrentScene is not null &&
-                        ViewModel.SelectedSceneRenderMode is SceneRenderMode.RawUv or SceneRenderMode.MaterialUv)
+                    sceneViewport.Items.Clear();
+                    sceneViewport.Visibility = Visibility.Collapsed;
+                    PreviewImage.Visibility = Visibility.Collapsed;
+                    UvPreviewImage.Visibility = Visibility.Visible;
+                    UvPreviewImage.Source = null;
+                    var cancellation = new CancellationTokenSource();
+                    uvPreviewRenderCancellation = cancellation;
+                    try
                     {
-                        UvPreviewImage.Source = uvPreview;
+                        var uvPreview = await GenerateUvPreviewAsync(ViewModel.CurrentScene, cancellation.Token);
+                        if (!cancellation.IsCancellationRequested &&
+                            generation == Interlocked.Read(ref previewSurfaceGeneration) &&
+                            ViewModel.IsScenePreviewActive &&
+                            ViewModel.CurrentScene is not null &&
+                            ViewModel.SelectedSceneRenderMode is SceneRenderMode.RawUv or SceneRenderMode.MaterialUv)
+                        {
+                            UvPreviewImage.Source = uvPreview;
+                        }
                     }
-                }
-                catch (OperationCanceledException)
-                {
+                    catch (OperationCanceledException)
+                    {
+                    }
+
+                    return;
                 }
 
+                RenderScene(ViewModel.CurrentScene);
+                sceneViewport.Visibility = Visibility.Visible;
+                PreviewImage.Visibility = Visibility.Collapsed;
+                UvPreviewImage.Visibility = Visibility.Collapsed;
+                UvPreviewImage.Source = null;
                 return;
             }
 
-            RenderScene(ViewModel.CurrentScene);
-            sceneViewport.Visibility = Visibility.Visible;
-            PreviewImage.Visibility = Visibility.Collapsed;
+            sceneViewport.Items.Clear();
+            sceneViewport.Visibility = Visibility.Collapsed;
+            PreviewImage.Visibility = ViewModel.IsImagePreviewActive ? Visibility.Visible : Visibility.Collapsed;
             UvPreviewImage.Visibility = Visibility.Collapsed;
             UvPreviewImage.Source = null;
-            return;
         }
-
-        sceneViewport.Items.Clear();
-        sceneViewport.Visibility = Visibility.Collapsed;
-        PreviewImage.Visibility = ViewModel.IsImagePreviewActive ? Visibility.Visible : Visibility.Collapsed;
-        UvPreviewImage.Visibility = Visibility.Collapsed;
-        UvPreviewImage.Source = null;
+        catch (Exception ex)
+        {
+            ShowPreviewFailureDiagnostics("Preview rendering failed.", ex);
+        }
     }
 
     private void RenderScene(CanonicalScene scene)
@@ -489,6 +518,25 @@ public sealed partial class MainWindow : Window
         }
 
         ResetSceneCamera(scene);
+    }
+
+    private void ShowPreviewFailureDiagnostics(string message, Exception ex)
+    {
+        uvPreviewRenderCancellation?.Cancel();
+        uvPreviewRenderCancellation = null;
+        sceneViewport.Items.Clear();
+        sceneViewport.Visibility = Visibility.Collapsed;
+        PreviewImage.Visibility = Visibility.Collapsed;
+        UvPreviewImage.Visibility = Visibility.Collapsed;
+        UvPreviewImage.Source = null;
+
+        ViewModel.CurrentScene = null;
+        ViewModel.PreviewImageSource = null;
+        ViewModel.PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
+        ViewModel.PreviewSurfaceTitle = "Diagnostics";
+        ViewModel.SelectedPreviewDiagnosticsTabIndex = 0;
+        ViewModel.PreviewText = $"{message}{Environment.NewLine}{Environment.NewLine}{ex}";
+        ViewModel.StatusMessage = message;
     }
 
     private void ResetSceneCamera(CanonicalScene? scene)

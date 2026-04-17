@@ -25,3 +25,6 @@ probe_*.log
 tmp_*.txt
 tmp_*.log
 tmp_*.cs
+junk/local-artifacts/
+docs/references/external/Binary-Templates/
+docs/references/external/TS4SimRipper/

@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    Title="Indexing Progress"
+    Title="Update Index"
     mc:Ignorable="d">
     <Grid Padding="20" RowSpacing="16">
         <Grid.RowDefinitions>
@@ -15,43 +15,109 @@
         </Grid.RowDefinitions>
 
         <StackPanel Spacing="12">
-            <TextBlock Text="Indexing Progress" FontSize="20" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding StageFlowText}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <StackPanel Visibility="{Binding SetupSectionVisibility}" Spacing="12">
+                <TextBlock Text="Update Index" FontSize="20" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding SetupSummaryText}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding SetupSourceHintText}" Opacity="0.75" TextWrapping="WrapWholeWords" />
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
 
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+                    <Border Padding="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Indexed folders" FontWeight="SemiBold" />
+                                <Button Grid.Column="1" Content="Add Folder" Click="AddFolder_Click" />
+                            </Grid>
+                            <TextBlock Text="{Binding SetupSourceCountText}" Opacity="0.8" />
+                            <ListView MaxHeight="260" ItemsSource="{Binding ConfiguredSources}">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="100" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox VerticalAlignment="Top"
+                                                      IsChecked="{Binding IsEnabled}"
+                                                      Tag="{Binding Id}"
+                                                      Click="SourceEnabled_Click" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Kind}" FontWeight="SemiBold" />
+                                            <StackPanel Grid.Column="2" Spacing="2">
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding RootPath}" TextWrapping="WrapWholeWords" />
+                                            </StackPanel>
+                                            <Button Grid.Column="3" Content="Remove" Tag="{Binding Id}" Click="RemoveSource_Click" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+                    </Border>
 
-                <Border Padding="12" Background="{Binding ScopeStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="1. Scope" FontWeight="SemiBold" />
-                        <TextBlock Text="Count packages and total input size before index build starts." TextWrapping="WrapWholeWords" />
-                        <TextBlock Text="{Binding ScopeStageStatusText}" FontWeight="SemiBold" />
-                    </StackPanel>
-                </Border>
+                    <Border Grid.Column="1" Padding="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Runtime settings" FontWeight="SemiBold" />
+                            <ComboBox Header="Workers"
+                                      ItemsSource="{Binding AvailableWorkerCounts}"
+                                      SelectedItem="{Binding SelectedWorkerCount, Mode=TwoWay}" />
+                            <ComboBox Header="Package-read cache memory target"
+                                      ItemsSource="{Binding AvailableMemoryUsagePercents}"
+                                      SelectedItem="{Binding SelectedMemoryUsagePercent, Mode=TwoWay}" />
+                            <TextBlock Text="{Binding MemoryBudgetSummaryText}" TextWrapping="WrapWholeWords" Opacity="0.8" />
+                            <TextBlock Text="{Binding SetupValidationText}" Foreground="IndianRed" TextWrapping="WrapWholeWords" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
 
-                <Border Grid.Column="1" Padding="12" Background="{Binding IndexingStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="2. Index Build" FontWeight="SemiBold" />
-                        <TextBlock Text="Scan packages, extract metadata, and write catalog shards." TextWrapping="WrapWholeWords" />
-                        <TextBlock Text="{Binding IndexingStageStatusText}" FontWeight="SemiBold" />
-                    </StackPanel>
-                </Border>
+            <StackPanel Visibility="{Binding ProgressRootVisibility}" Spacing="12">
+                <TextBlock Text="Indexing Progress" FontSize="20" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding StageFlowText}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
 
-                <Border Grid.Column="2" Padding="12" Background="{Binding FinalizationStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="3. Finalization" FontWeight="SemiBold" />
-                        <TextBlock Text="Build browse/search indexes and activate the rebuilt catalog." TextWrapping="WrapWholeWords" />
-                        <TextBlock Text="{Binding FinalizationStageStatusText}" FontWeight="SemiBold" />
-                    </StackPanel>
-                </Border>
-            </Grid>
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Padding="12" Background="{Binding ScopeStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="1. Scope" FontWeight="SemiBold" />
+                            <TextBlock Text="Count packages and total input size before index build starts." TextWrapping="WrapWholeWords" />
+                            <TextBlock Text="{Binding ScopeStageStatusText}" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Padding="12" Background="{Binding IndexingStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="2. Index Build" FontWeight="SemiBold" />
+                            <TextBlock Text="Scan packages, extract metadata, and write catalog shards." TextWrapping="WrapWholeWords" />
+                            <TextBlock Text="{Binding IndexingStageStatusText}" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" Padding="12" Background="{Binding FinalizationStageBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="3. Finalization" FontWeight="SemiBold" />
+                            <TextBlock Text="Build browse/search indexes and activate the rebuilt catalog." TextWrapping="WrapWholeWords" />
+                            <TextBlock Text="{Binding FinalizationStageStatusText}" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
         </StackPanel>
 
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="1" Visibility="{Binding ProgressRootVisibility}">
             <ScrollViewer Visibility="{Binding ScopeSectionVisibility}" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Enabled" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
                 <StackPanel Spacing="14">
                     <TextBlock Text="Scope Discovery" FontSize="18" FontWeight="SemiBold" />
@@ -202,8 +268,8 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <Button Content="Cancel" IsEnabled="{Binding CanCancel}" Click="OnCancelClick" />
-            <Button Grid.Column="1" Content="Close" IsEnabled="{Binding CanClose}" Click="OnCloseClick" />
+            <Button Content="{Binding PrimaryActionText}" IsEnabled="{Binding CanPrimaryAction}" Click="OnPrimaryActionClick" />
+            <Button Grid.Column="1" Content="Close" IsEnabled="{Binding CanDismiss}" Click="OnCloseClick" />
         </Grid>
     </Grid>
 </Window>

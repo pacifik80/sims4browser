@@ -29,7 +29,9 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
     private static readonly Brush CompletedStageBackgroundBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 225, 245, 218));
     private static readonly Brush FailedStageBackgroundBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 251, 223, 223));
 
+    private readonly TaskCompletionSource<bool> startCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Action cancelAction;
+    private readonly Func<int, string> memoryBudgetSummaryFactory;
     private UiStage activeStage = UiStage.Scope;
     private string lastScopeMessage = "Discovering package scope.";
     private string lastIndexingMessage = "Waiting for indexing work to begin.";
@@ -37,21 +39,81 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
     private int finalizationStepCurrent;
     private int finalizationStepTotal = 1;
 
-    public IndexingDialogViewModel(int configuredWorkerCount, Action cancelAction)
+    public IndexingDialogViewModel(
+        IReadOnlyList<DataSourceDefinition> configuredSources,
+        IReadOnlyList<int> availableWorkerCounts,
+        int configuredWorkerCount,
+        int configuredMemoryUsagePercent,
+        Func<int, string> memoryBudgetSummaryFactory,
+        Action cancelAction)
     {
         this.cancelAction = cancelAction;
-        ConfiguredWorkerCount = IndexingRunOptions.ClampWorkerCount(configuredWorkerCount);
-
-        for (var workerId = 1; workerId <= ConfiguredWorkerCount; workerId++)
+        this.memoryBudgetSummaryFactory = memoryBudgetSummaryFactory;
+        AvailableWorkerCounts = availableWorkerCounts.ToArray();
+        AvailableMemoryUsagePercents = IndexingMemoryBudgetCalculator.SupportedPercents.ToArray();
+        SelectedWorkerCount = IndexingRunOptions.ClampWorkerCount(configuredWorkerCount);
+        SelectedMemoryUsagePercent = IndexingMemoryBudgetCalculator.NormalizePercent(configuredMemoryUsagePercent);
+        foreach (var source in configuredSources)
         {
-            Workers.Add(new WorkerSlotItemViewModel(workerId));
+            ConfiguredSources.Add(source);
         }
+
+        ConfiguredWorkerCount = 0;
+        CanCancel = false;
+        CanClose = true;
+        PrimaryActionText = "Start Index Update";
+        ScopeStageStatusText = "Pending";
+        IndexingStageStatusText = "Pending";
+        FinalizationStageStatusText = "Pending";
+        ScopeStageBackground = PendingStageBackgroundBrush;
+        RefreshConfigurationPresentation();
     }
 
     public ObservableCollection<WorkerSlotItemViewModel> Workers { get; } = [];
     public ObservableCollection<IndexActivityItemViewModel> RecentEvents { get; } = [];
+    public ObservableCollection<DataSourceDefinition> ConfiguredSources { get; } = [];
 
-    public int ConfiguredWorkerCount { get; }
+    public IReadOnlyList<int> AvailableWorkerCounts { get; }
+    public IReadOnlyList<int> AvailableMemoryUsagePercents { get; }
+
+    [ObservableProperty]
+    private int configuredWorkerCount;
+
+    [ObservableProperty]
+    private int selectedWorkerCount;
+
+    [ObservableProperty]
+    private int selectedMemoryUsagePercent;
+
+    [ObservableProperty]
+    private bool isRunStarted;
+
+    [ObservableProperty]
+    private string primaryActionText = "Start Index Update";
+
+    [ObservableProperty]
+    private string setupSummaryText = "Choose the folders to keep in the index, then start the rebuild.";
+
+    [ObservableProperty]
+    private string setupSourceCountText = "Folders: 0 total | 0 enabled";
+
+    [ObservableProperty]
+    private string setupSourceHintText = "Stored folders stay available between runs, so you only need to add them once.";
+
+    [ObservableProperty]
+    private string memoryBudgetSummaryText = "Package-read cache budget is not configured yet.";
+
+    [ObservableProperty]
+    private string setupValidationText = string.Empty;
+
+    [ObservableProperty]
+    private Visibility setupSectionVisibility = Visibility.Visible;
+
+    [ObservableProperty]
+    private Visibility progressRootVisibility = Visibility.Collapsed;
+
+    [ObservableProperty]
+    private bool canStart;
 
     [ObservableProperty]
     private double packagesProgressMaximum = 1;
@@ -186,10 +248,110 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
     private string finalizationElapsedText = "Elapsed: 00:00:00";
 
     [ObservableProperty]
-    private bool canCancel = true;
+    private bool canCancel;
 
     [ObservableProperty]
     private bool canClose;
+
+    public Task<bool> WaitForStartAsync() => startCompletionSource.Task;
+
+    public IReadOnlyList<DataSourceDefinition> GetConfiguredSources() => ConfiguredSources.ToArray();
+
+    public void AddOrEnableSource(string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            return;
+        }
+
+        var normalizedPath = rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var existingIndex = FindSourceIndex(normalizedPath);
+        var kind = SourcePathClassifier.InferKind(normalizedPath);
+        var displayName = SourcePathClassifier.BuildDisplayName(normalizedPath, kind);
+        var definition = new DataSourceDefinition(
+            existingIndex >= 0 ? ConfiguredSources[existingIndex].Id : Guid.NewGuid(),
+            displayName,
+            normalizedPath,
+            kind,
+            IsEnabled: true);
+
+        if (existingIndex >= 0)
+        {
+            ConfiguredSources[existingIndex] = definition;
+        }
+        else
+        {
+            ConfiguredSources.Add(definition);
+        }
+
+        SetupValidationText = string.Empty;
+        RefreshConfigurationPresentation();
+    }
+
+    public void RemoveSource(Guid sourceId)
+    {
+        var existing = ConfiguredSources.FirstOrDefault(source => source.Id == sourceId);
+        if (existing is not null)
+        {
+            ConfiguredSources.Remove(existing);
+            RefreshConfigurationPresentation();
+        }
+    }
+
+    public void SetSourceEnabled(Guid sourceId, bool isEnabled)
+    {
+        for (var index = 0; index < ConfiguredSources.Count; index++)
+        {
+            if (ConfiguredSources[index].Id != sourceId)
+            {
+                continue;
+            }
+
+            ConfiguredSources[index] = ConfiguredSources[index] with { IsEnabled = isEnabled };
+            RefreshConfigurationPresentation();
+            return;
+        }
+    }
+
+    public void RequestStart()
+    {
+        if (IsRunStarted)
+        {
+            return;
+        }
+
+        if (!CanStart)
+        {
+            SetupValidationText = "Enable at least one folder before starting the index update.";
+            return;
+        }
+
+        SetupValidationText = string.Empty;
+        IsRunStarted = true;
+        CanCancel = true;
+        CanClose = false;
+        PrimaryActionText = "Cancel";
+        SetupSectionVisibility = Visibility.Collapsed;
+        ProgressRootVisibility = Visibility.Visible;
+        ApplyConfiguredWorkerSlots(SelectedWorkerCount);
+        activeStage = UiStage.Scope;
+        ScopeStageStatusText = "Current";
+        IndexingStageStatusText = "Next";
+        FinalizationStageStatusText = "Next";
+        ScopeStageBackground = ActiveStageBackgroundBrush;
+        IndexingStageBackground = PendingStageBackgroundBrush;
+        FinalizationStageBackground = PendingStageBackgroundBrush;
+        startCompletionSource.TrySetResult(true);
+        NotifyActionStateChanged();
+    }
+
+    public void NotifyDialogClosed()
+    {
+        if (!startCompletionSource.Task.IsCompleted)
+        {
+            startCompletionSource.TrySetResult(false);
+        }
+    }
 
     public void ApplyProgress(IndexingProgress progress)
     {
@@ -217,6 +379,8 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
 
             CanCancel = false;
             CanClose = true;
+            PrimaryActionText = "Done";
+            NotifyActionStateChanged();
         }
     }
 
@@ -241,6 +405,8 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         FinalizationStageBackground = CompletedStageBackgroundBrush;
         CanCancel = false;
         CanClose = true;
+        PrimaryActionText = "Done";
+        NotifyActionStateChanged();
     }
 
     public void MarkCanceled(string? message = null)
@@ -251,6 +417,8 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         ApplyTerminalStageStatus("Canceled");
         CanCancel = false;
         CanClose = true;
+        PrimaryActionText = "Canceled";
+        NotifyActionStateChanged();
     }
 
     public void MarkFailed(string message)
@@ -261,6 +429,8 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         ApplyTerminalStageStatus("Failed");
         CanCancel = false;
         CanClose = true;
+        PrimaryActionText = "Failed";
+        NotifyActionStateChanged();
     }
 
     private void UpdateStageFlow(IndexingProgress progress)
@@ -610,6 +780,54 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         return false;
     }
 
+    private int FindSourceIndex(string rootPath)
+    {
+        for (var index = 0; index < ConfiguredSources.Count; index++)
+        {
+            if (string.Equals(ConfiguredSources[index].RootPath, rootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private void ApplyConfiguredWorkerSlots(int workerCount)
+    {
+        ConfiguredWorkerCount = IndexingRunOptions.ClampWorkerCount(workerCount);
+        Workers.Clear();
+        for (var workerId = 1; workerId <= ConfiguredWorkerCount; workerId++)
+        {
+            Workers.Add(new WorkerSlotItemViewModel(workerId));
+        }
+    }
+
+    private void RefreshConfigurationPresentation()
+    {
+        var enabledCount = ConfiguredSources.Count(static source => source.IsEnabled);
+        SetupSourceCountText = $"Folders: {ConfiguredSources.Count:N0} total | {enabledCount:N0} enabled";
+        SetupSummaryText = enabledCount > 0
+            ? "Review stored folders and runtime settings, then start the index update."
+            : "Add one or more folders before starting the index update.";
+        SetupSourceHintText = enabledCount > 0
+            ? "Stored folders stay available between runs. Disabled folders remain saved but will be skipped in the next rebuild."
+            : "You can add game roots, DLC pack folders, or Mods folders here. The app will infer the source kind from the path.";
+        MemoryBudgetSummaryText = memoryBudgetSummaryFactory(SelectedMemoryUsagePercent);
+        CanStart = enabledCount > 0;
+        NotifyActionStateChanged();
+    }
+
+    private void NotifyActionStateChanged()
+    {
+        OnPropertyChanged(nameof(CanPrimaryAction));
+        OnPropertyChanged(nameof(CanDismiss));
+    }
+
+    public bool CanPrimaryAction => IsRunStarted ? CanCancel : CanStart;
+
+    public bool CanDismiss => !IsRunStarted || CanClose;
+
     private static string BuildIndexingSummary(IndexingProgress progress)
     {
         if (progress.Summary is not null)
@@ -690,6 +908,25 @@ public sealed partial class IndexingDialogViewModel : ObservableObject
         progress.DiscoveryCompleted
             ? IndexingDisplayFormat.FormatEta(EstimateRemainingEta(progress))
             : "provisional while discovery is active";
+
+    partial void OnSelectedWorkerCountChanged(int value)
+    {
+        selectedWorkerCount = IndexingRunOptions.ClampWorkerCount(value);
+        OnPropertyChanged(nameof(SelectedWorkerCount));
+    }
+
+    partial void OnSelectedMemoryUsagePercentChanged(int value)
+    {
+        selectedMemoryUsagePercent = IndexingMemoryBudgetCalculator.NormalizePercent(value);
+        OnPropertyChanged(nameof(SelectedMemoryUsagePercent));
+        RefreshConfigurationPresentation();
+    }
+
+    partial void OnCanCancelChanged(bool value) => NotifyActionStateChanged();
+
+    partial void OnCanCloseChanged(bool value) => NotifyActionStateChanged();
+
+    partial void OnIsRunStartedChanged(bool value) => NotifyActionStateChanged();
 }
 
 public sealed partial class WorkerSlotItemViewModel : ObservableObject

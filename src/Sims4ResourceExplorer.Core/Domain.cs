@@ -13,6 +13,7 @@ public enum AssetKind
 {
     BuildBuy,
     Cas,
+    Sim,
     General3D
 }
 
@@ -164,7 +165,15 @@ public sealed record AssetSummary(
     public bool HasThumbnail => !string.IsNullOrWhiteSpace(ThumbnailTgi);
     public bool HasVariants => VariantCount > 1;
     public AssetCapabilitySnapshot CapabilitySnapshot => Capabilities ?? AssetCapabilitySnapshot.Empty;
-    public string SupportLabel => AssetDerivedState.BuildSupportLabel(CapabilitySnapshot);
+    public string KindLabel => AssetKind switch
+    {
+        AssetKind.BuildBuy => "Build/Buy",
+        AssetKind.Cas => "CAS",
+        AssetKind.Sim => "Sim Archetype",
+        AssetKind.General3D => "General 3D",
+        _ => AssetKind.ToString()
+    };
+    public string SupportLabel => AssetDerivedState.BuildSupportLabel(this);
     public string SupportNotes => AssetDerivedState.BuildSupportNotes(this);
     public string CanonicalRootTgi => string.IsNullOrWhiteSpace(LogicalRootTgi) ? RootKey.FullTgi : LogicalRootTgi;
 }
@@ -220,6 +229,7 @@ public sealed record AssetGraph(
     IReadOnlyList<string> Diagnostics,
     BuildBuyAssetGraph? BuildBuyGraph = null,
     CasAssetGraph? CasGraph = null,
+    SimAssetGraph? SimGraph = null,
     General3DAssetGraph? General3DGraph = null);
 
 public sealed record IndexingRunOptions(
@@ -228,12 +238,16 @@ public sealed record IndexingRunOptions(
     int SqliteBatchSize,
     TimeSpan ProgressUpdateInterval,
     TimeSpan HeartbeatInterval,
-    int MaxRecentEvents = 200)
+    int MaxRecentEvents = 200,
+    long PackageByteCacheBudgetBytes = 8L * 1024 * 1024 * 1024)
 {
+    public const long DefaultPackageByteCacheBudgetBytes = 8L * 1024 * 1024 * 1024;
+
     public static IndexingRunOptions CreateDefault() =>
         new(
             MaxPackageConcurrency: GetDefaultWorkerCount(),
             PackageQueueCapacity: Math.Clamp(GetDefaultWorkerCount() * 4, 4, 256),
+            PackageByteCacheBudgetBytes: DefaultPackageByteCacheBudgetBytes,
             SqliteBatchSize: 20000,
             ProgressUpdateInterval: TimeSpan.FromMilliseconds(400),
             HeartbeatInterval: TimeSpan.FromSeconds(5));
@@ -255,6 +269,12 @@ public sealed record IndexingRunOptions(
             PackageQueueCapacity = Math.Clamp(workerCount * 4, 4, 256)
         };
     }
+
+    public IndexingRunOptions WithPackageByteCacheBudgetBytes(long requestedBudgetBytes) =>
+        this with
+        {
+            PackageByteCacheBudgetBytes = Math.Max(0, requestedBudgetBytes)
+        };
 }
 
 public sealed record PackageScanProgress(
@@ -401,6 +421,182 @@ public sealed record ScenePreviewContent(
     CanonicalScene? Scene,
     string Diagnostics,
     SceneBuildStatus Status = SceneBuildStatus.Unsupported) : PreviewContent;
+
+public enum SimAssemblyBasisKind
+{
+    None,
+    BodyOnly,
+    SharedRigResource,
+    SharedRigInstance,
+    CanonicalBoneFallback
+}
+
+public sealed record SimAssemblyPlanSummary(
+    SimAssemblyBasisKind BasisKind,
+    bool IncludesHeadShell,
+    string BasisLabel,
+    string Notes);
+
+public sealed record SimAssemblyInputSummary(
+    string Label,
+    string StatusLabel,
+    bool IsAccepted,
+    string Notes);
+
+public enum SimAssemblyStageState
+{
+    Resolved,
+    Approximate,
+    Pending,
+    Unavailable
+}
+
+public sealed record SimAssemblyStageSummary(
+    string Label,
+    int Order,
+    SimAssemblyStageState State,
+    string Notes);
+
+public sealed record SimAssemblyOutputSummary(
+    string Label,
+    string StatusLabel,
+    int MeshCount,
+    int MaterialCount,
+    int BoneCount,
+    string Notes);
+
+public sealed record SimAssemblyContributionSummary(
+    string Label,
+    string StatusLabel,
+    int MeshCount,
+    int MaterialCount,
+    int BoneCount,
+    int RebasedWeightCount,
+    int AddedBoneCount,
+    string Notes);
+
+public sealed record SimAssemblyPayloadSummary(
+    string Label,
+    string StatusLabel,
+    int AnchorBoneCount,
+    int AcceptedContributionCount,
+    int MergedMeshCount,
+    int RebasedWeightCount,
+    int MappedBoneReferenceCount,
+    int AddedBoneCount,
+    string Notes);
+
+public sealed record SimAssemblyAnchorSummary(
+    string Label,
+    string StatusLabel,
+    int BoneCount,
+    IReadOnlyList<string> BoneNames,
+    string Notes);
+
+public sealed record SimAssemblyBoneMapSummary(
+    string Label,
+    string SourceLabel,
+    int SourceBoneCount,
+    int ReusedBoneReferenceCount,
+    int AddedBoneCount,
+    int RebasedWeightCount,
+    string Notes);
+
+public sealed record SimAssemblyMeshBatchSummary(
+    string Label,
+    string SourceLabel,
+    int MeshCount,
+    int MaterialStartIndex,
+    int MaterialCount,
+    string Notes);
+
+public enum SimAssemblyPayloadNodeKind
+{
+    AnchorSkeleton,
+    BoneRemapTable,
+    MeshSet
+}
+
+public sealed record SimAssemblyPayloadNodeSummary(
+    string Label,
+    int Order,
+    SimAssemblyPayloadNodeKind Kind,
+    string StatusLabel,
+    string Summary,
+    string Notes);
+
+public enum SimAssemblyApplicationPassState
+{
+    Prepared,
+    Pending,
+    Unavailable
+}
+
+public sealed record SimAssemblyApplicationPassSummary(
+    string Label,
+    int Order,
+    SimAssemblyApplicationPassState State,
+    string StatusLabel,
+    int InputCount,
+    string Notes);
+
+public sealed record SimAssemblyApplicationSummary(
+    string Label,
+    string StatusLabel,
+    int PreparedPassCount,
+    int PendingPassCount,
+    int UnavailablePassCount,
+    string Notes);
+
+public sealed record SimAssemblyApplicationTargetSummary(
+    string Label,
+    string PassLabel,
+    string StatusLabel,
+    int TargetCount,
+    string Notes);
+
+public sealed record SimAssemblyApplicationPlanSummary(
+    string Label,
+    string PassLabel,
+    string StatusLabel,
+    int TargetCount,
+    int OperationCount,
+    string Notes);
+
+public sealed record SimAssemblyApplicationTransformSummary(
+    string Label,
+    string PassLabel,
+    string StatusLabel,
+    int TargetCount,
+    int OperationCount,
+    string Notes);
+
+public sealed record SimAssemblyApplicationOutcomeSummary(
+    string Label,
+    string PassLabel,
+    string StatusLabel,
+    int TargetCount,
+    int AppliedCount,
+    string Notes);
+
+public sealed record SimAssemblyGraphSummary(
+    SimAssemblyPlanSummary Plan,
+    IReadOnlyList<SimAssemblyInputSummary> Inputs,
+    IReadOnlyList<SimAssemblyStageSummary> Stages,
+    SimAssemblyPayloadSummary Payload,
+    SimAssemblyAnchorSummary PayloadAnchor,
+    IReadOnlyList<SimAssemblyBoneMapSummary> PayloadBoneMaps,
+    IReadOnlyList<SimAssemblyMeshBatchSummary> PayloadMeshBatches,
+    IReadOnlyList<SimAssemblyPayloadNodeSummary> PayloadNodes,
+    SimAssemblyApplicationSummary Application,
+    IReadOnlyList<SimAssemblyApplicationPassSummary> ApplicationPasses,
+    IReadOnlyList<SimAssemblyApplicationTargetSummary> ApplicationTargets,
+    IReadOnlyList<SimAssemblyApplicationPlanSummary> ApplicationPlans,
+    IReadOnlyList<SimAssemblyApplicationTransformSummary> ApplicationTransforms,
+    IReadOnlyList<SimAssemblyApplicationOutcomeSummary> ApplicationOutcomes,
+    SimAssemblyOutputSummary Output,
+    IReadOnlyList<SimAssemblyContributionSummary> Contributions,
+    IReadOnlyList<SimBodyGraphNodeSummary> Nodes);
 
 public sealed record AudioPreviewContent(
     ResourceMetadata Resource,
@@ -565,6 +761,283 @@ public sealed record CasAssetGraph(
     bool IsSupported,
     string SupportedSubset);
 
+public sealed record SimInfoSummary(
+    uint Version,
+    string SpeciesLabel,
+    string AgeLabel,
+    string GenderLabel,
+    int PronounCount,
+    int OutfitCategoryCount,
+    int OutfitEntryCount,
+    int OutfitPartCount,
+    int TraitCount,
+    int FaceModifierCount,
+    int BodyModifierCount,
+    int GeneticFaceModifierCount,
+    int GeneticBodyModifierCount,
+    int SculptCount,
+    int GeneticSculptCount,
+    int GeneticPartCount,
+    int GrowthPartCount,
+    int PeltLayerCount,
+    string? SkintoneInstanceHex = null,
+    float? SkintoneShift = null);
+
+public sealed record SimSlotGroupSummary(
+    string Label,
+    int Count,
+    string Notes);
+
+public sealed record SimBodyFoundationSummary(
+    string Label,
+    int Count,
+    string Notes);
+
+public sealed record SimBodySourceSummary(
+    string Label,
+    int Count,
+    string Notes);
+
+public enum SimBodyCandidateSourceKind
+{
+    ExactPartLink,
+    CanonicalFoundation,
+    BodyTypeFallback,
+    ArchetypeCompatibilityFallback
+}
+
+public sealed record SimBodyCandidateSummary(
+    string Label,
+    int Count,
+    string Notes,
+    SimBodyCandidateSourceKind SourceKind,
+    IReadOnlyList<SimCasSlotOptionSummary> Candidates);
+
+public enum SimBodyAssemblyMode
+{
+    None,
+    FullBodyShell,
+    BodyShell,
+    SplitBodyLayers,
+    FallbackSingleLayer
+}
+
+public enum SimBodyAssemblyLayerState
+{
+    Active,
+    Available,
+    Blocked
+}
+
+public sealed record SimBodyAssemblyLayerSummary(
+    string Label,
+    int CandidateCount,
+    string Contribution,
+    SimBodyCandidateSourceKind SourceKind,
+    SimBodyAssemblyLayerState State,
+    string StateNotes,
+    IReadOnlyList<SimCasSlotOptionSummary> Candidates);
+
+public enum SimBodyGraphNodeState
+{
+    Resolved,
+    Approximate,
+    Pending,
+    Unavailable
+}
+
+public sealed record SimBodyGraphNodeSummary(
+    string Label,
+    int Order,
+    SimBodyGraphNodeState State,
+    string Notes);
+
+public sealed record SimBodyAssemblySummary(
+    SimBodyAssemblyMode Mode,
+    string Summary,
+    IReadOnlyList<SimBodyAssemblyLayerSummary> Layers,
+    IReadOnlyList<SimBodyGraphNodeSummary> GraphNodes);
+
+public static class SimBodyAssemblyPolicy
+{
+    public static bool IsShellFamilyLabel(string? label) => label switch
+    {
+        "Full Body" => true,
+        "Body" => true,
+        _ => false
+    };
+
+    public static bool IsOverlayFamilyLabel(string? label) =>
+        string.Equals(label, "Shoes", StringComparison.OrdinalIgnoreCase);
+
+    public static IReadOnlySet<string> ResolveActiveLabels(IEnumerable<string> availableLabels)
+    {
+        ArgumentNullException.ThrowIfNull(availableLabels);
+
+        var labels = availableLabels
+            .Where(static label => !string.IsNullOrWhiteSpace(label))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (labels.Count == 0)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (labels.Contains("Full Body"))
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Full Body" };
+        }
+
+        if (labels.Contains("Body"))
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Body" };
+        }
+
+        return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static SimBodyAssemblyMode GetMode(IReadOnlySet<string> activeLabels)
+    {
+        ArgumentNullException.ThrowIfNull(activeLabels);
+
+        if (activeLabels.Count == 0)
+        {
+            return SimBodyAssemblyMode.None;
+        }
+
+        if (activeLabels.Contains("Full Body"))
+        {
+            return SimBodyAssemblyMode.FullBodyShell;
+        }
+
+        if (activeLabels.Contains("Body"))
+        {
+            return SimBodyAssemblyMode.BodyShell;
+        }
+
+        return activeLabels.Count > 1
+            ? SimBodyAssemblyMode.SplitBodyLayers
+            : SimBodyAssemblyMode.FallbackSingleLayer;
+    }
+
+    public static SimBodyAssemblyLayerState GetLayerState(string label, IReadOnlySet<string> activeLabels)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        ArgumentNullException.ThrowIfNull(activeLabels);
+
+        if (activeLabels.Contains(label))
+        {
+            return SimBodyAssemblyLayerState.Active;
+        }
+
+        if (activeLabels.Contains("Full Body"))
+        {
+            return string.Equals(label, "Shoes", StringComparison.OrdinalIgnoreCase)
+                ? SimBodyAssemblyLayerState.Available
+                : SimBodyAssemblyLayerState.Blocked;
+        }
+
+        if (activeLabels.Contains("Body"))
+        {
+            return string.Equals(label, "Top", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(label, "Bottom", StringComparison.OrdinalIgnoreCase)
+                ? SimBodyAssemblyLayerState.Blocked
+                : SimBodyAssemblyLayerState.Available;
+        }
+
+        return SimBodyAssemblyLayerState.Available;
+    }
+}
+
+public sealed record SimMorphGroupSummary(
+    string Label,
+    int Count,
+    string Notes);
+
+public enum SimCasSlotCandidateSourceKind
+{
+    ExactPartLink,
+    CompatibilityFallback
+}
+
+public sealed record SimCasSlotCandidateSummary(
+    string Label,
+    int Count,
+    string Notes,
+    SimCasSlotCandidateSourceKind SourceKind,
+    IReadOnlyList<SimCasSlotOptionSummary> Candidates);
+
+public sealed record SimCasSlotOptionSummary(
+    Guid AssetId,
+    string DisplayName,
+    string? PackagePath,
+    string? PackageName,
+    string? RootTgi);
+
+public sealed record SimTemplateOptionSummary(
+    Guid ResourceId,
+    string DisplayName,
+    string PackagePath,
+    string? PackageName,
+    string RootTgi,
+    bool IsRepresentative,
+    string Notes,
+    int OutfitCategoryCount,
+    int OutfitEntryCount,
+    int OutfitPartCount,
+    int BodyModifierCount,
+    int FaceModifierCount,
+    int SculptCount,
+    bool HasSkintone)
+{
+    public bool HasAuthoritativeBodyParts =>
+        OutfitPartCount > 0 || OutfitEntryCount > 0 || OutfitCategoryCount > 0;
+}
+
+public static class SimTemplateSelectionPolicy
+{
+    public static IOrderedEnumerable<SimTemplateOptionSummary> OrderTemplates(IEnumerable<SimTemplateOptionSummary> templates) =>
+        templates
+            .OrderByDescending(static template => template.HasAuthoritativeBodyParts)
+            .ThenByDescending(static template => template.OutfitPartCount)
+            .ThenByDescending(static template => template.OutfitEntryCount)
+            .ThenByDescending(static template => template.OutfitCategoryCount)
+            .ThenByDescending(static template => template.BodyModifierCount + template.SculptCount)
+            .ThenByDescending(static template => template.FaceModifierCount)
+            .ThenByDescending(static template => template.HasSkintone)
+            .ThenByDescending(static template => template.IsRepresentative)
+            .ThenBy(static template => template.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static template => template.PackagePath, StringComparer.OrdinalIgnoreCase);
+
+    public static SimTemplateOptionSummary? SelectPreferredTemplate(IEnumerable<SimTemplateOptionSummary> templates) =>
+        OrderTemplates(templates).FirstOrDefault();
+
+    public static bool IsPreferredOver(SimTemplateOptionSummary candidate, SimTemplateOptionSummary? baseline)
+    {
+        if (baseline is null)
+        {
+            return true;
+        }
+
+        return OrderTemplates([candidate, baseline]).First().ResourceId == candidate.ResourceId;
+    }
+}
+
+public sealed record SimAssetGraph(
+    ResourceMetadata SimInfoResource,
+    SimInfoSummary Metadata,
+    IReadOnlyList<SimTemplateOptionSummary> TemplateOptions,
+    IReadOnlyList<SimBodyFoundationSummary> BodyFoundation,
+    IReadOnlyList<SimBodySourceSummary> BodySources,
+    IReadOnlyList<SimBodyCandidateSummary> BodyCandidates,
+    SimBodyAssemblySummary BodyAssembly,
+    IReadOnlyList<SimSlotGroupSummary> SlotGroups,
+    IReadOnlyList<SimMorphGroupSummary> MorphGroups,
+    IReadOnlyList<SimCasSlotCandidateSummary> CasSlotCandidates,
+    IReadOnlyList<ResourceMetadata> IdentityResources,
+    IReadOnlyList<string> Diagnostics,
+    bool IsSupported,
+    string SupportedSubset);
+
 public sealed record General3DAssetGraph(
     ResourceMetadata RootResource,
     ResourceMetadata SceneRootResource,
@@ -634,8 +1107,16 @@ public static class PreviewInteractionPolicy
 
 public static class AssetDerivedState
 {
-    public static string BuildSupportLabel(AssetCapabilitySnapshot facts)
+    public static string BuildSupportLabel(AssetSummary asset) =>
+        BuildSupportLabel(asset.AssetKind, asset.CapabilitySnapshot);
+
+    public static string BuildSupportLabel(AssetKind assetKind, AssetCapabilitySnapshot facts)
     {
+        if (assetKind == AssetKind.Sim && facts.HasIdentityMetadata)
+        {
+            return "Metadata";
+        }
+
         if (facts.HasExactGeometryCandidate && facts.HasTextureReferences)
         {
             return "Geometry+Textures";
@@ -655,10 +1136,15 @@ public static class AssetDerivedState
     }
 
     public static string BuildSupportNotes(AssetSummary asset)
-        => BuildSupportNotes(asset.CapabilitySnapshot);
+        => BuildSupportNotes(asset.AssetKind, asset.CapabilitySnapshot);
 
-    public static string BuildSupportNotes(AssetCapabilitySnapshot facts)
+    public static string BuildSupportNotes(AssetKind assetKind, AssetCapabilitySnapshot facts)
     {
+        if (assetKind == AssetKind.Sim && facts.HasIdentityMetadata)
+        {
+            return "This Sim archetype is currently metadata-only and is derived from grouped SimInfo rows; full assembled character preview is not implemented yet.";
+        }
+
         if (!facts.HasSceneRoot)
         {
             return "This asset does not currently resolve a scene root.";
@@ -690,11 +1176,12 @@ public static class AssetDetailsFormatter
     {
         var buildBuyGraph = graph.BuildBuyGraph;
         var casGraph = graph.CasGraph;
+        var simGraph = graph.SimGraph;
         var general3DGraph = graph.General3DGraph;
         var scene = scenePreview?.Scene;
         var displayFacts = BuildDisplayCapabilitySnapshot(asset, graph);
-        var supportLabel = AssetDerivedState.BuildSupportLabel(displayFacts);
-        var supportNotes = AssetDerivedState.BuildSupportNotes(displayFacts);
+        var supportLabel = AssetDerivedState.BuildSupportLabel(asset.AssetKind, displayFacts);
+        var supportNotes = AssetDerivedState.BuildSupportNotes(asset.AssetKind, displayFacts);
         var diagnostics = graph.Diagnostics
             .Concat(scenePreview is null ? [] : scenePreview.Diagnostics.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries))
             .DefaultIfEmpty(asset.Diagnostics);
@@ -747,6 +1234,84 @@ public static class AssetDetailsFormatter
                 Texture References: {scene?.Materials.Sum(static material => material.Textures.Count) ?? 0}
                 Bone Count: {scene?.Bones.Count ?? 0}
                 Bounds: {FormatBounds(scene?.Bounds)}
+                Diagnostics:
+                {string.Join(Environment.NewLine, diagnostics)}
+                """;
+        }
+
+        if (asset.AssetKind == AssetKind.Sim)
+        {
+            return
+                $"""
+                Asset: {asset.DisplayName}
+                Kind: {asset.KindLabel}
+                Category: {asset.Category ?? "(unknown)"}
+                Package: {asset.PackagePath}
+                Root TGI: {asset.RootKey.FullTgi}
+                Support Status: {supportLabel}
+                Support Notes: {supportNotes}
+                Package Name: {asset.PackageName ?? Path.GetFileName(asset.PackagePath)}
+                Root Type: {asset.RootTypeName ?? "(unknown)"}
+                Thumbnail Type: {asset.ThumbnailTypeName ?? "(none)"}
+                Geometry Type: {asset.PrimaryGeometryType ?? "(none)"}
+                Identity Type: {asset.IdentityType ?? "(unknown)"}
+                Has Scene Root: {FormatYesNo(displayFacts.HasSceneRoot)}
+                Has Exact Geometry Candidate: {FormatYesNo(displayFacts.HasExactGeometryCandidate)}
+                Has Material References: {FormatYesNo(displayFacts.HasMaterialReferences)}
+                Has Texture References: {FormatYesNo(displayFacts.HasTextureReferences)}
+                Has Identity Metadata: {FormatYesNo(displayFacts.HasIdentityMetadata)}
+                Has Geometry Reference: {FormatYesNo(displayFacts.HasGeometryReference)}
+                Has Rig Reference: {FormatYesNo(displayFacts.HasRigReference)}
+                Has Material Resource Candidate: {FormatYesNo(displayFacts.HasMaterialResourceCandidate)}
+                Has Texture Resource Candidate: {FormatYesNo(displayFacts.HasTextureResourceCandidate)}
+                Package-Local Graph: {FormatYesNo(displayFacts.IsPackageLocalGraph)}
+                Has Diagnostics: {FormatYesNo(displayFacts.HasDiagnostics)}
+                Scene Reconstruction: Template-driven Sim archetype asset; proxy body preview may be available from resolved body candidates, but full assembled-character scene synthesis is not implemented yet
+                Variant Count: {asset.VariantCount}
+                Selected Variant: {FormatSelectedVariant(selectedVariant)}
+                Indexed Variants:
+                {FormatAssetVariants(variants, selectedVariant)}
+                Identity Resources: {simGraph?.IdentityResources.Count ?? 0}
+                Supported Subset: {simGraph?.SupportedSubset ?? "Metadata-only Sim archetypes derived from grouped SimInfo rows."}
+                Template Variations: {simGraph?.TemplateOptions.Count.ToString() ?? "(unknown)"}
+                SimInfo Version: {simGraph?.Metadata.Version.ToString() ?? "(unknown)"}
+                Species: {simGraph?.Metadata.SpeciesLabel ?? "(unknown)"}
+                Age: {simGraph?.Metadata.AgeLabel ?? "(unknown)"}
+                Gender: {simGraph?.Metadata.GenderLabel ?? "(unknown)"}
+                Pronouns: {simGraph?.Metadata.PronounCount.ToString() ?? "(unknown)"}
+                Outfit Categories: {simGraph?.Metadata.OutfitCategoryCount.ToString() ?? "(unknown)"}
+                Outfit Entries: {simGraph?.Metadata.OutfitEntryCount.ToString() ?? "(unknown)"}
+                Outfit Parts: {simGraph?.Metadata.OutfitPartCount.ToString() ?? "(unknown)"}
+                Traits: {simGraph?.Metadata.TraitCount.ToString() ?? "(unknown)"}
+                Face Modifiers: {simGraph?.Metadata.FaceModifierCount.ToString() ?? "(unknown)"}
+                Body Modifiers: {simGraph?.Metadata.BodyModifierCount.ToString() ?? "(unknown)"}
+                Genetic Face Modifiers: {simGraph?.Metadata.GeneticFaceModifierCount.ToString() ?? "(unknown)"}
+                Genetic Body Modifiers: {simGraph?.Metadata.GeneticBodyModifierCount.ToString() ?? "(unknown)"}
+                Sculpts: {simGraph?.Metadata.SculptCount.ToString() ?? "(unknown)"}
+                Genetic Sculpts: {simGraph?.Metadata.GeneticSculptCount.ToString() ?? "(unknown)"}
+                Genetic Parts: {simGraph?.Metadata.GeneticPartCount.ToString() ?? "(unknown)"}
+                Growth Parts: {simGraph?.Metadata.GrowthPartCount.ToString() ?? "(unknown)"}
+                Pelt Layers: {simGraph?.Metadata.PeltLayerCount.ToString() ?? "(unknown)"}
+                Skintone Instance: {simGraph?.Metadata.SkintoneInstanceHex ?? "(none)"}
+                Skintone Shift: {FormatOptionalFloat(simGraph?.Metadata.SkintoneShift)}
+                Template Options:
+                {FormatSimTemplateOptions(simGraph?.TemplateOptions)}
+                Body Foundation:
+                {FormatSimBodyFoundation(simGraph?.BodyFoundation)}
+                Body Sources:
+                {FormatSimBodySources(simGraph?.BodySources)}
+                Body Candidates:
+                {FormatSimBodyCandidates(simGraph?.BodyCandidates)}
+                Body Assembly:
+                {FormatSimBodyAssembly(simGraph?.BodyAssembly)}
+                Base Body Graph:
+                {FormatSimBodyGraphNodes(simGraph?.BodyAssembly)}
+                Slot Groups:
+                {FormatSimSlotGroups(simGraph?.SlotGroups)}
+                Morph Groups:
+                {FormatSimMorphGroups(simGraph?.MorphGroups)}
+                CAS Slot Candidates:
+                {FormatSimCasSlotCandidates(simGraph?.CasSlotCandidates)}
                 Diagnostics:
                 {string.Join(Environment.NewLine, diagnostics)}
                 """;
@@ -914,6 +1479,16 @@ public static class AssetDetailsFormatter
             };
         }
 
+        if (graph.SimGraph is { } simGraph)
+        {
+            return facts with
+            {
+                HasIdentityMetadata = facts.HasIdentityMetadata || simGraph.IdentityResources.Count > 0,
+                IsPackageLocalGraph = isPackageLocalGraph,
+                HasDiagnostics = hasDiagnostics
+            };
+        }
+
         return facts with
         {
             IsPackageLocalGraph = isPackageLocalGraph,
@@ -1007,10 +1582,140 @@ public static class AssetDetailsFormatter
                 }));
     }
 
+    private static string FormatSimSlotGroups(IReadOnlyList<SimSlotGroupSummary>? groups)
+    {
+        if (groups is null || groups.Count == 0)
+        {
+            return "(none indexed yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            groups.Select(static group => $"- {group.Label}: {group.Count} ({group.Notes})"));
+    }
+
+    private static string FormatSimBodyFoundation(IReadOnlyList<SimBodyFoundationSummary>? groups)
+    {
+        if (groups is null || groups.Count == 0)
+        {
+            return "(body foundation is not summarized yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            groups.Select(static group => $"- {group.Label}: {group.Count} ({group.Notes})"));
+    }
+
+    private static string FormatSimBodySources(IReadOnlyList<SimBodySourceSummary>? groups)
+    {
+        if (groups is null || groups.Count == 0)
+        {
+            return "(no concrete body-source references surfaced yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            groups.Select(static group => $"- {group.Label}: {group.Count} ({group.Notes})"));
+    }
+
+    private static string FormatSimTemplateOptions(IReadOnlyList<SimTemplateOptionSummary>? options)
+    {
+        if (options is null || options.Count == 0)
+        {
+            return "(no grouped SimInfo templates resolved yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            options
+                .Take(8)
+                .Select(static option =>
+                    $"- {option.DisplayName}: {(option.PackageName ?? Path.GetFileName(option.PackagePath))}{(option.IsRepresentative ? " | representative" : string.Empty)}"));
+    }
+
+    private static string FormatSimBodyCandidates(IReadOnlyList<SimBodyCandidateSummary>? groups)
+    {
+        if (groups is null || groups.Count == 0)
+        {
+            return "(no exact body-part assets resolved yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            groups.Select(static group => $"- {group.Label}: {group.Count} ({group.Notes})"));
+    }
+
+    private static string FormatSimBodyAssembly(SimBodyAssemblySummary? summary)
+    {
+        if (summary is null || summary.Layers.Count == 0)
+        {
+            return "(base-body assembly recipe is not resolved yet)";
+        }
+
+        var modeLabel = summary.Mode switch
+        {
+            SimBodyAssemblyMode.FullBodyShell => "Full-body shell",
+            SimBodyAssemblyMode.BodyShell => "Primary body shell",
+            SimBodyAssemblyMode.SplitBodyLayers => "Split body layers",
+            SimBodyAssemblyMode.FallbackSingleLayer => "Fallback single layer",
+            _ => "Unresolved"
+        };
+
+        var lines = new List<string>
+        {
+            $"- Mode: {modeLabel} ({summary.Summary})"
+        };
+        lines.AddRange(
+            summary.Layers.Select(static layer =>
+                $"- {layer.Label}: {layer.State} | {layer.Contribution} | {layer.CandidateCount} candidate(s) | {layer.StateNotes}"));
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FormatSimBodyGraphNodes(SimBodyAssemblySummary? summary)
+    {
+        if (summary is null || summary.GraphNodes.Count == 0)
+        {
+            return "(base-body graph nodes are not summarized yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            summary.GraphNodes
+                .OrderBy(static node => node.Order)
+                .Select(static node => $"- {node.Order + 1}. {node.Label}: {node.State} ({node.Notes})"));
+    }
+
+    private static string FormatSimMorphGroups(IReadOnlyList<SimMorphGroupSummary>? groups)
+    {
+        if (groups is null || groups.Count == 0)
+        {
+            return "(none indexed yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            groups.Select(static group => $"- {group.Label}: {group.Count} ({group.Notes})"));
+    }
+
+    private static string FormatSimCasSlotCandidates(IReadOnlyList<SimCasSlotCandidateSummary>? candidates)
+    {
+        if (candidates is null || candidates.Count == 0)
+        {
+            return "(no compatible CAS slot families resolved yet)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            candidates.Select(static candidate => $"- {candidate.Label}: {candidate.Count} ({candidate.Notes})"));
+    }
+
     private static string FormatSelectedVariant(AssetVariantSummary? selectedVariant) =>
         selectedVariant is null
             ? "Catalog default"
             : $"{selectedVariant.VariantKind} {selectedVariant.VariantIndex + 1}: {selectedVariant.DisplayLabel}";
+
+    private static string FormatOptionalFloat(float? value) =>
+        value.HasValue ? value.Value.ToString("0.###") : "(none)";
 
     private static string FormatYesNo(bool value) => value ? "Yes" : "No";
 }

@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using LlamaLogic.Packages;
 using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Core;
+using Sims4ResourceExplorer.Packages;
 using System.Diagnostics;
 using System.Text;
 using System.Collections.Concurrent;
@@ -138,9 +139,10 @@ public sealed class SqliteIndexStore : IIndexStore
 
     private static async Task UpsertDataSourcesAsync(SqliteConnection connection, IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken)
     {
+        var materializedSources = sources.ToArray();
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
-        foreach (var source in sources)
+        foreach (var source in materializedSources)
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
@@ -160,6 +162,28 @@ public sealed class SqliteIndexStore : IIndexStore
             command.Parameters.AddWithValue("$kind", source.Kind.ToString());
             command.Parameters.AddWithValue("$isEnabled", source.IsEnabled ? 1 : 0);
             await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = transaction;
+            if (materializedSources.Length == 0)
+            {
+                deleteCommand.CommandText = "DELETE FROM data_sources;";
+            }
+            else
+            {
+                var parameterNames = materializedSources
+                    .Select(static (_, index) => $"$keep{index}")
+                    .ToArray();
+                deleteCommand.CommandText = $"DELETE FROM data_sources WHERE id NOT IN ({string.Join(", ", parameterNames)});";
+                for (var index = 0; index < materializedSources.Length; index++)
+                {
+                    deleteCommand.Parameters.AddWithValue(parameterNames[index], materializedSources[index].Id.ToString("D"));
+                }
+            }
+
+            await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -1631,6 +1655,7 @@ public sealed class SqliteIndexStore : IIndexStore
         {
             AssetBrowserDomain.BuildBuy => "asset_kind = 'BuildBuy'",
             AssetBrowserDomain.Cas => "asset_kind = 'Cas'",
+            AssetBrowserDomain.Sim => "asset_kind = 'Sim'",
             AssetBrowserDomain.General3D => "asset_kind = 'General3D'",
             _ => "asset_kind = 'BuildBuy'"
         });
@@ -3413,7 +3438,9 @@ public sealed class ResourceMetadataEnrichmentService : IResourceMetadataEnrichm
         if (resource.Name is not null &&
             resource.CompressedSize is not null &&
             resource.UncompressedSize is not null &&
-            resource.IsCompressed is not null)
+            resource.IsCompressed is not null &&
+            (!Ts4StructuredResourceMetadataExtractor.RequiresStructuredDescription(resource.Key.TypeName) ||
+             !string.IsNullOrWhiteSpace(resource.Description)))
         {
             return resource;
         }
@@ -3427,14 +3454,13 @@ public sealed class PackageIndexCoordinator
 {
     private const int ParallelSeedEnrichmentThreshold = 256;
     private const int MaxSeedEnrichmentPackageHandles = 8;
-    private const long DefaultPackageByteCacheBudgetBytes = 8L * 1024 * 1024 * 1024;
     private readonly IPackageScanner packageScanner;
     private readonly IResourceCatalogService resourceCatalogService;
     private readonly IAssetGraphBuilder assetGraphBuilder;
     private readonly IIndexStore indexStore;
     private readonly IndexingRunOptions options;
     private readonly ConcurrentDictionary<string, Task<IReadOnlyDictionary<uint, string>>> englishStringLookups = new(StringComparer.OrdinalIgnoreCase);
-    private readonly PackageByteCache packageByteCache = new(DefaultPackageByteCacheBudgetBytes);
+    private PackageByteCache packageByteCache = new(IndexingRunOptions.DefaultPackageByteCacheBudgetBytes);
 
     public PackageIndexCoordinator(
         IPackageScanner packageScanner,
@@ -3450,11 +3476,22 @@ public sealed class PackageIndexCoordinator
         this.options = options ?? IndexingRunOptions.CreateDefault();
     }
 
-    public async Task RunAsync(IEnumerable<DataSourceDefinition> sources, IProgress<IndexingProgress>? progress, CancellationToken cancellationToken, int? requestedWorkerCount = null)
+    public async Task RunAsync(
+        IEnumerable<DataSourceDefinition> sources,
+        IProgress<IndexingProgress>? progress,
+        CancellationToken cancellationToken,
+        int? requestedWorkerCount = null,
+        long? requestedPackageByteCacheBudgetBytes = null)
     {
         var effectiveOptions = requestedWorkerCount.HasValue
             ? options.WithWorkerCount(requestedWorkerCount.Value)
             : options;
+        if (requestedPackageByteCacheBudgetBytes.HasValue)
+        {
+            effectiveOptions = effectiveOptions.WithPackageByteCacheBudgetBytes(requestedPackageByteCacheBudgetBytes.Value);
+        }
+
+        packageByteCache = new PackageByteCache(effectiveOptions.PackageByteCacheBudgetBytes);
         var persistSliceResourceTarget = GetPersistSliceResourceTarget(effectiveOptions.SqliteBatchSize);
         var state = new IndexingRunState(effectiveOptions);
         var configuredSources = sources.ToArray();
@@ -3804,9 +3841,15 @@ public sealed class PackageIndexCoordinator
             var casSeedMetadata = Ts4SeedMetadataExtractor.TryExtractCasPartSeedMetadata(resource, bytes);
             if (casSeedMetadata is not null)
             {
-                var enrichedResource = string.IsNullOrWhiteSpace(casSeedMetadata.TechnicalName)
-                    ? resource
-                    : resource with { Name = casSeedMetadata.TechnicalName };
+                var enrichedResource = resource with
+                {
+                    Name = string.IsNullOrWhiteSpace(casSeedMetadata.TechnicalName)
+                        ? resource.Name
+                        : casSeedMetadata.TechnicalName,
+                    Description = string.IsNullOrWhiteSpace(casSeedMetadata.Description)
+                        ? resource.Description
+                        : casSeedMetadata.Description
+                };
                 return new SeedEnrichmentOutcome(enrichedResource, casSeedMetadata.Variants);
             }
 
@@ -3831,6 +3874,23 @@ public sealed class PackageIndexCoordinator
                     : objectDefinitionSeedMetadata.SceneRootTgiHint
             };
             return new SeedEnrichmentOutcome(enrichedResource, []);
+        }
+
+        if (resource.Key.TypeName == "SimInfo")
+        {
+            var simInfoSeedMetadata = Ts4SeedMetadataExtractor.TryExtractSimInfoSeedMetadata(resource, bytes);
+            if (simInfoSeedMetadata is null)
+            {
+                return new SeedEnrichmentOutcome(resource, []);
+            }
+
+            return new SeedEnrichmentOutcome(
+                resource with
+                {
+                    Name = string.IsNullOrWhiteSpace(simInfoSeedMetadata.DisplayName) ? resource.Name : simInfoSeedMetadata.DisplayName,
+                    Description = string.IsNullOrWhiteSpace(simInfoSeedMetadata.Description) ? resource.Description : simInfoSeedMetadata.Description
+                },
+                []);
         }
 
         var technicalName = Ts4SeedMetadataExtractor.TryExtractTechnicalName(resource, bytes);
@@ -3906,6 +3966,11 @@ public sealed class PackageIndexCoordinator
         if (resource.Key.TypeName == "ObjectDefinition")
         {
             return resource.Name is null || string.IsNullOrWhiteSpace(resource.SceneRootTgiHint);
+        }
+
+        if (resource.Key.TypeName == "SimInfo")
+        {
+            return string.IsNullOrWhiteSpace(resource.Name) || string.IsNullOrWhiteSpace(resource.Description);
         }
 
         if (resource.Name is not null)
@@ -4661,7 +4726,7 @@ public sealed class PackageIndexCoordinator
         $"{dataSourceId:D}|{packagePath}";
 
     private static bool ShouldBuildAssetSummaries(PackageScanResult packageScan) =>
-        packageScan.Resources.Any(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition" or "CASPart");
+        packageScan.Resources.Any(static resource => resource.Key.TypeName is "ObjectCatalog" or "ObjectDefinition" or "CASPart" or "SimInfo");
 
     private sealed class PackageState
     {

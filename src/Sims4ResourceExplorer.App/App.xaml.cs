@@ -29,6 +29,7 @@ public partial class App : Application
                 services.AddSingleton(IndexingRunOptions.CreateDefault());
                 services.AddSingleton<ICacheService, FileSystemCacheService>();
                 services.AddSingleton<IAppPreferencesService, JsonAppPreferencesService>();
+                services.AddSingleton<ISystemMemoryService, Win32SystemMemoryService>();
                 services.AddSingleton<IIndexingTelemetryRecorderService, IndexingTelemetryRecorderService>();
                 services.AddSingleton<IIndexStore, SqliteIndexStore>();
                 services.AddSingleton<IPackageScanner, FileSystemPackageScanner>();
