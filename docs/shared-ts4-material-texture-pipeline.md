@@ -6,6 +6,9 @@ Use it when the task is about texture linkage, shader/material decoding, UV rout
 
 Related docs:
 
+- [Knowledge map](knowledge-map.md)
+- [Workflows index](workflows/README.md)
+- [Material pipeline deep dives](workflows/material-pipeline/README.md)
 - [Architecture](architecture.md)
 - [Sim domain roadmap](sim-domain-roadmap.md)
 - [CAS/Sim material authority matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
@@ -98,6 +101,8 @@ What this pass improved:
 ## Progress tree (`v1.1`)
 
 Use this tree as the quick navigation/status layer for the guide.
+
+If the question becomes family-specific, use [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md) rather than continuing to expand this file with narrow `CAS/Sim` authority detail.
 
 Legend:
 

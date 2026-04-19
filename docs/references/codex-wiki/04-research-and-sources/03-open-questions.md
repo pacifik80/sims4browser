@@ -6,6 +6,8 @@
 
 Detailed current authority notes now also live in:
 
+- [Knowledge map](../../../knowledge-map.md)
+- [Material pipeline deep dives](../../../workflows/material-pipeline/README.md)
 - [CAS/Sim Material Authority Matrix](../../../workflows/material-pipeline/cas-sim-material-authority-matrix.md)
 
 ## Что уже НЕ стоит считать open question

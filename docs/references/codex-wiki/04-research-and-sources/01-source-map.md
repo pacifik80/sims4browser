@@ -81,6 +81,9 @@
 
 Companion docs created from this source pack:
 
+- [Knowledge map](../../../knowledge-map.md)
+- [Workflows index](../../../workflows/README.md)
+- [Material pipeline deep dives](../../../workflows/material-pipeline/README.md)
 - [Shared TS4 Material, Texture, And UV Pipeline](../../../shared-ts4-material-texture-pipeline.md)
 - [CAS/Sim Material Authority Matrix](../../../workflows/material-pipeline/cas-sim-material-authority-matrix.md)
 

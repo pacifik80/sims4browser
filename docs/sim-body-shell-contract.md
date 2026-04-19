@@ -1,5 +1,12 @@
 # Sim Body-Shell Contract
 
+Related docs:
+
+- [Knowledge map](knowledge-map.md)
+- [Shared TS4 Material, Texture, And UV Pipeline](shared-ts4-material-texture-pipeline.md)
+- [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Sim domain roadmap](sim-domain-roadmap.md)
+
 This document freezes the current project rule for how `Sim Archetype` builds its initial body shell.
 
 If the concept changes later, update this file together with:

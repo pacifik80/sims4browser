@@ -21,6 +21,35 @@ Status: `In Progress`
 
 #### Problem
 
+The repo now has strong material/render knowledge, but the navigation layer was lagging behind the research layer. Important `CAS/Sim` authority detail had already been split out once, yet there was still no clear task-oriented route between normative guides, workflow deep dives, evidence snapshots, and planning/open-gap docs. That makes narrow follow-up tasks slower because the reader still has to guess where the dense knowledge lives.
+
+#### Chosen Approach
+
+- Keep the shared cross-domain guide as the top-level render/material source of truth.
+- Add a repo-level knowledge hub and section-level README files so readers can enter by task, not by folder guesswork.
+- Keep dense family-specific authority content in workflow deep dives, but make those deep dives bidirectionally linked from the top-level docs and evidence layers.
+- Update supporting indexes so no deep-dive doc becomes orphaned.
+
+#### Actions
+
+- [x] Audit the current documentation entry points and identify missing navigation/index layers.
+- [x] Add a repo-level knowledge hub for durable knowledge layers and task-oriented routes.
+- [x] Add workflow-level indexes so `docs/workflows/` and `docs/workflows/material-pipeline/` stop being unindexed buckets.
+- [x] Add an external-snapshots index so evidence backups have a visible entry point.
+- [x] Update top-level docs, Sim docs, workflow docs, and evidence docs with bidirectional cross-links into the new structure.
+- [ ] Continue splitting dense material/render deep dives when they outgrow their current file boundaries.
+
+#### Restart Hints
+
+- The new top-level navigation hub is `docs/knowledge-map.md`.
+- `docs/README.md` now points to the knowledge map, workflow indexes, the shared guide, and the family-specific authority matrix directly.
+- `docs/workflows/README.md` and `docs/workflows/material-pipeline/README.md` are now the section hubs for procedural docs and render/material deep dives.
+- `docs/references/external/README.md` now gives external snapshots a visible landing page instead of leaving them as an implicit folder.
+- The main shared render/material guide remains `docs/shared-ts4-material-texture-pipeline.md`.
+- The dense family-specific companion remains `docs/workflows/material-pipeline/cas-sim-material-authority-matrix.md`.
+
+#### Problem
+
 The new shared pipeline guide is in place, but its main open gaps are still open: there is no full shader-family registry, no complete authoritative `CAS/Sim` material-linkage contract, no complete compositor/layer rule set, and no full per-slot UV-transform coverage. Without that deeper evidence, the guide is useful but still incomplete for systematic implementation work.
 
 #### Chosen Approach

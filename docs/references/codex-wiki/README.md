@@ -26,6 +26,8 @@
 
 Для общей темы `BuildBuy/CAS/Sim` material, texture, shader и UV pipeline нормативный repo-level guide теперь находится в [../../shared-ts4-material-texture-pipeline.md](../../shared-ts4-material-texture-pipeline.md). Эта wiki остаётся детальной supporting-базой и research-архивом.
 
+Если вопрос уже узкий и упирается в `CAS/Sim` family-level authority, shell truth source или `SimSkin` versus `SimSkinMask`, после общего guide сразу переходи в [../../workflows/material-pipeline/cas-sim-material-authority-matrix.md](../../workflows/material-pipeline/cas-sim-material-authority-matrix.md).
+
 ---
 
 ## Структура wiki
@@ -59,6 +61,7 @@
 Перед любой задачей, связанной с package parsing, asset resolution, 3D preview или export:
 
 1. Прочитать:
+   - `../../knowledge-map.md` когда сначала нужно выбрать правильный knowledge layer
    - `01-foundations/01-dbpf-and-tgi.md`
    - нужный pipeline-файл из `02-pipelines`
    - `03-implementation-guides/01-reader-strategy.md`

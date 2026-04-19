@@ -1,5 +1,12 @@
 # Workflow: Exporting a CAS Asset
 
+Related docs:
+
+- [Knowledge map](../knowledge-map.md)
+- [Shared TS4 Material, Texture, And UV Pipeline](../shared-ts4-material-texture-pipeline.md)
+- [CAS/Sim Material Authority Matrix](material-pipeline/cas-sim-material-authority-matrix.md)
+- [Workflows index](README.md)
+
 ## Current workflow
 
 1. Click `Update Index`, add one or more folders, and run indexing.
@@ -20,3 +27,5 @@
 - The app does not assemble full Sims; export stays scoped to the selected CAS part.
 - Broader CAS categories such as children, pets, occult-specific overrides, accessory edge cases, and generalized container/list-based geometry paths still fall back to diagnostics plus raw export.
 - Material/shader mapping remains best-effort rather than exact in-game parity.
+
+When the limitation is about family-specific material truth source, skintone interaction, or shell versus worn-slot authority, use [CAS/Sim Material Authority Matrix](material-pipeline/cas-sim-material-authority-matrix.md) instead of treating this workflow doc as the final source of truth.

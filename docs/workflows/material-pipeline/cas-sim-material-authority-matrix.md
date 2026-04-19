@@ -4,7 +4,12 @@ This document is the detailed companion for the shared TS4 material guide when t
 
 Related docs:
 
+- [Knowledge map](../../knowledge-map.md)
+- [Workflows index](../README.md)
+- [Material pipeline deep dives](README.md)
 - [Shared TS4 Material, Texture, And UV Pipeline](../../shared-ts4-material-texture-pipeline.md)
+- [Sim domain roadmap](../../sim-domain-roadmap.md)
+- [Sim body-shell contract](../../sim-body-shell-contract.md)
 - [Full Sim and morph pipeline](../../references/codex-wiki/02-pipelines/03-full-sim-and-morphs.md)
 - [Source map and trust levels](../../references/codex-wiki/04-research-and-sources/01-source-map.md)
 - [Open questions](../../references/codex-wiki/04-research-and-sources/03-open-questions.md)

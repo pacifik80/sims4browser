@@ -1,5 +1,12 @@
 # Sim Domain Roadmap
 
+Related docs:
+
+- [Knowledge map](knowledge-map.md)
+- [Shared TS4 Material, Texture, And UV Pipeline](shared-ts4-material-texture-pipeline.md)
+- [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Sim body-shell contract](sim-body-shell-contract.md)
+
 ## Why This Domain Exists
 
 The current asset model covers:

@@ -1,5 +1,11 @@
 # Workflow: Exporting a Build/Buy Object
 
+Related docs:
+
+- [Knowledge map](../knowledge-map.md)
+- [Shared TS4 Material, Texture, And UV Pipeline](../shared-ts4-material-texture-pipeline.md)
+- [Workflows index](README.md)
+
 ## Current workflow
 
 1. Click `Update Index`, add one or more folders, and run indexing.
@@ -21,3 +27,5 @@
 - Build/Buy scene support is intentionally narrow; many objects still stop at diagnostics plus raw export.
 - Cross-package and stateful object resolution remain best-effort rather than universal.
 - Material/shader mapping is approximation-first and will not always match the in-game renderer exactly.
+
+When the question is about shared material/shader interpretation rather than the export procedure itself, use [Shared TS4 Material, Texture, And UV Pipeline](../shared-ts4-material-texture-pipeline.md).
