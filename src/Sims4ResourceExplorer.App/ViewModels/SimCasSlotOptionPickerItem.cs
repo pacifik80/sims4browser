@@ -12,6 +12,10 @@ public sealed class SimCasSlotOptionPickerItem
     public SimCasSlotOptionSummary Option { get; }
     public Guid AssetId => Option.AssetId;
     public string DisplayLabel => Option.DisplayName;
+    public string PickerLabel =>
+        string.IsNullOrWhiteSpace(PackageName)
+            ? DisplayLabel
+            : $"{DisplayLabel} [{PackageName}]";
     public string? PackagePath => Option.PackagePath;
     public string? PackageName => Option.PackageName;
     public string? RootTgi => Option.RootTgi;
@@ -19,8 +23,5 @@ public sealed class SimCasSlotOptionPickerItem
     public static SimCasSlotOptionPickerItem Create(SimCasSlotOptionSummary option) =>
         new(option);
 
-    public override string ToString() =>
-        string.IsNullOrWhiteSpace(PackageName)
-            ? DisplayLabel
-            : $"{DisplayLabel} ({PackageName})";
+    public override string ToString() => PickerLabel;
 }

@@ -32,24 +32,12 @@ Read-only Windows desktop browser/exporter for The Sims 4 package resources and 
 
 ## Documentation
 
+- [Repo working rules](AGENT.md)
 - [Documentation map](docs/README.md)
-- [Big plan](docs/planning/big-plan.md)
 - [Current plan](docs/planning/current-plan.md)
-- [Technical debt](docs/planning/technical-debt.md)
-- [Unknowns and non-goals](docs/planning/unknowns-and-non-goals.md)
+- [Big plan](docs/planning/big-plan.md)
 - [Architecture](docs/architecture.md)
-- [Supported types](docs/supported-types.md)
-- [Known limitations](docs/known-limitations.md)
-- [Sim domain roadmap](docs/sim-domain-roadmap.md)
-- [Third-party licenses](docs/third-party-licenses.md)
-- [Sample data strategy](docs/sample-data-strategy.md)
 - [References](docs/references/README.md)
-- [Chat handoff](docs/operations/chat-handoff.md)
-- [Agent guide](AGENT.md)
-- [Workflow: Build/Buy export](docs/workflows/export-buildbuy-object.md)
-- [Workflow: CAS export](docs/workflows/export-cas-asset.md)
-- [Workflow: Raw resource export](docs/workflows/export-raw-resource.md)
-- [Workflow: Game + Mods](docs/workflows/open-game-and-mods.md)
 
 ## Current status
 

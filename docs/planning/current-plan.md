@@ -1,8 +1,461 @@
 # Current Plan
 
-This file tracks the active block of work and its immediate progress.
+This file is the live execution plan. Update it before work starts and keep it current while the request is still in progress.
 
-## Active Block
+## Mandatory Plan Shape
+
+Every active plan in this file must include:
+
+1. The problem being solved.
+2. The chosen approach.
+3. The actions to perform, with `[x]` and `[ ]` markers showing what is done and what is still pending.
+4. Other hints needed to resume the work in a new chat if execution is interrupted.
+
+The plan must be updated during the same user request, not only at session closeout.
+
+## Active Task
+
+Status: `In Progress`
+
+### Current Request Addendum
+
+#### Problem
+
+The new shared pipeline guide is in place, but its main open gaps are still open: there is no full shader-family registry, no complete authoritative `CAS/Sim` material-linkage contract, no complete compositor/layer rule set, and no full per-slot UV-transform coverage. Without that deeper evidence, the guide is useful but still incomplete for systematic implementation work.
+
+#### Chosen Approach
+
+- Continue the same request as a second research/consolidation packet rather than jumping back into code fixes.
+- Use the new repo guide as the anchor and now gather missing evidence specifically for the open gaps it lists.
+- Combine live web research with local reference implementations and local reverse-engineering snapshots (`TS4SimRipper`, repo decoder code, external snapshots) instead of relying on only one source type.
+- Distill any newly proven rules back into the shared guide and supporting source-map docs, while keeping unresolved areas explicitly marked as open.
+
+#### Actions
+
+- [x] Update the live plan before continuing this follow-up research packet.
+- [x] Gather stronger evidence for Build/Buy authority order and separate it from the weaker `VPXY` question.
+- [x] Gather stronger evidence for `SharedUVMapSpace`, `CompositionMethod`, and `SortLayer` from code-backed and creator-facing sources.
+- [x] Update the shared guide and supporting source-map docs with the newly proven rules and narrower wording.
+- [x] Record which gaps still remain unresolved after this deeper pass.
+- [x] Build the first `v0` repo-local shader-family registry from local decoder buckets and the profile corpus snapshot.
+- [x] Produce the first `v0` authority/fallback matrix for major `Build/Buy`, `CAS`, and `Sim` family groups.
+- [x] Document the current decoder slot-name and UV-interpretation heuristics as explicit implementation baseline.
+- [x] Add representative per-family `v0` slot/parameter tables, including still-raw parameters that need later semantics work.
+- [x] Split the remaining `raw/unmapped` names into narrower semantic buckets instead of one undifferentiated unknown class.
+- [x] Split edge-case families into structurally runtime-dependent cases vs narrow family-local unresolved cases, with a priority queue for the next semantic pass.
+- [x] Narrow the `P1` unresolved set into per-target sheets for `RefractionMap/tex1`, `ShaderDayNightParameters`, `NextFloorLightMapXform`, and `CASHotSpotAtlas`, using local code/corpus evidence plus narrow external lightmap corroboration where available.
+- [x] Strengthen the `P1` pass with local `precomp_sblk_inventory` concentration evidence and external `CASHotSpotAtlas` hotspot-atlas corroboration from TS4 morph/slider documentation.
+- [x] Separate `CASHotSpotAtlas` into an explicit CAS editing/morph branch (`HotSpotControl -> SimModifier -> DMap/BGEO/BOND -> GEOM`) instead of leaving it mixed into the ordinary surface-material chain.
+- [x] Split the remaining narrow semantic gaps into explicit `surface-material`, `lightmap/projection`, and `CAS editing/morph` branches, and add engine-lineage corroboration for `samplerRevealMap` / refraction naming where direct TS4 writeups remain weak.
+- [x] Add a co-presence pass for `samplerRevealMap`, `LightsAnimLookupMap`, `NextFloorLightMapXform`, and `RefractionMap/tex1`, tying local corpus concentration to the current decoder semantics.
+- [x] Add an explicit document coverage map and narrow `VPXY` into a bounded scenegraph/linkage helper instead of leaving it as a diffuse all-purpose unknown.
+- [x] Turn the current `CAS/Sim` evidence into a bounded material-input graph that separates primary identity/material roots from modifier layers and reserve-only fallback paths.
+- [x] Turn the bounded `CAS/Sim` graph into a first family-level slot matrix that separates body shell, head shell, footwear, hair/accessory, and overlay behavior.
+- [x] Tighten the worn-slot `CAS/Sim` boundary so `Hair`/`Accessory` are exact-part-link-first, `Shoes` stay overlay-first, cross-package geometry companions stay valid, and skintone remains shell-only.
+- [x] Tighten the shell-family `CAS/Sim` boundary so body/head shell selection now explicitly preserves default/nude shell gating, body-as-anchor, head-as-mergeable-shell, and shell-only skintone targeting.
+- [x] Narrow the shell-family material truth source so parsed `CASP` field-routing is recorded as the current shell-material floor, while explicit companion `MaterialDefinition` stays a stronger upgrade path when present.
+- [x] Separate `MTNF` evidence into “format-backed geometry-side material carrier” versus “not yet repo-decoded / barely fixture-backed in shell families,” so the remaining shell gap is about prevalence and implementation, not existence.
+- [x] Add the first local sample-corpus prevalence hint for shell-like `MTNF`: the bundled `TS4SimRipper` body/head/waist `.simgeom` samples currently check out as `9/9` containing `MTNF`.
+- [x] Record the current shell `ExplicitMatd` asymmetry explicitly: strong on generic CAS / worn-slot scene-build paths and at the composer-level shell merge seam, but still weak on shell-specific end-to-end asset-graph fixtures.
+- [x] Add modern TS4 creator-tooling evidence that malformed embedded `MTNF` shader payloads can cause save/game-visible issues, so `MTNF` stays documented as behaviorally relevant payload, not only format archaeology.
+- [x] Add TS4-specific creator evidence that `GEOM`-side shader identity is itself behaviorally relevant (`SimGlass`, `SimSkin`, `SimEyes`, `SimAlphaBlended`), so future authority work must preserve shader provenance instead of flattening it into generic surface slots.
+- [x] Add a first bounded GEOM-side shader behavior matrix tying `SimGlass` / `SimSkin` / `SimEyes` / `SimAlphaBlended` to visible behavior and likely authority seams, backed by creator evidence plus local external `TS4SimRipper` code.
+- [x] Add the first local corpus-weight hint for GEOM-side shader families: `SimSkin` / `SimSkinMask` look core in the current precompiled snapshot, while `SimGlass` is present but narrow.
+- [x] Turn that evidence mix into a bounded implementation-priority hint: `SimSkin` as `P1 core`, `SimSkinMask` as `P1 adjacent`, `SimGlass` as `P2 edge but real`, with `SimEyes` / `SimAlphaBlended` preserved but deferred.
+- [x] Turn that `P1` hint into the first bounded authority-seam table: `SimSkin` as the safe baseline skin-family seam, `SimSkinMask` as adjacent auxiliary skin-family semantics until stronger live-asset proof appears.
+- [x] Refine the `SimSkinMask` packet from vague “core-like” evidence to a tighter statement: repeated parameter-level corpus signal plus repo-code absence of a standalone authority branch, which strengthens the adjacent-family reading.
+- [x] Add the first direct sample-asset packet for `SimSkin`: bundled `TS4SimRipper` body/head/waist `.simgeom` resources currently check `9/9` for `SimSkin` shader hash, while no peer asset-level `SimSkinMask` geometry branch has been found.
+- [x] Tighten that asymmetry into an explicit negative finding for the current corpus: the current repo render/composition paths plus bundled external tool code still expose named `SimSkin` / `SimGlass` branches but no peer named `SimSkinMask` authority/export branch.
+- [x] Add broader tooling corroboration for the same reading: current `TS4 Skininator`, `TS4 Skin Converter`, and `Sims 4 Studio` sources keep skin masks inside skintone/overlay/image-mask workflows rather than surfacing a standalone `SimSkinMask` geometry family.
+- [x] Re-check the wider in-repo sample corpus beyond the first folder: no broader local `.simgeom` family surfaced outside the mirrored `TS4SimRipper` resource copies, so the current no-find is not just a one-folder artifact.
+- [x] Re-check the broader mainstream toolchain packet: `TS4CASTools` and public `TS4SimRipper` sources still expose `SimSkin` / `SimGlass` but no peer named `SimSkinMask` asset/export/import branch.
+- [x] Split the densest `CAS/Sim` authority packet into a dedicated workflow doc with cross-links, so the main shared guide stays cross-domain while family-specific authority notes continue to deepen separately.
+- [x] Add stronger body/head/slot corroboration into that dedicated authority doc using current repo code plus `Modifying Sim Appearances`, `File Types`, `Skininator`, and `TS4 Skin Converter`.
+- [ ] Expand the `v0` shader registry into per-family slot/parameter tables with representative live assets.
+- [ ] Expand the `v0` authority/fallback matrix to edge-case `CAS/Sim` and `Build/Buy` families.
+
+#### Restart Hints
+
+- This is a continuation of the same documentation/research request, not a new implementation packet.
+- The anchor doc remains `docs/shared-ts4-material-texture-pipeline.md`.
+- The specific remaining target gaps are now: per-family slot/parameter shader tables, full authority/fallback coverage, exact skintone/compositor math, and full slot-specific UV coverage.
+- The narrowest open semantic targets are now explicitly documented: `RefractionMap/tex1`, `ShaderDayNightParameters` reveal/light helpers, `NextFloorLightMapXform`, and `CASHotSpotAtlas`.
+- `CASHotSpotAtlas` itself is now better grounded; the remaining question there is its carry-through into render/profile metadata, not its base identity.
+- The `CASHotSpotAtlas` side now has a separate editing/morph pipeline branch and should not be collapsed back into ordinary surface-slot semantics.
+- `samplerRevealMap` now has additional engine-lineage support as a reveal/mask helper, but not enough TS4-specific proof to collapse it into a canonical base surface slot.
+- The remaining narrow names should now be resumed branch-first: `samplerRevealMap` under `surface-material`, `RefractionMap/tex1` and `NextFloorLightMapXform` under `lightmap/projection`, `CASHotSpotAtlas` under `CAS editing/morph`.
+- `LightsAnimLookupMap` currently looks narrower than `samplerRevealMap` and should be resumed as a day/night or terrain-light lookup helper, not as a broad shared slot.
+- `NextFloorLightMapXform` now looks most native to `GenerateSpotLightmap`; `SimGhostGlassCAS` should be treated as the weaker carry-through case unless stronger evidence appears.
+- `VPXY` is still an open gap, but it is now a bounded one: preserve it as object/scene linkage metadata and do not promote it into the base material authority chain without stronger TS4-specific proof.
+- The guide now contains an explicit section-level coverage map; future passes should update that map so the document stays self-diagnosing.
+- `CAS/Sim` linkage is still partial, but it now has a bounded shared input graph: primary `CASP/GEOM/MTNF` plus material-definition or field-routing candidates, then `RegionMap`/UV/compositor modifiers, then Sim-only `Skintone` routing.
+- `CAS/Sim` also now has a bounded family split: body shell, head shell, footwear overlay, hair/accessory slots, and compositor-driven overlay/detail families. The remaining gap is no longer "what are the families?" but "what is the exact authority order inside each family?"
+- worn-slot families are now also better bounded: `Hair`/`Accessory` are exact-part-link-first and can legally pick up cross-package geometry companions, `Shoes` stay overlay/body-assembly content, and skintone should remain excluded from these families unless stronger evidence appears.
+- shell families are now better bounded too: default/nude shell gating is explicit, body shell is the current assembly anchor, head shell is a mergeable sibling branch, and skintone targeting is currently shell-only. The next remaining shell question is material truth source, not shell identity selection.
+- shell-material truth source is now narrower too: parsed `CASP` field-routing is the current repo floor for body/head shell materials, explicit companion `MaterialDefinition` is a stronger upgrade path when present, and the next remaining question is live-family prevalence plus the exact role of embedded `MTNF`.
+- `MTNF` is now also better bounded: existence as a GEOM-side material carrier is strong, but current repo GEOM parsing still skips the payload and the current shell fixture corpus barely exercises it. The next `MTNF` question is prevalence plus implementation, not whether it exists.
+- the first local prevalence hint is now recorded too: the bundled external `TS4SimRipper` shell-like sample corpus checks `9/9` for `MTNF`, but this is still a local snapshot signal, not yet a repo-wide live-asset survey.
+- shell `ExplicitMatd` coverage is now also known to be asymmetric: it is already strong at the composer seam and on generic CAS / worn-slot scene-build fixtures, but shell-specific end-to-end asset-graph coverage still leans `ApproximateCas`.
+- `MTNF` is now narrowed one step further too: besides format-backed existence and the `9/9` local sample hint, there is now TS4 creator-tooling evidence that broken MTNF shader payload handling can affect saved/game-visible `GEOM` behavior.
+- `GEOM`-side shader identity is now narrowed too: TS4-specific creator evidence ties `SimGlass`, `SimSkin`, `SimEyes`, and `SimAlphaBlended` to real visible family behavior, so future authority work should preserve shader-family provenance instead of flattening it into generic alpha/diffuse guesses.
+- there is now also a first bounded GEOM-side shader behavior matrix; the remaining question is no longer whether these shader families matter, but how they rank against decoded `MTNF` params and higher-level `CASP` routing in the shared contract.
+- the local precompiled corpus now adds one more prioritization hint: `SimSkin`-adjacent names look central in the current snapshot, while `SimGlass` looks real but narrow. This should influence implementation order, but not be overstated as full in-game proof.
+- there is now also a bounded implementation-priority split for these families. The next step is no longer choosing where to start, but turning `P1 core` families into live-asset-backed authority tables.
+- the first bounded `P1` authority-seam table now exists too: `SimSkin` is safe to treat as the baseline skin-family seam, while `SimSkinMask` should stay attached to that packet unless live assets prove a stronger standalone branch.
+- `SimSkinMask` is now also better bounded in the wording of the guide itself: current evidence shows it as repeated parameter-level corpus signal and adjacent skin-family semantics, while current repo code still lacks a dedicated standalone branch for it.
+- there is now also a first direct sample-asset packet for that asymmetry: bundled local body/head/waist `.simgeom` resources check out as `SimSkin`, while `SimSkinMask` still has no peer asset-level geometry branch in current repo evidence.
+- the current negative result is now stronger too: exact code/tool sweeps inside the repo snapshot still expose `SimSkin` / `SimGlass` but not a peer named `SimSkinMask` authority/export branch.
+- external creator/tooling evidence now also leans the same way more explicitly: current skin-mask workflows stay under skintone, overlay, burn-mask, and image-mask semantics rather than surfacing a standalone `SimSkinMask` geometry family.
+- the widened corpus pass still stayed negative: outside the mirrored `TS4SimRipper` resource copies, the current workspace does not yet contain a broader local sample family that would challenge that reading.
+- the widened mainstream toolchain pass also stayed negative: checked `TS4CASTools` and public `TS4SimRipper` code still expose `SimSkin` / `SimGlass` only, so a counterexample likely requires genuinely new live assets or rarer toolchains rather than one more pass over the same obvious sources.
+- the authority topic is now also split structurally: the main guide keeps the shared cross-domain contract, while the detailed `CAS/Sim` family matrix lives in `docs/workflows/material-pipeline/cas-sim-material-authority-matrix.md`.
+- the guide now also carries more direct section-level source pointers; future passes should keep adding them in-place instead of leaving provenance only in chat.
+- Prefer sources that can improve implementation confidence directly: format pages, creator tooling evidence, `TS4SimRipper`, repo decoder code, and local external snapshots.
+
+#### Problem
+
+The repo still does not have one complete, authoritative guide for the shared Sims 4 material / texture / shader / UV pipeline. Current knowledge is split across code, local reference notes, and partial implementation docs, and that prevents a systematic fix for the current character-texture mapping problems.
+
+#### Chosen Approach
+
+- Pause narrow implementation work and treat this request as a documentation and research packet.
+- Audit the current repo docs and local references first, then collect missing external knowledge from live community/reference sources.
+- Consolidate the results into one repo guide focused on a unified cross-domain pipeline: resource discovery, shader/material decoding, texture roles, UV routing, atlas/compositor behavior, and validation rules shared across `BuildBuy`, `CAS`, and `Sim`.
+- Record open gaps explicitly if the available sources still do not prove a complete rule.
+
+#### Actions
+
+- [x] Update the live plan before continuing this request.
+- [x] Audit the current repo documentation and local references for material / texture / shader / UV coverage.
+- [x] Gather missing external sources from live Sims 4 modding / reverse-engineering references.
+- [x] Write a consolidated guide in the repo and update the documentation map to point to it.
+- [x] Record unresolved gaps and risks if the available sources still do not close the full contract.
+
+#### Restart Hints
+
+- This request intentionally pauses the current narrow `Sim` UV bug packet in favor of a broader documentation/research pass.
+- The target outcome is one consolidated repo guide for the shared Sims 4 material / texture / shader / UV pipeline, not three separate domain-specific notes.
+- The guide should help future implementation converge `BuildBuy`, `CAS`, and `Sim` onto one decoder and viewport/export contract.
+- The new repo-level source of truth is `docs/shared-ts4-material-texture-pipeline.md`; supporting detail remains in `docs/references/codex-wiki/`.
+- External sources newly folded into the repo guide/source map include Modders Reference resource/file indexes, Mod The Sims packed-file/GEOM/MLOD/VRTF pages, and Sims 4 Studio threads on CAS UV space and `ColorShiftMask`.
+
+#### Problem
+
+The latest manual retest after `build-0178` sharpened the seam further: the body is no longer just a tint-application problem. The user's `Material UV` screenshot shows torso and arm UV islands landing on non-skin panels instead of the actual character diffuse area, which points to a shared texture-group / UV-routing selection bug.
+
+#### Chosen Approach
+
+- Treat the user's `Material UV` screenshot as authoritative evidence that the next bug is in texture-group selection or UV-channel routing, not in Sim assembly or skintone note propagation.
+- Re-check the newest session log to confirm the active build and diagnostics before changing code.
+- Inspect the shared `MainWindow` viewport selection path (`SelectViewportTextureGroup`, `SelectPrimaryViewportTexture`, `SelectTextureCoordinates`) together with the manifest/material construction path that feeds it.
+- Keep the fix shared for `BuildBuy`, `CAS`, and `Sim`: no new Sim-only renderer branch.
+
+#### Actions
+
+- [x] Update the live plan before continuing this request.
+- [ ] Inspect the newest `build-0178` session log and confirm the exact diagnostics for the problematic YA Male archetype.
+- [ ] Trace the shared texture-group and UV-channel selection path that feeds `Material UV` and `LitTexture`.
+- [ ] Land the next narrow shared fix and produce the next manual-test build.
+
+#### Restart Hints
+
+- The latest user observation is stronger than the previous color symptom: the torso/arm UV shells do not overlay the actual skin diffuse panel in `Material UV`.
+- That means `MainWindow` is likely selecting the wrong viewport texture group or the wrong primary texture within the correct material, even after the earlier `ViewportTintColor` multiplier fix.
+- The next inspection seam is shared UI/render logic first, then manifest/material construction only if the UI is faithfully rendering a bad manifest payload.
+
+#### Problem
+
+The latest real `build-0177` retest proved that `region-map-aware skintone routing` now materializes in runtime diagnostics, but the rendered `Sim` body still appears flat green. That means the current seam has moved downstream from `SimSceneComposer` into the shared viewport material application path.
+
+#### Chosen Approach
+
+- Treat the `build-0177` session log as proof that routing notes and tint payloads now reach `CanonicalMaterial`.
+- Inspect the shared `MainWindow` material builder instead of adding another `Sim`-specific branch.
+- Verify whether the textured viewport path is multiplying the entire diffuse layer by `ViewportTintColor` even when there is no swatch-mask composite, which would explain the flat green body.
+- Land one renderer-side fix that keeps the shared material/texture pipeline unified across `BuildBuy`, `CAS`, and `Sim`.
+
+#### Actions
+
+- [x] Update the live plan before continuing this request.
+- [x] Confirm from the real `build-0177` session that `Applied region-map-aware skintone routing outcome...` now appears in diagnostics.
+- [x] Narrow the next seam to the shared viewport material application path in `MainWindow.xaml.cs`.
+- [x] Inspect whether textured `PhongMaterial` creation wrongly multiplies full diffuse textures by `ViewportTintColor` when no swatch-mask composite is active.
+- [x] Land the renderer-side fix and produce the next manual-test build.
+
+#### Restart Hints
+
+- `session_20260419_161210_28736` is the authoritative `build-0177` run for the current seam.
+- That session now includes `Applied region-map-aware skintone routing outcome to 5 merged material target(s).`
+- It also still reports `Resolved 1 manifest-driven CAS material(s) before considering same-instance fallback textures.`
+- Because the viewport still shows the body in flat green, the next likely seam is that `MainWindow.CreateMaterial(...)` uses `ViewportTintColor` as the lit diffuse multiplier even when no swatch-mask composite was produced.
+- That renderer seam is now patched in `src/Sims4ResourceExplorer.App/MainWindow.xaml.cs`: textured `LitTexture` materials no longer multiply the whole diffuse map by `ViewportTintColor`; tint metadata remains available for base-color fallback and dedicated swatch compositing only.
+- The next manual verification build is `build-0178`.
+
+#### Problem
+
+The latest user retest uncovered two distinct issues: `.\run.ps1 -NoBuild` relaunched the old standard output build instead of the newer alternate-folder build, and `build-0177` still looks visually unchanged even though the new region-map-aware skintone routing now materializes in diagnostics.
+
+#### Chosen Approach
+
+- Separate launch-contract issues from render-pipeline issues instead of treating them as one problem.
+- Accept the `build-0177` session log as proof that the skintone-routing packet is now logically active.
+- Move the next debugging seam downstream into the preview renderer/material application path, because the composed `CanonicalMaterial` objects already carry the new routing notes but the viewport still renders the body as flat green.
+- Keep launch instructions explicit: `-NoBuild` only reopens the already-built standard output folder and is not valid for alternate-folder builds produced to avoid locked binaries.
+
+#### Actions
+
+- [x] Update the live plan before continuing this request.
+- [x] Confirm from fresh session metadata that `.\run.ps1 -NoBuild` reopened the old standard-output build (`0176`) rather than the alternate-folder `0177` build.
+- [x] Confirm from a real `build-0177` session that region-map-aware skintone routing now materializes in diagnostics.
+- [ ] Inspect where `CanonicalMaterial.ViewportTintColor` is consumed in the preview renderer and why it does not visibly tint the rendered Sim body.
+- [ ] Land the next narrow renderer-side fix and retest the same YA Male archetype.
+
+#### Restart Hints
+
+- `session_20260419_161142_6448` is the `build-0176` run reopened by `.\run.ps1 -NoBuild`; this is expected because `-NoBuild` launches the standard output folder, not the alternate `tmp/build-0177-app/` folder.
+- `session_20260419_161210_28736` is the real `build-0177` run.
+- That `build-0177` session proves the previous packet worked logically:
+  - `Applied region-map-aware skintone routing outcome to 5 merged material target(s).`
+  - each `ApproximateCasMaterial` now includes `Sim skintone route 000000000000AFC5 | region_map Base | source ...`
+- Because the viewport still shows the body in flat green despite those diagnostics, the next seam is in preview material rendering rather than in `SimSceneComposer` routing.
+
+### Current Request Addendum
+
+#### Problem
+
+Manual verification packets have become ambiguous because the repo has two launch modes through `run.ps1`, but the instructions given to the user did not always say exactly which one to use. That caused at least one retest to run an older build than the packet being discussed.
+
+#### Chosen Approach
+
+- Treat launch instructions as part of the verification contract, not as an informal aside.
+- Standardize on `run.ps1` as the authoritative user launch path for repo-root manual testing unless a packet explicitly requires a nonstandard output folder.
+- Make every future runnable packet state one exact command and whether it rebuilds or reuses the existing binaries.
+- Freeze the rule in the minimal protocol docs so the same ambiguity does not return in the next chat.
+
+#### Actions
+
+- [x] Update the live plan before changing the protocol docs.
+- [x] Inspect `run.ps1` and confirm the actual semantics of default launch vs `-NoBuild`.
+- [x] Update the repo protocols so future runnable packets always specify one exact launch command and whether it rebuilds.
+- [ ] Use the new protocol immediately for the next manual `build-0176` retest instruction.
+
+#### Restart Hints
+
+- `run.ps1` without `-NoBuild` is the "fresh build and launch" path: it stops running app instances, removes previous output, rebuilds, and launches the new executable.
+- `run.ps1 -NoBuild` is only the "relaunch already-built binaries" path: it does not rebuild and should only be used when the user is intentionally rerunning the exact same build.
+- The previous retest ambiguity happened because the user effectively reran `build-0175`, while the packet under discussion was `build-0176`.
+- Future runnable instructions should always be phrased as one explicit command, with a short note like `rebuilds and launches fresh` or `launches the already-built binaries`.
+
+### Current Request Addendum
+
+#### Problem
+
+The latest manual `Sim` preview session shows that head textures are acceptable but body textures still map incorrectly across the mesh. `build-0175` improved texture-source selection, yet the persisted diagnostics still show approximate CAS material routing rather than authoritative material-definition decoding for the body shell.
+
+#### Chosen Approach
+
+- Use the newest persisted asset-session log as the authoritative runtime signal for this packet.
+- Keep the shared-pipeline direction intact: `BuildBuy`, `CAS`, and `Sim` must converge on one material/texture/UV-routing algorithm after asset-specific graph resolution.
+- Narrow this packet to the next render seam: prefer decoded `MATD` / `MTST` material-definition resources for `CAS` / `Sim` before manifest approximation, while preserving manifest and same-instance texture paths as ordered reserve routes.
+- Keep the existing `UV1` preservation fix in place and do not reopen body-assembly or fallback-policy work in this packet.
+
+#### Actions
+
+- [x] Update the live plan before starting the packet.
+- [x] Inspect the newest persisted `Sim` preview session and confirm that body layers still route through approximate CAS materials.
+- [x] Isolate the next shared-pipeline seam after manifest routing: `CAS` / `Sim` preview still does not prefer decoded material-definition resources when they are present.
+- [x] Implement `MaterialDefinition`-first routing for `CAS` / `Sim` preview scenes with focused coverage.
+- [x] Run focused tests for material-definition routing plus the recent UV/manifest seams.
+- [x] Produce a new manual-test build for this packet without disturbing the user's currently running app instance.
+- [x] Ask the user to retest the same problematic `Sim` archetype and inspect whether body materials now report material-definition diagnostics instead of manifest approximation.
+- [x] Inspect the newest post-request session and verify whether the user actually launched `build-0176`.
+- [x] Re-run the manual check on a real `build-0176` session before making any conclusion about visual improvement or the next seam.
+- [ ] Inspect the real `build-0176` diagnostics/logs and determine why `MaterialDefinition` routing still does not win for the problematic body layer.
+- [x] Inspect the real `build-0176` diagnostics/logs and determine why `MaterialDefinition` routing still does not win for the problematic body layer.
+- [x] Land the next narrow fix only after the missing authoritative material path is identified from code and runtime evidence.
+- [x] Prove from the live index that the problematic body geometry instance does not expose same-instance `MaterialDefinition` resources, so the `0176` packet cannot change that case visually.
+- [x] Identify the next live seam: skintone routing currently rejects region-map-backed `ApproximateCas` body/head materials because it only accepts `color_shift_mask`.
+- [x] Implement the narrow skintone-routing fix and cover it with focused tests.
+- [ ] Produce the next runnable verification build and retest the same YA Male archetype on the fresh build.
+
+#### Restart Hints
+
+- The latest manual evidence comes from `%LOCALAPPDATA%\Sims4ResourceExplorer\Telemetry\AssetSessions\session_20260419_153657_32880`.
+- That session shows `Sim archetype: Human | Young Adult | Male` with body textures still looking mis-mapped even though the preview log already says `Resolved 1 manifest-driven CAS material(s) before considering same-instance fallback textures.`
+- The missing seam is deeper than texture-source choice alone: body layers still surface `ApproximateCasMaterial` diagnostics rather than decoded `MATD` / `MTST` material semantics.
+- The current packet lands in `src/Sims4ResourceExplorer.Preview/BuildBuySceneBuildService.Cas.cs` and keeps the shared resolver direction: material-definition first, manifest second, same-instance fallback last.
+- Focused coverage lives in `tests/Sims4ResourceExplorer.Tests/ExplorerTests.cs`, especially `CasGraphScene_PrefersMaterialDefinitionRoutingBeforeManifestApproximation`.
+- The latest manual-test build for this packet is `build-0176`.
+- The next manual-test build for the current seam is `build-0177`.
+- Because the user's existing app process locked the default output folder, the runnable build for this packet was produced in `tmp/build-0176-app/` instead of the standard `bin/.../win-x64/` location.
+- The newest user session after the retest attempt is `session_20260419_155013_27672`, but its `metadata.json` still says `build-0175`. The old path was re-run, so that session cannot validate the `0176` material-definition change.
+- That `build-0175` session still shows only `Resolved 1 manifest-driven CAS material(s) before considering same-instance fallback textures.` and repeated `ApproximateCasMaterial` entries; there are no `material-definition` diagnostics yet.
+- The user has now shown a real `build-0176` UI screenshot. Its diagnostics still say `Resolved 1 manifest-driven CAS material(s) before considering same-instance fallback textures.` and still do not show any `material-definition` diagnostics, so the new path is not winning for this archetype at runtime.
+- Live index inspection proved why: for body geometry instance `FACB14F02CD72951` in `ClientFullBuild0.package`, the same-instance resource set contains only `Geometry` and `RegionMap`, with no `MaterialDefinition` resources at all.
+- The next actual visual seam is therefore in `src/Sims4ResourceExplorer.Core/SimSceneComposer.cs`, not in `MATD/MTST` lookup. The current skintone application path already exists, but `MaterialSupportsRegionMapSkintoneRouting(...)` was too narrow and only accepted `color_shift_mask`.
+- That filter now also accepts `region_map` textures and `ApproximateCas` materials, so body/head payload materials that are region-map-backed but only approximated can finally receive the resolved skintone viewport tint.
+
+### Current Request Addendum
+
+#### Problem
+
+Investigate and improve incorrect texture-to-mesh mapping in character preview scenes, because badly mapped `Sim` textures now hide whether body/head assembly is actually correct.
+
+#### Chosen Approach
+
+- Start from the current `build-0173` runtime behavior and inspect the exact `Sim` material-routing and UV/mapping seams that feed the assembled preview meshes.
+- Use the latest persisted session log as evidence, then trace the code paths that select CAS textures, bind them to materials, and route UV semantics into the final preview scene.
+- Keep the packet narrow: fix mapping/assignment errors in the current preview pipeline first, not broad scene/assembly architecture.
+- Preserve the current authoritative character-assembly rules while improving visual correctness of the already selected body/head layers.
+- Treat the local `UV1` fix only as a first seam closure. Follow-up packets must move `BuildBuy`, `CAS`, and `Sim` toward one shared material/texture/UV-routing algorithm rather than separate per-domain mapping behavior.
+- The next convergence seam is manifest-driven texture routing: `CAS`/`Sim` preview should consume the same canonical material manifest inputs it already indexes, with same-instance geometry fallback only as a reserve path rather than a parallel texture-selection implementation.
+
+#### Actions
+
+- [x] Update the live plan before starting this packet.
+- [x] Inspect the current `Sim` texture/material/UV seams and the latest session evidence for mis-mapped character textures.
+- [x] Isolate the narrowest render/material seam causing wrong texture placement on `Sim` meshes.
+- [x] Implement the fix with focused tests.
+- [x] Build and verify a new manual-test app version for character preview inspection.
+- [x] Isolate the first cross-domain convergence seam: `CAS`/`Sim` scene build currently bypasses `MaterialManifestEntry` and resolves textures through a separate fallback-only path.
+- [x] Implement the first manifest-driven shared-pipeline step with focused tests.
+- [x] Build and verify the next manual-test app version after the shared-pipeline step lands.
+
+#### Restart Hints
+
+- The next packet is about visual texture mapping on already-selected character meshes, not about fallback policy or index mutability.
+- The latest manual-test build is `build-0175`.
+- The most recent session log is `session_20260419_145647_29872`; it confirms `Sim` previews open successfully but still show approximate CAS materials and repeated rig/region-map limitations.
+- The isolated first seam is in `src/Sims4ResourceExplorer.Preview/BuildBuySceneBuildService.Cas.cs`: the CAS GEOM parser/emitter currently does not preserve a real second UV set into `CanonicalMesh`.
+- The viewport already supports `UV1` selection and UV transforms in `src/Sims4ResourceExplorer.App/MainWindow.xaml.cs`, so the first fix should stay inside the CAS GEOM parse/emission path and focused preview tests.
+- The landed fix now preserves a real secondary UV set into `CanonicalMesh` for CAS/Sim preview scenes, with focused coverage in `tests/Sims4ResourceExplorer.Tests/ExplorerTests.cs`.
+- The user expectation is now explicit: texture parsing and mapping must converge on one documented, shared pipeline across `BuildBuy`, `CAS`, and `Sim`; knowledge gained in one domain should be reusable in the others instead of copied into domain-specific logic.
+- The next concrete seam is that `CasAssetGraph.Materials` already carries `MaterialManifestEntry`, but `BuildBuySceneBuildService.Cas.cs` still resolves textures directly from geometry fallback. The next packet should make manifest-driven texture resolution primary in CAS/Sim preview and leave fallback textures only as reserve coverage.
+- That manifest-driven step is now landed: `BuildBuySceneBuildService.Cas.cs` first resolves `CasAssetGraph.Materials` into `CanonicalMaterial`/`CanonicalTexture` and only then falls back to same-instance geometry textures if manifest routing yields nothing.
+
+#### Problem
+
+Inspect the newest persisted app logs after the user's explicit reindex plus manual browsing across `Sim Archetype`, `BuildBuy`, and `CAS`, so the next packet starts from the real post-rebuild runtime behavior instead of anecdotal UI impressions.
+
+#### Chosen Approach
+
+- Read the newest per-session asset logs under `%LOCALAPPDATA%\Sims4ResourceExplorer\Telemetry\AssetSessions\`.
+- Correlate them with the newest indexing telemetry folder to confirm the rebuild path completed cleanly.
+- Focus on warnings, unresolved preview states, crashes, and any evidence that the new structured metadata packet still depended on lazy runtime enrichment.
+- Do not open a new implementation packet unless the logs show a concrete regression or unfinished contract seam.
+
+#### Actions
+
+- [x] Update the live plan before reading logs for this request.
+- [x] Inspect the newest asset-session folders produced by the user's manual run.
+- [x] Inspect the newest indexing telemetry folder produced by the explicit rebuild.
+- [x] Summarize what the logs confirm about `Sim Archetype`, `BuildBuy`, and `CAS` behavior after rebuild.
+- [x] Note any remaining risks or missing observability seams if the logs are still too shallow.
+
+#### Restart Hints
+
+- The user has already rebuilt the index in the app and manually browsed `Sim Archetype`, `BuildBuy`, and `CAS`.
+- The immediate question is not whether the UI "seems fine", but whether persisted logs show hidden failures, unresolved states, or read-path writes after the explicit rebuild.
+- Relevant log roots remain `%LOCALAPPDATA%\Sims4ResourceExplorer\Telemetry\AssetSessions\` and `%LOCALAPPDATA%\Sims4ResourceExplorer\Telemetry\Indexing\`.
+- The current app build used for this packet should be at least `0173`, because that is the first build where structured `CASPreset` / `RegionMap` / `Skintone` descriptions are indexed explicitly instead of waiting for raw-resource lazy enrichment.
+- The newest manual session is `session_20260419_145647_29872` on `build-0173`; it contains `6` `Sim` previews, `1` `BuildBuy`, and `1` `Cas`, with no `Exception`, `Unhandled`, or `Crash` markers.
+- The newest rebuild telemetry is `indexing_20260419_145701`; it completed in about `5m43s`, processed `4,965` packages and `4,789,589` resources, and still reports the same `2` known `EP18` package failures (`Too many bytes in what should have been a 7-bit encoded integer.`).
+- The current log evidence confirms post-rebuild asset browsing works on the persisted index, but it does not yet prove the new `CASPreset` / `RegionMap` / `Skintone` descriptions in the raw browser because the user session did not open those raw resource types directly.
+- Performance tails remain visible and should stay on the backlog: some `Sim` / pet / `Cas` previews still spend about `4.9s` to `5.7s` in texture-heavy scene reconstruction, and the sampled `BuildBuy` bench took about `51.7s` to build its scene.
+
+#### Problem
+
+Clarify the real runtime contract of the persisted index after a user-reported resize crash during preview load, so the next bug packet starts from the actual read/write behavior instead of the assumed one.
+
+#### Chosen Approach
+
+- Inspect the concrete UI and indexing service call sites that run during index creation, asset browsing, preview opening, and raw export.
+- Separate the stable persisted index/rebuild path from any lazy metadata-enrichment writes that can still occur during normal app use.
+- Answer the user from code evidence first, then freeze the new architectural rule in the minimal durable docs set before opening an implementation packet.
+- Freeze the target state for character assembly as an index-driven graph walk: runtime assembly should start from the archetype/template root and follow persisted authoritative links/facts instead of rediscovering them heuristically during preview.
+- Do not broaden the scope into a crash fix packet until the index contract is stated clearly.
+- After removing runtime writes, move runtime-needed metadata into explicit indexing/finalization passes starting with the cheapest safe fields, and keep version invalidation explicit.
+
+#### Actions
+
+- [x] Update the live plan before continuing this request.
+- [x] Re-read the current active plan and preserve the previous character-assembly frontier.
+- [x] Inspect the concrete read/write index paths used by app indexing and asset opening.
+- [x] Inspect the newest session log after the reported resize crash and confirm what it does or does not capture yet.
+- [x] Summarize the exact index contract for the user, including the one narrow in-session write path that still exists.
+- [x] Confirm the architectural direction: serving index mutability on read paths is not acceptable as a long-lived contract.
+- [x] Freeze the new rule in the minimal durable docs set so future packets treat the serving index as immutable post-build.
+- [x] Confirm the target expectation for character assembly: the index should persist enough authoritative links, facts, and markers that runtime assembly mostly traverses indexed graph state rather than guessing/searching.
+- [x] Extend the durable docs so `Sim` roadmap and big-plan both describe index-driven character assembly and explicit indexing passes instead of runtime lazy persistence.
+- [x] Land the first code packet: runtime raw-resource enrichment no longer persists back into the live serving SQLite catalog.
+- [x] Remove the `PersistResourceEnrichmentAsync` serving-index write seam from `IIndexStore` so runtime reads no longer have a backdoor for mutating indexed metadata.
+- [x] Update focused tests to prove the enrichment service still enriches the current operation without persisting to the index.
+- [x] Open the next indexing packet from the new immutable-index contract instead of returning to runtime lazy writes.
+- [x] Inspect which deferred metadata fields are still missing from initial indexing and rank them by cost/value.
+- [x] Implement the first explicit indexing-side metadata pass for the cheapest high-value fields.
+- [ ] Add version invalidation and focused tests for the new indexing-side metadata pass.
+- [x] Narrow the first explicit metadata packet to structured descriptions for `CASPreset`, `RegionMap`, and `Skintone`, because those types already have deterministic extractors and currently rely on runtime enrichment for user-visible metadata.
+- [x] Persist those structured descriptions during explicit indexing/finalization instead of on lazy raw-resource opens.
+- [x] Verify that runtime read paths remain write-free while indexed metadata for those three types becomes available immediately after rebuild.
+- [x] Decide that the resize crash should open a separate follow-up packet after the index contract is clarified, because the current session logger still records only startup and not the in-flight preview failure.
+
+#### Restart Hints
+
+- The immediate question is not about body-policy drift; it is about whether the persisted SQLite/shard index is immutable during normal asset work.
+- The likely answer from current code is "mostly yes for browse/preview queries, but not fully", because resource metadata enrichment can still persist missing fields on demand.
+- The architectural target for the next indexing packet is stricter than the current code: the serving index must become immutable after a successful explicit index build, and any persisted derived data must be produced inside explicit indexing passes with version invalidation rather than on browse/open read paths.
+- The rule is now frozen in `docs/architecture.md` and `AGENT.md`; the next implementation packet can remove the current lazy `PersistResourceEnrichmentAsync` write path from runtime read flows under that contract.
+- The desired end state for `Sim` assembly is now explicit: index-time extraction should persist the authoritative assembly graph inputs needed for body/head/outfit/rig/skintone/morph selection, so runtime preview starts at the root archetype/template and follows indexed links to the exact resources it must load; unsupported gaps should stay explicit rather than triggering a new heuristic search path.
+- That first implementation packet is now landed: `ResourceMetadataEnrichmentService` still enriches the resource in memory for the current raw open/export operation, but the live serving catalog is no longer mutated on read paths.
+- The next indexing packet is now sharper: identify which runtime-needed raw-resource metadata fields should move into explicit indexing/finalization passes, starting with the cheapest high-value fields and keeping serving-index version invalidation explicit.
+- This packet should prefer fields that do not require heuristic rediscovery at runtime. If one field is expensive or format-specific, leave it deferred for a later explicit pass instead of reintroducing any runtime persistence.
+- The current narrow packet should start with `CASPreset`, `RegionMap`, and `Skintone` structured descriptions, because `Ts4StructuredResourceMetadataExtractor` already deterministically supports those formats and they do not require any new runtime fallback path.
+- That structured-metadata packet is now landed in source and covered by focused tests: seed-pass indexing now persists deterministic descriptions for `CASPreset`, `RegionMap`, and `Skintone`, while runtime `EnrichResourceAsync` remains unused on the read path.
+- One infrastructure tail remains open after this packet: package-level content-version invalidation still does not force rescans when resource-metadata extraction semantics change for unchanged package files, so the next index-contract follow-up should decide whether `packages` needs an explicit content-version column or equivalent rebuild gate.
+- The latest crash-session folder is `session_20260419_140804_25936` on `build-0172`; it contains `metadata.json` plus only the startup banner in `asset_openings.log`, so resize-crash observability is still incomplete before final preview apply/log emission.
+- Concrete call sites already inspected for this addendum include `MainViewModel.RunIndexAsync`, `RefreshAssetBrowserAsync`, `RefreshRawBrowserAsync`, `SelectResourceAsync`, `ExportSelectedRawAsync`, `SqliteIndexStore.PersistResourceEnrichmentAsync`, and `ResourceMetadataEnrichmentService.EnrichAsync`.
+
+### Problem
+
+Resume character/body assembly work from concrete runtime/index evidence and remove the stale `GP01` legacy archetype rows that still surface as `Character archetype: Species 0x...`, because they hide the real human archetypes and keep the unresolved body-shell tail artificially open.
+
+### Chosen Approach
+
+- Keep the frozen body-shell contract intact and treat the new session logs as the first evidence source, but do not block on them when they contain no asset-opening entries yet.
+- Start from build `0171`, which already writes per-launch session logs under `%LOCALAPPDATA%\Sims4ResourceExplorer\Telemetry\AssetSessions\`.
+- Use the live shard-backed index as the authoritative current-state source for this packet.
+- Suppress only the untrusted legacy `SimInfo` summary rows that currently parse as `SimInfo v20 | species=Species 0x...` and become separate `Sim Archetype` assets, while leaving body assembly policy and default-body selection rules unchanged.
+- Rebuild the live shard-backed index after the code change, because the visible app/query behavior is served from persisted canonical asset summaries rather than the current source tree.
+- Verify that the visible `Sim Archetype` list and survey now prefer the sane delta-backed `Human` archetypes over the stale full-build `Species 0x...` rows.
+
+### Actions
+
+- [x] Carry forward build `0171` and the new persisted session logging capability into the next character-assembly packet.
+- [x] Update this live plan before reading logs or editing code.
+- [x] Inspect the newest persisted asset session log from the latest available app runs.
+- [x] Confirm that the current session logs still contain only startup banners and no asset-opening entries.
+- [x] Correlate the unresolved `GP01` rows with the live shard-backed index and isolate the real seam.
+- [x] Confirm that the bad `Species 0x...` archetypes come from `GP01` full-build `SimInfo v20` summaries in `index.shard01.sqlite`, while matching delta rows already persist sane `Human` `SimInfo v38` identity for the same `root_tgi`.
+- [x] Implement the narrow summary/index fix so those untrusted legacy opaque-species rows stop surfacing as canonical `Sim Archetype` assets.
+- [x] Verify the code path with focused tests and the full test suite.
+- [x] Rebuild the live shard-backed cache so the new canonical `Sim` asset summaries replace the stale `Species 0x...` entries in serving SQLite.
+- [x] Confirm that the fresh live survey now reports `38` visible archetypes with `ExplicitBodyDriving=6`, `IndexedDefaultBodyRecipe=29`, and `Unresolved=3`.
+- [x] Produce a new manual-test app build for the updated live cache and visible archetype list.
+
+### Restart Hints
+
+- This repository already has unrelated uncommitted code changes. Keep the write set narrow and do not revert unrelated edits.
+- Preserve the body-shell policy recorded below and in `docs/sim-body-shell-contract.md`: no broad compatibility search, no styling-layer mixing, no new workaround branch.
+- The current manual-test build is `0172`, produced from `src/Sims4ResourceExplorer.App`.
+- The persisted session logging service lives in `src/Sims4ResourceExplorer.App/Services/AssetSessionLogService.cs` and writes to `%LOCALAPPDATA%\Sims4ResourceExplorer\Telemetry\AssetSessions\session_yyyyMMdd_HHmmss_<pid>\`.
+- The latest available session folders still contain only the startup banner in `asset_openings.log`, so this packet currently relies on live index evidence rather than user-opened asset logs.
+- The current live-store query path serves from shard databases (`index.sqlite` plus `index.shard01-03.sqlite`) through `SqliteIndexStore.QueryAssetsAsync`.
+- The concrete drift for this packet is now closed: the stale `GP01` canonical `Sim` assets built from `SimInfo v20 | species=Species 0x...` summaries were removed from the visible canonical archetype list after the live rebuild.
+- The current live survey file is `tmp/sim_archetype_body_shell_audit.json`, and it now reports `38` total archetypes with only `3` unresolved `Human | Infant` rows remaining.
+- The rebuild still reported `2` failed packages globally, but the canonical `Sim Archetype` survey completed and the `Species 0x...` rows are gone from the serving shard set.
+- If the next chat resumes from here, the next narrow packet is the honest `Human | Infant` unresolved seam, not a return to the old `GP01` opaque-species drift.
+
+## Preserved Product Frontier
 
 `Sim Archetypes honest body-first preview`
 
@@ -36,23 +489,160 @@ Goal: move `Sim Archetypes` from proxy/clothing-like stand-ins toward an honest 
 - [x] The current application layer now also materializes explicit skintone routing and morph transform records from those plans, so the next modifier pass can start from internal transform data instead of only plan summaries
 - [x] The current application layer now also materializes explicit internal skintone/morph outcomes and threads them into preview diagnostics, so modifier progress is visible in the real preview path instead of only in graph internals
 - [x] The current preview scene now also flows through application-adjusted payload data, so skintone routing already changes downstream material state in the assembled scene path instead of staying only in graph bookkeeping
+- [x] The current preview path now also resolves authoritative skintone resources and selected body/head `region_map` inputs, then applies region-map-aware viewport tint routing into rendered Sim materials instead of leaving skintone as approximation text only
 - [x] Canonical human body-foundation search now paginates beyond the first shell-query page, so buried default/nude body shells can still replace withheld clothing-like `Full Body` candidates in large human archetypes
-- [x] Canonical human body-foundation search now also accepts generic nude/unisex adult shells such as `acBody_Nude` and `ahBody_nude` in the fallback path, so real human archetypes are not blocked on a strict `yfBody_`-only prefix assumption
+- [x] Indexed default/naked body-recipe evaluation now also accepts generic nude/unisex adult shells such as `acBody_Nude` and `ahBody_nude`, so real human archetypes are not blocked on a strict `yfBody_`-only prefix assumption
 - [x] Body-first candidate resolution now prefers authoritative `SimInfo` `Nude` outfit records over a flattened union of all outfit parts, so the shell path starts from one concrete body-driving outfit instead of mixing every archetype outfit into one noisy candidate pool
 - [x] Primary body preview no longer falls back to flattened outfit unions or archetype-wide compatibility shell search when a `SimInfo` template has no authoritative body-driving `Nude` outfit record, so unresolved human archetypes fail honestly instead of rendering cross-species junk bodies
 - [x] Exact `Hair` / `Accessory` slot resolution now uses the correct human CAS-slot predicate instead of the body-only filter, so authoritative head-related selections are no longer downgraded to compatibility fallback by a bad predicate
-- [ ] Replace the remaining scene-level assembly inside that final stage with a true rig-centered torso/head assembly graph
+- [x] The current preview path now materializes an explicit rig-centered torso/head payload seam with durable accepted-input, anchor, bone-remap, and mesh-range identity data, so later modifier packets can consume one stable seam instead of treating the final stage as just an assembled scene summary
+- [x] SQLite index now persists authoritative `SimInfo` template facts and body-driving part links, and Sim preview source/body-candidate resolution now consumes those indexed facts before falling back to broad runtime searches
+- [x] The repo now has an explicit `Sim Archetype` body-shell contract: template selection is recipe-first, package preference only chooses between package variants of the same template, and the only allowed fallback after explicit body-driving outfits is indexed default/naked body recipe
+- [x] The repo now has a durable live-index `Sim Archetype` body-shell audit plus a headless `ProbeAsset` live-cache rebuild/survey seam, so one clean rebuild against `%LOCALAPPDATA%\Sims4ResourceExplorer\Cache` can repopulate current seed facts and immediately resurvey the live archetype set; the latest rebuilt audit reports `46` rows with `ExplicitBodyDriving=23`, `IndexedDefaultBodyRecipe=0`, and `Unresolved=23`
+- [x] SQLite cache initialization now version-invalidates stale seed-derived fact tables (`sim_template_facts`, `sim_template_body_parts`, `cas_part_facts`), so old extractor semantics do not silently survive in live template/body-recipe selection after code changes
 - [ ] Add rig/skintone/morph layers to the rendered path
 
 ## Immediate Next Step
 
-Keep the current body-first path authoritative and faster:
+Use the updated live survey and the seed-fact invalidation fix to open the next narrow follow-up packet without widening fallback rules:
 
-- start from the selected `SimInfo` template
-- prefer one authoritative body-driving outfit record instead of flattening all outfit parts
+- the first follow-up on the `3` former `ExplicitBodyDriving + AssemblyMode=None` rows is now closed: they stay `AssemblyMode=None`, are reclassified as honest `Unresolved`, and surface an explicit issue that body-driving outfit records existed but no renderable body-shell layer resolved
+- one clean live rebuild is now also closed: headless `ProbeAsset --rebuild-live-sim-archetypes 8` repopulated the live cache from the current extractor logic and moved the rebuilt live audit to `ExplicitBodyDriving=6`, `IndexedDefaultBodyRecipe=0`, and `Unresolved=40`
+- the false explicit bucket is also closed: the former `6` explicit-but-unrenderable rows were mostly caused by the single-non-`Nude` drift and now report honest unresolved diagnostics instead of fake body-driving status
+- the next live-query repair is now also closed: `ProbeAsset --survey-sim-archetypes` against the rebuilt cache now reports `ExplicitBodyDriving=6`, `IndexedDefaultBodyRecipe=27`, and `Unresolved=13`
+- the still-explicit human rows remain contract-valid `SplitBodyLayers` results sourced from authoritative `ExactPartLink` `Nude` parts, not evidence of fallback drift
+- next, inspect the remaining `13` unresolved live archetypes that still report neither an explicit renderable body-shell result nor an indexed default/naked recipe hit
+- after that, decide whether the remaining unresolved set is missing richer authoritative recipes, additional indexed nude-body patterns, or real parser support for younger body families
 - keep the current `body + head shell` preview honest and authoritative
-- keep primary body preview unresolved when no authoritative body-driving outfit exists, instead of fabricating a shell from broad compatibility search
-- keep clothing/accessories out of preview until they can be layered truthfully
+- do not reintroduce broad compatibility search or styling-layer mixing as a shortcut
+- keep diagnostics honest about whether a template resolved through explicit body-driving, indexed default/naked body recipe, or unresolved body-shell inspection
+
+## Multi-Agent Packets
+
+This active block now runs in the repo's default multi-agent mode.
+
+### Packet 1: Authoritative Assembly Input Map
+
+- Goal: confirm the exact `SimInfo -> Nude outfit -> body/head part -> rig basis` path and record any unresolved format gaps before more implementation lands
+- Status: `Completed`
+- Owner: explorer
+- Allowed write set: none
+- Expected write set after research: `src/Sims4ResourceExplorer.Assets/SimInfoServices.cs`, `src/Sims4ResourceExplorer.Assets/AssetServices.cs`, `src/Sims4ResourceExplorer.Core/Domain.cs`, related tests/docs
+- Verification: repo docs/references first, targeted synthetic `SimInfo` tests for surfaced authoritative inputs, web only for unresolved authoritative questions
+- Red lines: no new compatibility fallback proposals disguised as implementation
+- Deliverable: a frozen input contract for `body`, `head`, `rig`, `skintone`, and `morph` inputs plus any unresolved authoritative gaps
+
+Packet 1 findings:
+
+- `body`: authoritative path is `SimInfo -> Nude outfit (Category 5) -> concrete outfit entry -> selected CAS part state -> exact CASPart`. The current repo already narrows to `Nude`, but it still reduces part state too aggressively toward `(bodyType, partInstance)` instead of preserving full outfit-entry identity, full CAS part key/group, and per-part color shift. Only after the exact path is exhausted may the body path widen into canonical foundation or compatibility search.
+- `head`: authoritative path is the same `Nude` outfit-entry selection path, with `Head` as a dedicated shell and `Hair` / `Accessory` as exact head-related CAS selections. The graph surfaces head candidates and assembly input summaries, but still lacks one durable authoritative head-shell identity on `SimAssetGraph`, and authoritative head-related selections can still exist without a dedicated head shell.
+- `rig`: authoritative rig choice should be driven by the resolved body/head path plus species/age/occult/frame state, then validated against attached rig resources or rig instance ids. The current composer surfaces `Assembly basis` and payload summaries, but `SimAssetGraph` still does not expose one durable authoritative rig identity sourced from the selected template path, and canonical-bone overlap remains a fallback/diagnostic rather than the true rig-selection contract.
+- `skintone`: authoritative source is `SimInfo.SkintoneInstance + SkintoneShift`, which should resolve to a real `Skintone` resource and later bind into `RegionMap`-aware material application. The graph and composer already surface skintone metadata, skin-pipeline/body-source summaries, and skintone application planning/outcomes, but not yet one resolved authoritative skintone resource input with region-map binding.
+- `morph`: authoritative source is the real `SimInfo` modifier/sculpt state, including direct, genetic, growth, and other modifier channels. The graph/composer surface this as morph groups and transform planning/outcomes, but not yet as per-channel authoritative inputs bound to real `BGEO` / `DMAP` / `BOND` application or actual mesh/bone changes.
+- frozen rule at Packet 1 time: the only authoritative starting point for the current block was `SimInfo -> Nude outfit -> concrete selected part state` plus direct scalar/channel metadata from `SimInfo`; later packets may widen only into the explicit indexed default/naked body recipe contract and must not collapse back into a lossy compatibility pool.
+
+Open gaps carried forward:
+
+- `SimAssetGraph` still exposes summaries/candidates where Packet 2+ needs durable authoritative input identities.
+- the current repo still drops outfit-entry identity, full CAS part key/group, and per-part color shift too early in the path
+- direct `SimInfo -> rig` identity surfacing is still missing
+- `RegionMap` binding is still outside the current rendered skintone path
+- morph/deformer inputs are still planner-level rather than real mesh/bone application
+
+### Packet 2: Rig-Centered Assembly Seam
+
+- Goal: replace the remaining scene-level final assembly boundary with an explicit rig-centered torso/head assembly seam that later modifier layers can consume
+- Status: `Completed`
+- Owner: worker
+- Allowed write set: `src/Sims4ResourceExplorer.Core/SimSceneComposer.cs`, `src/Sims4ResourceExplorer.Core/Domain.cs`, related tests, and docs touched by behavior changes
+- Verification: targeted composer tests for shared-rig, fallback, mismatch, payload counts, bone remaps, and output stage state, then full suite if shared graph/composer behavior moves
+- Red lines: no new broad fallback search, no UI-first workaround that hides unresolved assembly structure, no promotion of canonical-bone overlap into the real rig-selection contract, and no new lossy seam that drops outfit-entry identity or authoritative part state
+- Deliverable: a real rig-centered torso/head payload seam that later modifier packets consume instead of the current merged-scene endpoint
+
+Packet 2 verification:
+
+- targeted verifier pass: `dotnet test tests/Sims4ResourceExplorer.Tests/Sims4ResourceExplorer.Tests.csproj --no-restore --filter "SimSceneComposer"` -> passed `4/4`
+- full verifier pass: `dotnet test Sims4ResourceExplorer.sln --no-restore` -> passed `262/262`
+- accepted change: `SimSceneComposer` and `Domain` now describe the final assembly boundary as a torso/head payload seam with explicit accepted seam inputs, source TGIs/package paths, mesh ranges, and bone-remap entries
+
+### Packet 3: Rendered Skintone And Region-Map Material Path
+
+- Goal: turn skintone from diagnostic/material-planning bookkeeping into real rendered material routing, and add region-map-aware material application
+- Status: `Completed`
+- Owner: worker
+- Allowed write set: `src/Sims4ResourceExplorer.Assets/AssetServices.cs`, `src/Sims4ResourceExplorer.Core/SimSceneComposer.cs`, likely a parser/helper beside `src/Sims4ResourceExplorer.Packages/StructuredMetadataServices.cs`, plus related tests/docs
+- Verification: assertions on effective material state rather than approximation text, plus one focused probe/resource query if tests cannot prove region-map binding
+- Red lines: no support-label drift and no silent proxy-path widening
+- Deliverable: rendered material-state changes driven by authoritative skintone and region-map inputs rather than graph-only summaries
+
+Packet 3 verification:
+
+- targeted verifier pass: `dotnet test tests/Sims4ResourceExplorer.Tests/Sims4ResourceExplorer.Tests.csproj --no-restore --filter "SimSceneComposer|StructuredResourceMetadataExtractor|AssetGraphBuilder_BuildsSimMetadataGraph_WithResolvedSkintoneRenderInput|AssetGraphBuilder_PreservesCasRegionMapSummary|AssetGraphBuilder_PreservesCasColorShiftMaskTextureRole"` -> passed `12/12`
+- full verifier pass: `dotnet test Sims4ResourceExplorer.sln --no-restore` -> passed `266/266`
+- accepted change: `Skintone` and `RegionMap` now have typed parser support, `SimAssetGraph` resolves authoritative skintone render input, selected body/head `CASPart` graphs preserve parsed `region_map` summaries, and `SimSceneComposer` now turns those inputs into region-map-aware rendered material tint state instead of writing skintone only into approximation text
+
+### Packet 4: Rendered Morph And Deformer Mesh Path
+
+- Goal: turn morph from planned operations into real mesh or bone-affecting application, starting from authoritative `SimInfo` channels and then binding into `BGEO` / `DMAP` / `BOND` style resources
+- Status: `Pending`
+- Owner: worker
+- Allowed write set: `src/Sims4ResourceExplorer.Assets/SimInfoServices.cs`, `src/Sims4ResourceExplorer.Assets/AssetServices.cs`, `src/Sims4ResourceExplorer.Core/SimSceneComposer.cs`, likely new deformer helpers, plus related tests/docs
+- Verification: synthetic tests that assert mesh/bone output changes rather than pending/prepared counts, plus one real-resource probe if channel-to-resource binding stays uncertain
+- Red lines: no fake "applied" state without geometry or bone output changes, and no morph path that bypasses the authoritative packet-1 inputs
+- Deliverable: a first real rendered morph/deformer path with honest diagnostics where resource binding is still incomplete
+
+### Packet 5: Independent Verification And Support-State Ratchet
+
+- Goal: confirm that each landed packet actually addressed the intended problem and tighten support statements/graph labels so docs match the real path
+- Status: `In Progress`
+- Owner: verifier
+- Allowed write set: none unless the manager explicitly opens a follow-up fix packet
+- Verification: tests, probes, SQLite/resource inspection, UI only when the packet is genuinely visual
+- Red lines: no quiet fixups during verification; failures reopen a packet instead
+- Deliverable: pass/fail evidence for each packet plus any required support-label/doc tightening
+
+Packet 5 verification:
+
+- reopened drift found: rendered Sim body/head preview existed in code, but `Support Status`, `Support Notes`, `Scene Reconstruction`, and Sim-template auto-selection still reflected the older metadata-only story
+- accepted follow-up fix: Sim template redirect now prefers templates with authoritative `Nude` / body-driving outfits over richer-but-non-body-driving variants, and selected-asset Sim details now report rendered assembled preview state honestly instead of hard-coding `metadata-only`
+- live verifier probe on `Sim archetype: Human | Young Adult | Female` exposed a second-order source-selection bug: real authoritative `Nude` templates existed in the grouped member set, but could still sit deeper than the previous bounded inspection window. The follow-up fix now inspects the whole grouped `SimInfo` member set when needed so grouped archetype preview source selection is driven by real `Nude/body-driving` evidence instead of a capped metadata window.
+- accepted index upgrade: rebuilds now persist authoritative `sim_template_facts` and `sim_template_body_parts` rows, and `AssetGraphBuilder` now consumes those indexed facts for grouped template selection and exact body-part candidate resolution before falling back to runtime search/parsing
+- focused verifier pass: `dotnet test tests/Sims4ResourceExplorer.Tests/Sims4ResourceExplorer.Tests.csproj --no-restore --filter "SqliteIndexStore_PersistsSimTemplateFactsAndBodyPartFacts|AssetGraphBuilder_UsesIndexedTemplateFacts_WhenTemplateSearchFallbackIsUnavailable|AssetGraphBuilder_UsesIndexedBodyPartFacts_WhenRawResourceLookupFallbackIsUnavailable"` -> passed `3/3`
+- focused verifier pass: `dotnet test tests/Sims4ResourceExplorer.Tests/Sims4ResourceExplorer.Tests.csproj --no-restore --filter "AssetGraphBuilder_BuildsSimGraphFromPreferredBodyDrivingTemplate|AssetGraphBuilder_PrefersTemplateWithAuthoritativeNudeOutfitOverRicherNonNudeVariant|AssetGraphBuilder_InspectsLeanAuthoritativeTemplateBeyondRicherSummaryWindow|SimTemplateSelectionPolicy_PrefersTemplateWithAuthoritativeBodyPartsOverRepresentative"` -> passed `4/4`
+- live probe evidence: on the real indexed `Sim archetype: Human | Young Adult | Female`, the selected template now resolves to `SimulationFullBuild0.package | 025ED6F4:00000000:C51FC162CDEDDB26` with `Body-driving outfit records=1`, `BodyCandidates=5`, and `AssemblyMode=FullBodyShell`
+- full verifier pass: `dotnet test Sims4ResourceExplorer.sln --no-restore` -> passed `272/272`
+- post-contract verifier pass: `dotnet test Sims4ResourceExplorer.sln --no-restore` -> passed `286/286`
+
+### Packet 6: Body-Shell Contract And Archetype Audit
+
+- Goal: freeze the current cross-archetype body-shell contract, apply it consistently in template selection, and add a durable live-index survey for all `Sim Archetype` rows
+- Status: `Completed`
+- Owner: manager + worker + verifier
+- Allowed write set: `docs/sim-body-shell-contract.md`, `docs/README.md`, `AGENT.md`, `docs/operations/tooling.md`, `docs/planning/current-plan.md`, `src/Sims4ResourceExplorer.Core/Domain.cs`, `src/Sims4ResourceExplorer.Assets/AssetServices.cs`, `tools/ProbeAsset/Program.cs`, related tests
+- Verification: targeted template-selection/body-shell tests, full suite, then `tools/ProbeAsset` live-index survey across current `Sim Archetype` rows
+- Red lines: no return to broad compatibility shell search, no mixing clothing/accessories into `Sim Archetype` body shell, no package-variant preference leaking into logical template selection
+- Deliverable: one documented contract plus live evidence of which archetypes currently comply, resolve via indexed default/naked body recipe, or remain unresolved
+
+Packet 6 verification:
+
+- targeted verifier pass: `dotnet test tests/Sims4ResourceExplorer.Tests/Sims4ResourceExplorer.Tests.csproj --no-restore --filter "SqliteIndexStore_PersistsSimTemplateFactsAndBodyPartFacts|AssetGraphBuilder_UsesIndexedTemplateFacts_WhenTemplateSearchFallbackIsUnavailable|AssetGraphBuilder_UsesIndexedBodyPartFacts_WhenRawResourceLookupFallbackIsUnavailable|AssetGraphBuilder_BuildsSimGraphFromPreferredBodyDrivingTemplate|AssetGraphBuilder_PrefersTemplateWithAuthoritativeNudeOutfitOverRicherNonNudeVariant|AssetGraphBuilder_InspectsLeanAuthoritativeTemplateBeyondRicherSummaryWindow|SimTemplateSelectionPolicy_PrefersTemplateWithAuthoritativeBodyPartsOverRepresentative"` -> passed `7/7`
+- full verifier pass after aligning stale body-shell fixtures and generic human fallback gating: `dotnet test Sims4ResourceExplorer.sln --no-restore` -> passed `286/286`
+- follow-up audit-honesty fix: redirect notes and `ProbeAsset` survey no longer label `AssemblyMode=None` graphs as `ExplicitBodyDriving` just because `Body-driving outfit records > 0`
+- focused verifier pass for the audit-honesty packet: `dotnet test tests/Sims4ResourceExplorer.Tests/Sims4ResourceExplorer.Tests.csproj --no-restore --filter "AssetGraphBuilder_UsesIndexedTemplateFacts_WhenTemplateSearchFallbackIsUnavailable|AssetGraphBuilder_LabelsUnresolvedExplicitTemplateAsBodyShellInspection|AssetGraphBuilder_BuildsSimMetadataGraph_WithAuthoritativeHeadCasSelections|AssetGraphBuilder_DoesNotUseFlattenedOutfitUnion_WhenNoAuthoritativeBodyDrivingOutfitExists|AssetGraphBuilder_PrefersTemplateWithAuthoritativeNudeOutfitOverRicherNonNudeVariant|AssetGraphBuilder_InspectsLeanAuthoritativeTemplateBeyondRicherSummaryWindow|SimTemplateSelectionPolicy_PrefersTemplateWithAuthoritativeBodyPartsOverRepresentative"` -> passed `7/7`
+- full verifier pass after the audit-honesty fix: `dotnet test Sims4ResourceExplorer.sln --no-restore` -> passed `287/287`
+- live archetype audit after the audit-honesty fix: `dotnet run --project tools/ProbeAsset/ProbeAsset.csproj -- --survey-sim-archetypes tmp/sim_archetype_body_shell_audit.json` -> surveyed `46` live rows with `ExplicitBodyDriving=25`, `IndexedDefaultBodyRecipe=0`, `Unresolved=21`
+- live audit detail after the audit-honesty fix: assembly modes remain `FullBodyShell=18`, `SplitBodyLayers=7`, and `None=21`; the former `3` `ExplicitBodyDriving + None` rows (`Fox | Adult | Unisex`, `Human | Child | Male`, `Human | Infant | Female`) are now classified as `Unresolved` and report `Explicit body-driving outfit records existed, but no renderable body-shell layer was resolved.`
+- seed-fact cache drift probe: the current live cache still stores zeroed facts for the same `3` selected templates, but fresh temp `ProbeAsset --profile-index` rebuilds on `EP11` and `EP17` repopulate them correctly (`Fox` `1/6`, `Human | Child | Male` `1/7`, `Human | Infant | Female` `1/8`), which isolates the defect to stale live cache content rather than the current extractor/persistence source path
+- accepted follow-up fix: `SqliteIndexStore.InitializeAsync` now version-invalidates stale `sim_template_facts`, `sim_template_body_parts`, and `cas_part_facts` on cache open instead of silently trusting older seed-fact semantics
+- focused verifier pass for the seed-fact invalidation packet: `dotnet test tests/Sims4ResourceExplorer.Tests/Sims4ResourceExplorer.Tests.csproj --no-restore --filter "SqliteIndexStore_PersistsSimTemplateFactsAndBodyPartFacts|SqliteIndexStore_InitializeInvalidatesStaleSeedFactTablesWithoutDroppingPackageFingerprints|PackageIndexCoordinator_SlicedPackagePersistsSimTemplateFactsOnlyOnFinalChunk"` -> passed `3/3`
+- headless live rebuild seam: `ProbeAsset` now exposes `--rebuild-live-sim-archetypes [workerCount]`, which opens the real `%LOCALAPPDATA%\Sims4ResourceExplorer\Cache` through `FileSystemCacheService`, runs `PackageIndexCoordinator` against the configured live data sources, and immediately reruns the live `Sim Archetype` survey
+- verifier pass after adding the headless live rebuild seam: `dotnet build tools/ProbeAsset/ProbeAsset.csproj --no-restore` -> succeeded; `dotnet test Sims4ResourceExplorer.sln --no-restore` -> passed `288/288`
+- rebuilt live audit after seed-fact invalidation: `dotnet run --project tools/ProbeAsset/ProbeAsset.csproj -- --rebuild-live-sim-archetypes 8` -> rebuilt the real cache in `00:04:50`, then surveyed `46` live rows with `ExplicitBodyDriving=23`, `IndexedDefaultBodyRecipe=0`, and `Unresolved=23`
+- rebuilt live audit detail: assembly modes now read `FullBodyShell=15`, `SplitBodyLayers=6`, `FallbackSingleLayer=2`, and `None=23`; the explicit-but-unrenderable frontier is now `6` rows (`Fox | Adult | Unisex`, `Human | Adult | Female`, `Human | Child | Female`, `Human | Child | Male`, `Human | Elder | Female`, `Human | Infant | Female`)
+
+## Sequencing
+
+Run Packet 1 first. Packet 2 should not start until the authoritative input map is concrete enough to define the seam cleanly. Packets 3 and 4 both depend on Packet 2's seam and may run in parallel only after that seam has been split enough to avoid collisions in `SimSceneComposer.cs`. Packet 5 runs after every implementation packet, not only at the end of the block.
 
 ## After This Block
 

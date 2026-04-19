@@ -417,6 +417,469 @@ public sealed class IndexingPipelineTests
     }
 
     [Fact]
+    public async Task SqliteIndexStore_PersistsSimTemplateFactsAndBodyPartFacts()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var packagePath = Path.Combine(root, "sim-template.package");
+            var simInfo = new ResourceMetadata(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                packagePath,
+                new ResourceKeyRecord(0x025ED6F4, 0, 0xFDCCF77200000001ul, "SimInfo"),
+                "SimInfo template: Human | Young Adult | Female | outfits 1/1/2 [00000001]",
+                100L,
+                120L,
+                false,
+                PreviewKind.Hex,
+                true,
+                true,
+                "Sim/character seed",
+                string.Empty,
+                Description: "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=1 categories / 1 entries / 2 parts");
+            var fact = new SimTemplateFactSummary(
+                simInfo.Id,
+                source.Id,
+                source.Kind,
+                packagePath,
+                simInfo.Key.FullTgi,
+                "sim-archetype:human|young-adult|female",
+                "Human",
+                "Young Adult",
+                "Female",
+                simInfo.Name!,
+                simInfo.Description!,
+                1,
+                1,
+                2,
+                4,
+                8,
+                1,
+                true,
+                1,
+                2);
+            var bodyPart = new SimTemplateBodyPartFact(
+                simInfo.Id,
+                source.Id,
+                source.Kind,
+                packagePath,
+                simInfo.Key.FullTgi,
+                5,
+                "Nude",
+                0,
+                0,
+                5,
+                "Full Body",
+                0x6000000000000031ul,
+                true);
+
+            await store.ReplacePackageAsync(
+                new PackageScanResult(source.Id, source.Kind, packagePath, 10, DateTimeOffset.UtcNow, [simInfo], [])
+                {
+                    SimTemplateFacts = [fact],
+                    SimTemplateBodyPartFacts = [bodyPart]
+                },
+                [],
+                CancellationToken.None);
+
+            var loadedFacts = await store.GetSimTemplateFactsByArchetypeAsync(fact.ArchetypeKey, CancellationToken.None);
+            var loadedBodyParts = await store.GetSimTemplateBodyPartFactsAsync(simInfo.Id, CancellationToken.None);
+
+            var loadedFact = Assert.Single(loadedFacts);
+            Assert.Equal(fact.RootTgi, loadedFact.RootTgi);
+            Assert.Equal(fact.AuthoritativeBodyDrivingOutfitCount, loadedFact.AuthoritativeBodyDrivingOutfitCount);
+            Assert.Equal(fact.AuthoritativeBodyDrivingOutfitPartCount, loadedFact.AuthoritativeBodyDrivingOutfitPartCount);
+
+            var loadedBodyPart = Assert.Single(loadedBodyParts);
+            Assert.Equal(bodyPart.PartInstance, loadedBodyPart.PartInstance);
+            Assert.Equal(bodyPart.BodyType, loadedBodyPart.BodyType);
+            Assert.True(loadedBodyPart.IsBodyDriving);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_GetIndexedDefaultBodyRecipeAssets_ReturnsNudeCandidatesWithoutExactGeometryFlag()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var packagePath = Path.Combine(root, "nude-body.package");
+            var nudeAsset = new AssetSummary(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                AssetKind.Cas,
+                "ahBody_nude",
+                "Full Body",
+                packagePath,
+                new ResourceKeyRecord(0x034AEECB, 0, 0x7000000000000001ul, "CASPart"),
+                null,
+                1,
+                1,
+                string.Empty,
+                new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true),
+                CategoryNormalized: "full-body",
+                Description: "slot=Full Body | bodyType=5 | internalName=ahBody_nude | species=Human | age=Teen / Young Adult / Adult / Elder | gender=Unisex | defaultBodyType=false | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0");
+            var bathrobeAsset = new AssetSummary(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                AssetKind.Cas,
+                "yfBody_Bathrobe_SolidWhiteGray",
+                "Full Body",
+                packagePath,
+                new ResourceKeyRecord(0x034AEECB, 0, 0x7000000000000002ul, "CASPart"),
+                null,
+                1,
+                1,
+                string.Empty,
+                new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true),
+                CategoryNormalized: "full-body",
+                Description: "slot=Full Body | bodyType=5 | internalName=yfBody_Bathrobe_SolidWhiteGray | species=Human | age=Teen / Young Adult / Adult / Elder | gender=Female | defaultBodyType=true | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=16000");
+            var nudeFact = new DiscoveredCasPartFact(
+                source.Id,
+                source.Kind,
+                packagePath,
+                nudeAsset.RootKey.FullTgi,
+                "Full Body",
+                "full-body",
+                5,
+                "ahBody_nude",
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                0,
+                "Human",
+                "Teen / Young Adult / Adult / Elder",
+                "Unisex");
+            var bathrobeFact = new DiscoveredCasPartFact(
+                source.Id,
+                source.Kind,
+                packagePath,
+                bathrobeAsset.RootKey.FullTgi,
+                "Full Body",
+                "full-body",
+                5,
+                "yfBody_Bathrobe_SolidWhiteGray",
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                16000,
+                "Human",
+                "Teen / Young Adult / Adult / Elder",
+                "Female");
+
+            await store.ReplacePackageAsync(
+                new PackageScanResult(source.Id, source.Kind, packagePath, 10, DateTimeOffset.UtcNow, [], [])
+                {
+                    CasPartFacts = [nudeFact, bathrobeFact]
+                },
+                [nudeAsset, bathrobeAsset],
+                CancellationToken.None);
+
+            var results = await store.GetIndexedDefaultBodyRecipeAssetsAsync(
+                new SimInfoSummary(32, "Human", "Adult", "Female", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                "Full Body",
+                CancellationToken.None);
+
+            Assert.NotEmpty(results);
+            Assert.Equal("ahBody_nude", results[0].DisplayName);
+            Assert.Contains(results, asset => asset.DisplayName == "yfBody_Bathrobe_SolidWhiteGray");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_GetIndexedDefaultBodyRecipeAssets_DoesNotUsePrefixOnlyHumanInfantShellsWithoutDefaultSignals()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var packagePath = Path.Combine(root, "infant-prefix-only.package");
+            var fullBodyAsset = new AssetSummary(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                AssetKind.Cas,
+                "iuBody_RomperDuckie",
+                "Full Body",
+                packagePath,
+                new ResourceKeyRecord(0x034AEECB, 0, 0x7000000000000011ul, "CASPart"),
+                null,
+                1,
+                1,
+                string.Empty,
+                new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true),
+                CategoryNormalized: "full-body",
+                Description: "slot=Full Body | bodyType=5 | internalName=iuBody_RomperDuckie | species=Human | age=Infant | gender=Unisex | defaultBodyType=false | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0");
+            var topAsset = new AssetSummary(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                AssetKind.Cas,
+                "iuTop_Duckie",
+                "Top",
+                packagePath,
+                new ResourceKeyRecord(0x034AEECB, 0, 0x7000000000000012ul, "CASPart"),
+                null,
+                1,
+                1,
+                string.Empty,
+                new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true),
+                CategoryNormalized: "top",
+                Description: "slot=Top | bodyType=6 | internalName=iuTop_Duckie | species=Human | age=Infant | gender=Unisex | defaultBodyType=false | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0");
+            var fullBodyFact = new DiscoveredCasPartFact(
+                source.Id,
+                source.Kind,
+                packagePath,
+                fullBodyAsset.RootKey.FullTgi,
+                "Full Body",
+                "full-body",
+                5,
+                "iuBody_RomperDuckie",
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                0,
+                "Human",
+                "Infant",
+                "Unisex");
+            var topFact = new DiscoveredCasPartFact(
+                source.Id,
+                source.Kind,
+                packagePath,
+                topAsset.RootKey.FullTgi,
+                "Top",
+                "top",
+                6,
+                "iuTop_Duckie",
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                0,
+                "Human",
+                "Infant",
+                "Unisex");
+
+            await store.ReplacePackageAsync(
+                new PackageScanResult(source.Id, source.Kind, packagePath, 10, DateTimeOffset.UtcNow, [], [])
+                {
+                    CasPartFacts = [fullBodyFact, topFact]
+                },
+                [fullBodyAsset, topAsset],
+                CancellationToken.None);
+
+            var metadata = new SimInfoSummary(32, "Human", "Infant", "Female", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+            var fullBodyResults = await store.GetIndexedDefaultBodyRecipeAssetsAsync(
+                metadata,
+                "Full Body",
+                CancellationToken.None);
+            var topResults = await store.GetIndexedDefaultBodyRecipeAssetsAsync(
+                metadata,
+                "Top",
+                CancellationToken.None);
+
+            Assert.Empty(fullBodyResults);
+            Assert.Empty(topResults);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_GetIndexedDefaultBodyRecipeAssets_AllowsLittleDogChildToReuseDogDefaultBodyShell()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            await store.UpsertDataSourcesAsync([source], CancellationToken.None);
+
+            var packagePath = Path.Combine(root, "little-dog-child-default-body.package");
+            var defaultBodyAsset = new AssetSummary(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                AssetKind.Cas,
+                "cdBody_Nude",
+                "Full Body",
+                packagePath,
+                new ResourceKeyRecord(0x034AEECB, 0, 0x7000000000000013ul, "CASPart"),
+                null,
+                1,
+                1,
+                string.Empty,
+                new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true),
+                CategoryNormalized: "full-body",
+                Description: "slot=Full Body | bodyType=5 | internalName=cdBody_Nude | species=Dog | age=Child | gender=Unisex | defaultBodyType=true | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0");
+            var defaultBodyFact = new DiscoveredCasPartFact(
+                source.Id,
+                source.Kind,
+                packagePath,
+                defaultBodyAsset.RootKey.FullTgi,
+                "Full Body",
+                "full-body",
+                5,
+                "cdBody_Nude",
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                0,
+                "Dog",
+                "Child",
+                "Unisex");
+
+            await store.ReplacePackageAsync(
+                new PackageScanResult(source.Id, source.Kind, packagePath, 10, DateTimeOffset.UtcNow, [], [])
+                {
+                    CasPartFacts = [defaultBodyFact]
+                },
+                [defaultBodyAsset],
+                CancellationToken.None);
+
+            var results = await store.GetIndexedDefaultBodyRecipeAssetsAsync(
+                new SimInfoSummary(32, "Little Dog", "Child", "Female", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                "Full Body",
+                CancellationToken.None);
+
+            Assert.NotEmpty(results);
+            Assert.Equal("cdBody_Nude", results[0].DisplayName);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteIndexStore_InitializeInvalidatesStaleSeedFactTablesWithoutDroppingPackageFingerprints()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var cache = new TestCacheService(root);
+            var store = new SqliteIndexStore(cache);
+            await store.InitializeAsync(CancellationToken.None);
+
+            await using (var connection = await OpenConnectionAsync(cache.DatabasePath))
+            {
+                await using (var command = connection.CreateCommand())
+                {
+                    command.CommandText =
+                        """
+                        INSERT INTO packages(data_source_id, package_path, file_size, last_write_utc, indexed_utc)
+                        VALUES ('11111111-1111-1111-1111-111111111111', 'stale.package', 10, '2026-04-18T00:00:00.0000000+00:00', '2026-04-18T00:00:00.0000000+00:00');
+
+                        INSERT INTO sim_template_facts(resource_id, data_source_id, source_kind, package_path, root_tgi, archetype_key, species_label, age_label, gender_label, display_name, notes, outfit_category_count, outfit_entry_count, outfit_part_count, body_modifier_count, face_modifier_count, sculpt_count, has_skintone, authoritative_body_driving_outfit_count, authoritative_body_driving_outfit_part_count)
+                        VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'Game', 'stale.package', '025ED6F4:00000000:0000000000000001', 'sim-archetype:human|adult|female', 'Human', 'Adult', 'Female', 'stale fact', '', 1, 1, 1, 0, 0, 0, 0, 1, 1);
+
+                        INSERT INTO sim_template_body_parts(resource_id, data_source_id, source_kind, package_path, root_tgi, outfit_category_value, outfit_category_label, outfit_index, part_index, body_type, body_type_label, part_instance_hex, is_body_driving)
+                        VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'Game', 'stale.package', '025ED6F4:00000000:0000000000000001', 5, 'Nude', 0, 0, 5, 'Full Body', '0000000000000001', 1);
+
+                        INSERT INTO cas_part_facts(asset_id, data_source_id, source_kind, package_path, root_tgi, slot_category, category_normalized, body_type, internal_name, default_body_type, default_body_type_female, default_body_type_male, has_naked_link, restrict_opposite_gender, restrict_opposite_frame, sort_layer, species_label, age_label, gender_label)
+                        VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '11111111-1111-1111-1111-111111111111', 'Game', 'stale.package', '034AEECB:00000000:0000000000000002', 'Full Body', 'full-body', 5, 'stale_body', 1, 1, 1, 1, 0, 0, 0, 'Human', 'Adult', 'Female');
+
+                        INSERT INTO cache_metadata(key, value)
+                        VALUES ('seed_fact_content_version', 'stale-version')
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                        """;
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                }
+            }
+
+            await store.InitializeAsync(CancellationToken.None);
+
+            await using var verifyConnection = await OpenConnectionAsync(cache.DatabasePath);
+            await using (var countCommand = verifyConnection.CreateCommand())
+            {
+                countCommand.CommandText =
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM packages),
+                        (SELECT COUNT(*) FROM sim_template_facts),
+                        (SELECT COUNT(*) FROM sim_template_body_parts),
+                        (SELECT COUNT(*) FROM cas_part_facts);
+                    """;
+                await using var reader = await countCommand.ExecuteReaderAsync(CancellationToken.None);
+                Assert.True(await reader.ReadAsync(CancellationToken.None));
+                Assert.Equal(1, reader.GetInt32(0));
+                Assert.Equal(0, reader.GetInt32(1));
+                Assert.Equal(0, reader.GetInt32(2));
+                Assert.Equal(0, reader.GetInt32(3));
+            }
+
+            await using (var metadataCommand = verifyConnection.CreateCommand())
+            {
+                metadataCommand.CommandText = "SELECT value FROM cache_metadata WHERE key = 'seed_fact_content_version';";
+                var storedVersion = Convert.ToString(await metadataCommand.ExecuteScalarAsync(CancellationToken.None));
+                Assert.False(string.IsNullOrWhiteSpace(storedVersion));
+                Assert.NotEqual("stale-version", storedVersion);
+            }
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
     public async Task PackageIndexCoordinator_RebuildsShadowDatabaseAndRemovesStalePackages()
     {
         var root = CreatePackageRoot();
@@ -1144,7 +1607,7 @@ public sealed class IndexingPipelineTests
     }
 
     [Fact]
-    public async Task ResourceMetadataEnrichmentService_PersistsDeferredMetadata()
+    public async Task ResourceMetadataEnrichmentService_EnrichesDeferredMetadataWithoutPersistingToIndex()
     {
         var sourceId = Guid.NewGuid();
         var resource = new ResourceMetadata(
@@ -1175,12 +1638,12 @@ public sealed class IndexingPipelineTests
             }
         };
 
-        var service = new ResourceMetadataEnrichmentService(catalog, store);
+        var service = new ResourceMetadataEnrichmentService(catalog);
         var enriched = await service.EnrichAsync(resource, CancellationToken.None);
 
         Assert.Equal("Enriched", enriched.Name);
         Assert.Equal(1, catalog.EnrichCalls);
-        Assert.Single(store.EnrichedResources);
+        Assert.Empty(store.EnrichedResources);
     }
 
     [Fact]
@@ -1283,6 +1746,172 @@ public sealed class IndexingPipelineTests
             Assert.Equal("Chair_Internal", persisted.Name);
             var asset = store.PersistedAssets[packagePaths[0]].Single();
             Assert.Equal("Chair_Internal", asset.DisplayName);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Theory]
+    [InlineData("CASPreset", "CAS preset v12", "region=Neck")]
+    [InlineData("RegionMap", "Region map v1", "entries=2")]
+    [InlineData("Skintone", "Skintone v6", "overlays=2")]
+    public async Task PackageIndexCoordinator_EnrichesStructuredSeedDescriptionsBeforePersistingRawResources(
+        string typeName,
+        string expectedSnippet,
+        string expectedSecondarySnippet)
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var packagePaths = CreatePackageFiles(root, $"{typeName}.package");
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var scanner = new FakePackageScanner(source, packagePaths);
+            var store = new FakeIndexStore();
+            var resource = CreateStructuredSeedResource(source, packagePaths[0], typeName);
+            var catalog = new TrackingResourceCatalogService(TimeSpan.FromMilliseconds(5), 1)
+            {
+                ScanResourceFactory = _ => resource,
+                ResourceBytesFactory = candidate => candidate.Key.TypeName == typeName
+                    ? CreateStructuredSeedBytes(typeName)
+                    : throw new NotSupportedException()
+            };
+
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new FakeAssetGraphBuilder(),
+                store,
+                new IndexingRunOptions(1, 1, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(60)));
+
+            await coordinator.RunAsync([source], progress: null, CancellationToken.None);
+
+            Assert.Equal(0, catalog.EnrichCalls);
+            Assert.Equal(1, catalog.ResourceBytesCalls);
+            var persisted = store.PersistedScans.Single().Resources.Single();
+            Assert.Null(persisted.Name);
+            var description = Assert.IsType<string>(persisted.Description);
+            Assert.Contains(expectedSnippet, description, StringComparison.Ordinal);
+            Assert.Contains(expectedSecondarySnippet, description, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public async Task PackageIndexCoordinator_SlicedPackagePersistsSimTemplateFactsOnlyOnFinalChunk()
+    {
+        var root = CreatePackageRoot();
+
+        try
+        {
+            var packagePaths = CreatePackageFiles(root, "sim-large.package");
+            var source = new DataSourceDefinition(Guid.NewGuid(), "Game", root, SourceKind.Game);
+            var scanner = new FakePackageScanner(source, packagePaths);
+            var store = new FakeIndexStore();
+            var packagePath = packagePaths[0];
+            var resources = Enumerable.Range(0, 2050)
+                .Select(index => new ResourceMetadata(
+                    Guid.NewGuid(),
+                    source.Id,
+                    source.Kind,
+                    packagePath,
+                    new ResourceKeyRecord(0x545AC67A, 0x00000001, (ulong)index + 1, "CombinedTuning"),
+                    $"Resource {index}",
+                    100L,
+                    120L,
+                    false,
+                    PreviewKind.Hex,
+                    true,
+                    true,
+                    "Synthetic",
+                    string.Empty))
+                .ToArray();
+            var simInfo = new ResourceMetadata(
+                Guid.NewGuid(),
+                source.Id,
+                source.Kind,
+                packagePath,
+                new ResourceKeyRecord(0x025ED6F4, 0, 0xFDCCF77200000001ul, "SimInfo"),
+                "SimInfo template: Human | Young Adult | Female | outfits 1/1/2 [00000001]",
+                100L,
+                120L,
+                false,
+                PreviewKind.Hex,
+                true,
+                true,
+                "Sim/character seed",
+                string.Empty,
+                Description: "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=1 categories / 1 entries / 2 parts");
+            var fact = new SimTemplateFactSummary(
+                simInfo.Id,
+                source.Id,
+                source.Kind,
+                packagePath,
+                simInfo.Key.FullTgi,
+                "sim-archetype:human|young-adult|female",
+                "Human",
+                "Young Adult",
+                "Female",
+                simInfo.Name!,
+                simInfo.Description!,
+                1,
+                1,
+                2,
+                4,
+                8,
+                1,
+                true,
+                1,
+                2);
+            var bodyPart = new SimTemplateBodyPartFact(
+                simInfo.Id,
+                source.Id,
+                source.Kind,
+                packagePath,
+                simInfo.Key.FullTgi,
+                5,
+                "Nude",
+                0,
+                0,
+                5,
+                "Full Body",
+                0x6000000000000031ul,
+                true);
+            var catalog = new TrackingResourceCatalogService(TimeSpan.Zero, 1)
+            {
+                ScanResultFactory = (_, _) => new PackageScanResult(
+                    source.Id,
+                    source.Kind,
+                    packagePath,
+                    10,
+                    DateTimeOffset.UtcNow,
+                    resources,
+                    [])
+                {
+                    SimTemplateFacts = [fact],
+                    SimTemplateBodyPartFacts = [bodyPart]
+                }
+            };
+
+            var coordinator = new PackageIndexCoordinator(
+                scanner,
+                catalog,
+                new FakeAssetGraphBuilder(),
+                store,
+                new IndexingRunOptions(1, 2, 100, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(60)));
+
+            await coordinator.RunAsync([source], progress: null, CancellationToken.None);
+
+            Assert.Equal(2, store.PersistedScans.Count);
+            Assert.Empty(store.PersistedScans[0].SimTemplateFacts);
+            Assert.Empty(store.PersistedScans[0].SimTemplateBodyPartFacts);
+            Assert.Single(store.PersistedScans[1].SimTemplateFacts);
+            Assert.Single(store.PersistedScans[1].SimTemplateBodyPartFacts);
         }
         finally
         {
@@ -1502,6 +2131,7 @@ public sealed class IndexingPipelineTests
         public int MaxConcurrency { get; private set; }
         public int EnrichCalls { get; private set; }
         public int ResourceBytesCalls { get; private set; }
+        public Func<DataSourceDefinition, string, PackageScanResult>? ScanResultFactory { get; init; }
         public Func<string, ResourceMetadata>? ScanResourceFactory { get; init; }
         public Func<ResourceMetadata, ResourceMetadata>? EnrichedResourceFactory { get; init; }
         public Func<ResourceMetadata, byte[]>? ResourceBytesFactory { get; init; }
@@ -1527,6 +2157,11 @@ public sealed class IndexingPipelineTests
                 if (delayPerPackage > TimeSpan.Zero)
                 {
                     await Task.Delay(delayPerPackage, cancellationToken);
+                }
+
+                if (ScanResultFactory is not null)
+                {
+                    return ScanResultFactory(source, packagePath);
                 }
 
                 var resource = ScanResourceFactory?.Invoke(packagePath) ?? new ResourceMetadata(
@@ -1597,6 +2232,9 @@ public sealed class IndexingPipelineTests
         public Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
             Task.FromResult(new AssetGraph(summary, packageResources, []));
 
+        public Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
+            BuildAssetGraphAsync(summary, packageResources, cancellationToken);
+
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) =>
             [];
     }
@@ -1606,6 +2244,9 @@ public sealed class IndexingPipelineTests
         public Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
             Task.FromResult(new AssetGraph(summary, packageResources, []));
 
+        public Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
+            BuildAssetGraphAsync(summary, packageResources, cancellationToken);
+
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) => [summary];
     }
 
@@ -1613,6 +2254,9 @@ public sealed class IndexingPipelineTests
     {
         public Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
             Task.FromResult(new AssetGraph(summary, packageResources, []));
+
+        public Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
+            BuildAssetGraphAsync(summary, packageResources, cancellationToken);
 
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) =>
         [
@@ -1667,10 +2311,16 @@ public sealed class IndexingPipelineTests
         public Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<IndexedPackageRecord>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
+        public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByFullInstanceAsync(ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
+        public Task<IReadOnlyList<ResourceMetadata>> GetCasPartResourcesByInstancesAsync(IEnumerable<ulong> fullInstances, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<AssetSummary?> GetPackageAssetByIdAsync(string packagePath, Guid assetId, CancellationToken cancellationToken) => Task.FromResult<AssetSummary?>(null);
         public Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsAsync(Guid assetId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetVariantSummary>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
+        public Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateFactSummary>>([]);
+        public Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateBodyPartFact>>([]);
         public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken)
@@ -1689,12 +2339,6 @@ public sealed class IndexingPipelineTests
         {
             OpenWriteSessionCount++;
             return Task.FromResult<IIndexWriteSession>(new FakeWriteSession(this));
-        }
-
-        public Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken)
-        {
-            EnrichedResources.Add(resource);
-            return Task.FromResult(resource);
         }
 
         private void Persist(PackageScanResult packageScan)
@@ -1809,5 +2453,154 @@ public sealed class IndexingPipelineTests
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(6, 4), (uint)nameBytes.Length);
         nameBytes.CopyTo(bytes.AsSpan(10));
         return bytes;
+    }
+
+    private static ResourceMetadata CreateStructuredSeedResource(DataSourceDefinition source, string packagePath, string typeName) =>
+        new(
+            Guid.NewGuid(),
+            source.Id,
+            source.Kind,
+            packagePath,
+            new ResourceKeyRecord(GetStructuredSeedTypeId(typeName), 0x00000000, 0x0000000000000001, typeName),
+            null,
+            null,
+            null,
+            null,
+            PreviewKind.Hex,
+            true,
+            true,
+            $"{typeName} seed",
+            string.Empty);
+
+    private static uint GetStructuredSeedTypeId(string typeName) => typeName switch
+    {
+        "CASPreset" => 0xC9C81E27,
+        "RegionMap" => 0xAC16FBEC,
+        "Skintone" => 0x0354796A,
+        _ => throw new NotSupportedException(typeName)
+    };
+
+    private static byte[] CreateStructuredSeedBytes(string typeName) => typeName switch
+    {
+        "CASPreset" => CreateSyntheticCasPresetBytes(),
+        "RegionMap" => CreateSyntheticRegionMapBytes(),
+        "Skintone" => CreateSyntheticSkintoneBytes(),
+        _ => throw new NotSupportedException(typeName)
+    };
+
+    private static byte[] CreateSyntheticCasPresetBytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        writer.Write(12u);
+        writer.Write(0x00003030u);
+        writer.Write(0x00002000u);
+        writer.Write(0x00000001u);
+        writer.Write(16u);
+        writer.Write(12u);
+        writer.Write(0x00000001u);
+        writer.Write(1.25f);
+        writer.Write(0x11223344u);
+        writer.Write(0x55667788u);
+
+        writer.Write(1u);
+        writer.Write(0x0123456789ABCDEFul);
+
+        writer.Write(2u);
+        writer.Write(0x1000000000000001ul);
+        writer.Write(0.35f);
+        writer.Write(0x2000000000000002ul);
+        writer.Write(0.85f);
+
+        writer.Write((byte)1);
+        writer.Write(0.1f);
+        writer.Write(0.2f);
+        writer.Write(0.3f);
+        writer.Write(0.4f);
+
+        writer.Write((byte)1);
+        writer.Write(0xCAFEBABE00000010ul);
+        writer.Write(12u);
+
+        writer.Write(0.75f);
+        writer.Write(2u);
+        writer.Write((ushort)14);
+        writer.Write(0x01020304u);
+        writer.Write((ushort)16);
+        writer.Write(0x05060708u);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticRegionMapBytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        writer.Write(3u);
+        writer.Write(1u);
+        writer.Write(1u);
+        writer.Write(0u);
+        writer.Write(1u);
+
+        WriteResourceKey(writer, new ResourceKeyRecord(0x015A1849u, 0u, 0x1111111111111111ul, "Geometry"));
+        WriteResourceKey(writer, new ResourceKeyRecord(0x015A1849u, 0u, 0x2222222222222222ul, "Geometry"));
+        writer.Write(0u);
+        writer.Write(16u);
+
+        writer.Write(1u);
+        writer.Write(2u);
+
+        writer.Write(13u);
+        writer.Write(1.5f);
+        writer.Write((byte)0);
+        writer.Write(1u);
+        WriteResourceKey(writer, new ResourceKeyRecord(0x015A1849u, 0u, 0x3333333333333333ul, "Geometry"));
+
+        writer.Write(14u);
+        writer.Write(2.0f);
+        writer.Write((byte)1);
+        writer.Write(2u);
+        WriteResourceKey(writer, new ResourceKeyRecord(0x015A1849u, 0u, 0x4444444444444444ul, "Geometry"));
+        WriteResourceKey(writer, new ResourceKeyRecord(0x015A1849u, 0u, 0x5555555555555555ul, "Geometry"));
+
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticSkintoneBytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        writer.Write(6u);
+        writer.Write(0x1020304050607080ul);
+        writer.Write(2u);
+        writer.Write(0x00003030u);
+        writer.Write(0x1111111111111111ul);
+        writer.Write(0x0000C000u);
+        writer.Write(0x2222222222222222ul);
+        writer.Write(0x00FF8040u);
+        writer.Write(85u);
+        writer.Write(1u);
+        writer.Write((ushort)7);
+        writer.Write((ushort)42);
+        writer.Write(0.55f);
+        writer.Write((byte)3);
+        writer.Write(0xFFBBAA99u);
+        writer.Write(0xFF112233u);
+        writer.Write(0xFF445566u);
+        writer.Write(2.5f);
+        writer.Write(0.65f);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static void WriteResourceKey(BinaryWriter writer, ResourceKeyRecord key)
+    {
+        writer.Write(key.Type);
+        writer.Write(key.Group);
+        writer.Write(key.FullInstance);
     }
 }

@@ -13,6 +13,7 @@ namespace Sims4ResourceExplorer.App;
 public sealed partial class IndexingDialog : Window
 {
     private readonly TaskCompletionSource closeCompletionSource = new();
+    private AppWindow? appWindow;
     private bool allowClose;
 
     public IndexingDialog(IndexingDialogViewModel viewModel)
@@ -35,6 +36,27 @@ public sealed partial class IndexingDialog : Window
 
     public Task WaitForCloseAsync() => closeCompletionSource.Task;
 
+    public void PrepareForShutdown()
+    {
+        allowClose = true;
+
+        try
+        {
+            ViewModel.RequestCancel();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            Close();
+        }
+        catch
+        {
+        }
+    }
+
     private void OnActivated(object sender, WindowActivatedEventArgs args)
     {
         Activated -= OnActivated;
@@ -43,6 +65,15 @@ public sealed partial class IndexingDialog : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        Activated -= OnActivated;
+        Closed -= OnClosed;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        if (appWindow is not null)
+        {
+            appWindow.Closing -= OnAppWindowClosing;
+            appWindow = null;
+        }
+
         ViewModel.NotifyDialogClosed();
         closeCompletionSource.TrySetResult();
     }
@@ -107,7 +138,7 @@ public sealed partial class IndexingDialog : Window
     {
         try
         {
-            var appWindow = GetAppWindow();
+            appWindow = GetAppWindow();
             appWindow.Title = "Update Index";
 
             if (appWindow.Presenter is OverlappedPresenter presenter)
@@ -143,7 +174,7 @@ public sealed partial class IndexingDialog : Window
     {
         try
         {
-            var appWindow = GetAppWindow();
+            var appWindow = this.appWindow ?? GetAppWindow();
             var displayArea = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Primary);
             var workArea = displayArea.WorkArea;
             var x = workArea.X + Math.Max(0, (workArea.Width - appWindow.Size.Width) / 2);

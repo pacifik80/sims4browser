@@ -455,7 +455,7 @@
                                                                                TextTrimming="CharacterEllipsis" />
                                                                     <ComboBox ItemsSource="{x:Bind Options}"
                                                                               SelectedItem="{x:Bind SelectedOption, Mode=TwoWay}"
-                                                                              DisplayMemberPath="DisplayLabel"
+                                                                              DisplayMemberPath="PickerLabel"
                                                                               PlaceholderText="No resolved body asset is available yet"
                                                                               IsEnabled="{x:Bind HasOptions}" />
                                                                     <TextBlock Text="{x:Bind SelectedOptionLabel}"

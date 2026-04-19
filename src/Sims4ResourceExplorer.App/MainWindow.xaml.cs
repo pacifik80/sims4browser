@@ -50,6 +50,8 @@ public sealed partial class MainWindow : Window
     private bool isDraggingPreviewSplitter;
     private double previewSplitterStartY;
     private double previewSplitterStartHeight;
+    private IndexingDialog? indexingDialog;
+    private int shutdownRequested;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -81,6 +83,7 @@ public sealed partial class MainWindow : Window
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         UpdateBusyUiState();
         Activated += MainWindow_Activated;
+        Closed += MainWindow_Closed;
         TryApplyWindowIcon();
     }
 
@@ -94,7 +97,15 @@ public sealed partial class MainWindow : Window
 
     private async void Index_Click(object sender, RoutedEventArgs e)
     {
+        if (indexingDialog is not null)
+        {
+            indexingDialog.Activate();
+            return;
+        }
+
         var dialog = new IndexingDialog(ViewModel.CreateIndexingDialogViewModel());
+        indexingDialog = dialog;
+        dialog.Closed += IndexingDialog_Closed;
         dialog.Activate();
         var shouldStart = await dialog.ViewModel.WaitForStartAsync();
         if (!shouldStart)
@@ -386,6 +397,81 @@ public sealed partial class MainWindow : Window
         {
             root.IsHitTestVisible = !ViewModel.IsBusy;
         }
+    }
+
+    private void IndexingDialog_Closed(object sender, WindowEventArgs args)
+    {
+        if (sender is not IndexingDialog dialog)
+        {
+            return;
+        }
+
+        dialog.Closed -= IndexingDialog_Closed;
+        if (ReferenceEquals(indexingDialog, dialog))
+        {
+            indexingDialog = null;
+        }
+    }
+
+    private void MainWindow_Closed(object sender, WindowEventArgs args)
+    {
+        if (Interlocked.Exchange(ref shutdownRequested, 1) != 0)
+        {
+            return;
+        }
+
+        Activated -= MainWindow_Activated;
+        Closed -= MainWindow_Closed;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+
+        if (indexingDialog is not null)
+        {
+            try
+            {
+                indexingDialog.Closed -= IndexingDialog_Closed;
+                indexingDialog.PrepareForShutdown();
+            }
+            catch
+            {
+            }
+            finally
+            {
+                indexingDialog = null;
+            }
+        }
+
+        try
+        {
+            uvPreviewRenderCancellation?.Cancel();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            uvPreviewRenderCancellation?.Dispose();
+        }
+        catch
+        {
+        }
+        finally
+        {
+            uvPreviewRenderCancellation = null;
+        }
+
+        try
+        {
+            sceneViewport.Items.Clear();
+            PreviewSurface.Children.Remove(sceneViewport);
+        }
+        catch
+        {
+        }
+
+        DisposeSilently(sceneViewport);
+        DisposeSilently(sceneShadowMap);
+        DisposeSilently(effectsManager);
     }
 
     private async void UpdatePreviewSurface()
@@ -801,7 +887,6 @@ public sealed partial class MainWindow : Window
         var approximateBaseColor = BuildApproximateBaseColor(material);
         var effectiveBaseColor = viewportTintColor ?? approximateBaseColor;
         var diffuseColor = effectiveBaseColor ?? new Color4(0.62f, 0.62f, 0.62f, 1f);
-        var texturedLitDiffuseColor = viewportTintColor ?? new Color4(1f, 1f, 1f, 1f);
         var ambientColor = effectiveBaseColor is null
             ? new Color4(0.3f, 0.3f, 0.3f, 1f)
             : new Color4(
@@ -852,9 +937,10 @@ public sealed partial class MainWindow : Window
             ? new Color4(0.02f, 0.02f, 0.02f, 1f)
             : new Color4(0.08f, 0.08f, 0.08f, 1f);
         var litSpecularShininess = useMatteLitShading ? 4f : 12f;
-        var effectiveTexturedLitDiffuseColor = usesSwatchComposite
-            ? new Color4(1f, 1f, 1f, 1f)
-            : texturedLitDiffuseColor;
+        // The viewport tint is metadata for skintone/swatch routing, not a blanket multiplier for
+        // already-decoded textured materials. If a texture map is present, keep the lit diffuse
+        // multiplier neutral unless a dedicated texture composite has already baked the tint in.
+        var effectiveTexturedLitDiffuseColor = new Color4(1f, 1f, 1f, 1f);
 
         return new PhongMaterial
         {
@@ -1821,6 +1907,22 @@ public sealed partial class MainWindow : Window
 
         var scope = new CanonicalMaterial("Scoped", textures);
         return SelectLayeredColorTexture(scope);
+    }
+
+    private static void DisposeSilently(IDisposable? disposable)
+    {
+        if (disposable is null)
+        {
+            return;
+        }
+
+        try
+        {
+            disposable.Dispose();
+        }
+        catch
+        {
+        }
     }
 
 }

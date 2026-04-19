@@ -1,32 +1,121 @@
 using System.Numerics;
 using System.Text;
+using System.Diagnostics;
 using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.Preview;
 
 public sealed partial class BuildBuySceneBuildService
 {
+    public async Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var stopwatch = Stopwatch.StartNew();
+
+        var geometryRoots = casGraph.GeometryResources
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+        if (geometryRoots.Length == 0)
+        {
+            return new SceneBuildResult(
+                false,
+                null,
+                ["No CAS geometry roots were resolved."],
+                SceneBuildStatus.Unsupported);
+        }
+
+        if (geometryRoots.Length == 1)
+        {
+            var singleResult = await BuildGeometrySceneAsync(
+                geometryRoots[0],
+                casGraph.CasPartResource,
+                cancellationToken,
+                progress,
+                casGraph.RigResources,
+                casGraph.MaterialResources,
+                casGraph.TextureResources,
+                casGraph.Materials).ConfigureAwait(false);
+            return singleResult with
+            {
+                Diagnostics = [.. singleResult.Diagnostics, $"CAS scene build timings: total {stopwatch.Elapsed.TotalMilliseconds:0} ms."]
+            };
+        }
+
+        var previews = new List<ScenePreviewContent>(geometryRoots.Length);
+        var diagnostics = new List<string>();
+        var allReady = true;
+        for (var index = 0; index < geometryRoots.Length; index++)
+        {
+            var geometry = geometryRoots[index];
+            var start = 0.02 + ((index / (double)Math.Max(geometryRoots.Length, 1)) * 0.94);
+            progress?.Report(new PreviewBuildProgress($"Building CAS geometry {index + 1}/{geometryRoots.Length}...", start));
+            var scene = await BuildGeometrySceneAsync(
+                geometry,
+                casGraph.CasPartResource,
+                cancellationToken,
+                progress,
+                casGraph.RigResources,
+                casGraph.MaterialResources,
+                casGraph.TextureResources,
+                casGraph.Materials).ConfigureAwait(false);
+            diagnostics.AddRange(scene.Diagnostics);
+            allReady &= scene.Status == SceneBuildStatus.SceneReady;
+            if (scene.Scene is not null)
+            {
+                previews.Add(new ScenePreviewContent(geometry, scene.Scene, string.Join(Environment.NewLine, scene.Diagnostics), scene.Status));
+            }
+        }
+
+        if (previews.Count == 0)
+        {
+            return new SceneBuildResult(false, null, diagnostics, SceneBuildStatus.Unsupported);
+        }
+
+        var name = casGraph.CasPartResource.Name
+            ?? casGraph.CasPartResource.Key.FullTgi;
+        var composed = CanonicalSceneComposer.Compose(name, previews);
+        return new SceneBuildResult(
+            true,
+            composed.Scene,
+            [.. diagnostics, $"CAS scene build timings: total {stopwatch.Elapsed.TotalMilliseconds:0} ms."],
+            allReady && previews.Count == geometryRoots.Length ? SceneBuildStatus.SceneReady : SceneBuildStatus.Partial);
+    }
+
     private async Task<SceneBuildResult> BuildGeometrySceneAsync(
         ResourceMetadata geometryResource,
         ResourceMetadata logicalRootResource,
         CancellationToken cancellationToken,
-        IProgress<PreviewBuildProgress>? progress)
+        IProgress<PreviewBuildProgress>? progress,
+        IReadOnlyList<ResourceMetadata>? preferredRigResources = null,
+        IReadOnlyList<ResourceMetadata>? preferredMaterialResources = null,
+        IReadOnlyList<ResourceMetadata>? preferredTextureResources = null,
+        IReadOnlyList<MaterialManifestEntry>? preferredMaterialManifest = null)
     {
+        var stopwatch = Stopwatch.StartNew();
+        var geometryReadElapsed = TimeSpan.Zero;
+        var geometryParseElapsed = TimeSpan.Zero;
+        var textureResolveElapsed = TimeSpan.Zero;
+        var rigResolveElapsed = TimeSpan.Zero;
         var geometryPackageName = Path.GetFileName(geometryResource.PackagePath);
         ReportProgress(progress, $"Loading geometry bytes from {geometryPackageName}...", 0.15);
+        var readStopwatch = Stopwatch.StartNew();
         var bytes = await resourceCatalogService.GetResourceBytesAsync(
             geometryResource.PackagePath,
             geometryResource.Key,
             raw: false,
             cancellationToken,
             CreateReadProgressReporter(progress, 0.15, 0.35, geometryPackageName)).ConfigureAwait(false);
+        geometryReadElapsed = readStopwatch.Elapsed;
         var diagnostics = new List<string>();
 
         Ts4GeomResource geom;
         try
         {
             ReportProgress(progress, "Parsing geometry...", 0.35);
+            var parseStopwatch = Stopwatch.StartNew();
             geom = Ts4GeomResource.Parse(bytes);
+            geometryParseElapsed = parseStopwatch.Elapsed;
         }
         catch (Exception ex)
         {
@@ -45,26 +134,80 @@ public sealed partial class BuildBuySceneBuildService
 
         var textureCache = new Dictionary<string, CanonicalTexture?>(StringComparer.OrdinalIgnoreCase);
         ReportProgress(progress, "Resolving textures...", 0.55);
-        var textures = await ResolveFallbackTexturesAsync(geometryResource, textureCache, cancellationToken, diagnostics).ConfigureAwait(false);
-        if (textures.Count == 0)
+        var textureStopwatch = Stopwatch.StartNew();
+        var materials = await ResolveCasMaterialsFromMaterialResourcesAsync(
+            geometryResource,
+            preferredMaterialResources,
+            textureCache,
+            cancellationToken,
+            diagnostics,
+            progress).ConfigureAwait(false);
+        if (materials.Count == 0)
         {
-            diagnostics.Add("No exact-instance texture candidates were decoded for this Geometry root.");
+            materials = await ResolveCasMaterialsFromManifestAsync(
+                preferredMaterialManifest,
+                preferredTextureResources,
+                textureCache,
+                cancellationToken,
+                diagnostics,
+                progress).ConfigureAwait(false);
         }
+        if (materials.Count == 0)
+        {
+            var fallbackTextures = await ResolveFallbackTexturesAsync(
+                geometryResource,
+                textureCache,
+                cancellationToken,
+                diagnostics,
+                preferredTextureResources).ConfigureAwait(false);
+            if (fallbackTextures.Count == 0)
+            {
+                diagnostics.Add("No manifest-driven or exact-instance texture candidates were decoded for this Geometry root.");
+            }
+            else
+            {
+                diagnostics.Add("CAS preview fell back to exact-instance texture candidates because no manifest-driven material textures were resolved.");
+            }
+
+            materials =
+            [
+                new CanonicalMaterial(
+                    "ApproximateCasMaterial",
+                    fallbackTextures,
+                    null,
+                    false,
+                    "portable-approximation",
+                    null,
+                    [],
+                    "CAS materials are exported as a portable approximation of package-local texture candidates.",
+                    CanonicalMaterialSourceKind.ApproximateCas)
+            ];
+        }
+        var textures = materials.SelectMany(static material => material.Textures).ToArray();
+        textureResolveElapsed = textureStopwatch.Elapsed;
 
         ReportProgress(progress, "Resolving rig...", 0.72);
-        var rig = await TryResolveRigAsync(geometryResource, cancellationToken).ConfigureAwait(false);
+        var rigStopwatch = Stopwatch.StartNew();
+        var rig = await TryResolveRigAsync(geometryResource, geom, preferredRigResources, cancellationToken).ConfigureAwait(false);
+        rigResolveElapsed = rigStopwatch.Elapsed;
         diagnostics.AddRange(rig.Diagnostics);
         var bones = BuildCanonicalBones(geom, rig.Rig);
         var skinWeights = BuildSkinWeights(geom, diagnostics);
+
+        var uv0s = geom.Vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray();
+        var uv1s = geom.Vertices.SelectMany(static vertex => vertex.Uv1 ?? []).ToArray();
+        var primaryUvs = uv0s.Length > 0
+            ? uv0s
+            : uv1s;
 
         var mesh = new CanonicalMesh(
             $"Mesh_{geometryResource.Key.FullInstance:X16}",
             geom.Vertices.SelectMany(static vertex => vertex.Position).ToArray(),
             geom.Vertices.SelectMany(static vertex => vertex.Normal ?? []).ToArray(),
             geom.Vertices.SelectMany(static vertex => vertex.Tangent ?? []).ToArray(),
-            geom.Vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray(),
-            geom.Vertices.SelectMany(static vertex => vertex.Uv0 ?? []).ToArray(),
-            [],
+            primaryUvs,
+            uv0s.Length > 0 ? uv0s : null,
+            uv1s.Length > 0 ? uv1s : null,
             0,
             geom.Indices,
             0,
@@ -73,55 +216,260 @@ public sealed partial class BuildBuySceneBuildService
         var scene = new CanonicalScene(
             logicalRootResource.Name ?? geometryResource.Name ?? $"Cas_{logicalRootResource.Key.FullInstance:X16}",
             [mesh],
-            [new CanonicalMaterial(
-                "ApproximateCasMaterial",
-                textures,
-                null,
-                false,
-                "portable-approximation",
-                null,
-                [],
-                "CAS materials are exported as a portable approximation of package-local texture candidates.",
-                CanonicalMaterialSourceKind.ApproximateCas)],
+            materials,
             bones,
             ComputeBounds([mesh]));
 
         diagnostics.Insert(0, $"Selected geometry root: {geometryResource.Key.FullTgi}");
+        diagnostics.Add(
+            $"Geometry scene timings: read {geometryReadElapsed.TotalMilliseconds:0} ms | parse {geometryParseElapsed.TotalMilliseconds:0} ms | textures {textureResolveElapsed.TotalMilliseconds:0} ms | rig {rigResolveElapsed.TotalMilliseconds:0} ms | total {stopwatch.Elapsed.TotalMilliseconds:0} ms.");
         ReportProgress(progress, "Scene ready.", 1.0);
-        var status = textures.Count == 0 || rig.Rig is null
+        var status = textures.Length == 0 || rig.Rig is null
             ? SceneBuildStatus.Partial
             : SceneBuildStatus.SceneReady;
         return new SceneBuildResult(true, scene, diagnostics, status);
     }
 
-    private async Task<Ts4RigResolution> TryResolveRigAsync(ResourceMetadata geometryResource, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<CanonicalMaterial>> ResolveCasMaterialsFromMaterialResourcesAsync(
+        ResourceMetadata geometryResource,
+        IReadOnlyList<ResourceMetadata>? preferredMaterialResources,
+        Dictionary<string, CanonicalTexture?> textureCache,
+        CancellationToken cancellationToken,
+        List<string> diagnostics,
+        IProgress<PreviewBuildProgress>? progress = null)
     {
-        var packageResources = await GetPackageInstanceResourcesAsync(geometryResource.PackagePath, geometryResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
-        var rig = packageResources
-            .Where(resource => resource.Key.TypeName == "Rig" && resource.Key.FullInstance == geometryResource.Key.FullInstance)
-            .OrderBy(static resource => resource.Key.Group)
-            .FirstOrDefault();
+        if (preferredMaterialResources is null || preferredMaterialResources.Count == 0)
+        {
+            return [];
+        }
 
-        if (rig is null)
+        var candidateMaterials = preferredMaterialResources
+            .Where(resource => resource.Key.FullInstance == geometryResource.Key.FullInstance)
+            .OrderBy(static resource => resource.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static resource => resource.Key.Group)
+            .ToArray();
+        if (candidateMaterials.Length == 0)
+        {
+            candidateMaterials = preferredMaterialResources
+                .OrderBy(static resource => resource.PackagePath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static resource => resource.Key.Group)
+                .ToArray();
+        }
+
+        var resolvedMaterials = new List<CanonicalMaterial>(candidateMaterials.Length);
+        for (var index = 0; index < candidateMaterials.Length; index++)
+        {
+            var materialResource = candidateMaterials[index];
+            try
+            {
+                var bytes = await resourceCatalogService.GetResourceBytesAsync(
+                    materialResource.PackagePath,
+                    materialResource.Key,
+                    raw: false,
+                    cancellationToken).ConfigureAwait(false);
+                var rcol = Ts4RcolResource.Parse(bytes);
+                var materialChunk = rcol.Chunks.FirstOrDefault(static chunk => chunk.Tag is "MATD" or "MTST");
+                var materialInfo = await ResolveMaterialAsync(
+                    materialChunk,
+                    rcol,
+                    materialResource,
+                    geometryResource,
+                    textureCache,
+                    cancellationToken,
+                    progress,
+                    label: $"CAS material {index + 1}/{candidateMaterials.Length}").ConfigureAwait(false);
+                diagnostics.AddRange(materialInfo.Diagnostics);
+                if (materialInfo.Textures.Count == 0)
+                {
+                    continue;
+                }
+
+                resolvedMaterials.Add(new CanonicalMaterial(
+                    materialInfo.Name,
+                    materialInfo.Textures,
+                    materialInfo.ShaderName,
+                    materialInfo.IsTransparent,
+                    materialInfo.AlphaMode,
+                    materialInfo.AlphaTextureSlot,
+                    materialInfo.LayeredTextureSlots,
+                    materialInfo.Approximation,
+                    materialInfo.SourceKind,
+                    materialInfo.ApproximateBaseColor is { Length: >= 3 } color
+                        ? new CanonicalColor(color[0], color[1], color[2], color.Length >= 4 ? color[3] : 1f)
+                        : null));
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"CAS material resource {materialResource.Key.FullTgi} could not be decoded: {ex.Message}");
+            }
+        }
+
+        if (resolvedMaterials.Count > 0)
+        {
+            diagnostics.Add($"Resolved {resolvedMaterials.Count:N0} CAS material-definition candidate(s) before considering manifest approximation.");
+        }
+
+        return resolvedMaterials;
+    }
+
+    private async Task<IReadOnlyList<CanonicalMaterial>> ResolveCasMaterialsFromManifestAsync(
+        IReadOnlyList<MaterialManifestEntry>? preferredMaterialManifest,
+        IReadOnlyList<ResourceMetadata>? preferredTextureResources,
+        Dictionary<string, CanonicalTexture?> textureCache,
+        CancellationToken cancellationToken,
+        List<string> diagnostics,
+        IProgress<PreviewBuildProgress>? progress = null)
+    {
+        if (preferredMaterialManifest is null || preferredMaterialManifest.Count == 0)
+        {
+            return [];
+        }
+
+        var resolvedMaterials = new List<CanonicalMaterial>(preferredMaterialManifest.Count);
+        foreach (var manifestMaterial in preferredMaterialManifest)
+        {
+            var resolvedTextures = new List<CanonicalTexture>(manifestMaterial.Textures.Count);
+            foreach (var manifestTexture in manifestMaterial.Textures)
+            {
+                var resolvedTexture = await TryResolveManifestTextureAsync(
+                    manifestTexture,
+                    preferredTextureResources,
+                    textureCache,
+                    cancellationToken,
+                    progress).ConfigureAwait(false);
+                if (resolvedTexture is null)
+                {
+                    diagnostics.Add($"CAS material manifest texture slot '{manifestTexture.Slot}' did not resolve to a previewable texture.");
+                    continue;
+                }
+
+                resolvedTextures.Add(resolvedTexture);
+            }
+
+            if (resolvedTextures.Count == 0)
+            {
+                continue;
+            }
+
+            resolvedMaterials.Add(new CanonicalMaterial(
+                manifestMaterial.MaterialName,
+                resolvedTextures,
+                manifestMaterial.ShaderName,
+                manifestMaterial.IsTransparent,
+                manifestMaterial.AlphaMode,
+                manifestMaterial.AlphaTextureSlot,
+                manifestMaterial.LayeredTextureSlots,
+                manifestMaterial.Approximation,
+                manifestMaterial.SourceKind));
+        }
+
+        if (resolvedMaterials.Count > 0)
+        {
+            diagnostics.Add($"Resolved {resolvedMaterials.Count:N0} manifest-driven CAS material(s) before considering same-instance fallback textures.");
+        }
+
+        return resolvedMaterials;
+    }
+
+    private async Task<Ts4RigResolution> TryResolveRigAsync(
+        ResourceMetadata geometryResource,
+        Ts4GeomResource geom,
+        IReadOnlyList<ResourceMetadata>? preferredRigResources,
+        CancellationToken cancellationToken)
+    {
+        static string BuildRigCacheKey(ResourceMetadata resource) =>
+            $"{resource.PackagePath}|{resource.Key.FullTgi}";
+
+        var diagnostics = new List<string>();
+        var packageResources = await GetPackageInstanceResourcesAsync(geometryResource.PackagePath, geometryResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
+        var candidateResources = new List<(ResourceMetadata Resource, bool IsPreferred, bool IsExactInstance)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddCandidates(IEnumerable<ResourceMetadata>? resources, bool isPreferred)
+        {
+            if (resources is null)
+            {
+                return;
+            }
+
+            foreach (var resource in resources.Where(static resource => resource.Key.TypeName == "Rig"))
+            {
+                var cacheKey = BuildRigCacheKey(resource);
+                if (!seen.Add(cacheKey))
+                {
+                    continue;
+                }
+
+                candidateResources.Add((resource, isPreferred, string.Equals(resource.PackagePath, geometryResource.PackagePath, StringComparison.OrdinalIgnoreCase) &&
+                                                            resource.Key.FullInstance == geometryResource.Key.FullInstance));
+            }
+        }
+
+        AddCandidates(preferredRigResources, isPreferred: true);
+        AddCandidates(
+            packageResources
+                .Where(resource => resource.Key.TypeName == "Rig" && resource.Key.FullInstance == geometryResource.Key.FullInstance)
+                .OrderBy(static resource => resource.Key.Group),
+            isPreferred: false);
+
+        if (candidateResources.Count == 0)
         {
             return new Ts4RigResolution(null, ["No exact-instance Rig resource was resolved for this geometry. Bone names will fall back to GEOM hashes."]);
         }
 
-        try
+        var geomBoneHashes = geom.BoneHashes.Count == 0
+            ? null
+            : geom.BoneHashes.ToHashSet();
+        Ts4RigResource? bestRig = null;
+        ResourceMetadata? bestRigResource = null;
+        var bestOverlap = -1;
+        var bestIsExactInstance = false;
+        var bestIsPreferred = false;
+
+        foreach (var (resource, isPreferred, isExactInstance) in candidateResources)
         {
-            var rigPackageName = Path.GetFileName(rig.PackagePath);
-            var bytes = await resourceCatalogService.GetResourceBytesAsync(
-                rig.PackagePath,
-                rig.Key,
-                raw: false,
-                cancellationToken,
-                CreateReadProgressReporter(null, 0d, 1d, rigPackageName)).ConfigureAwait(false);
-            return new Ts4RigResolution(Ts4RigResource.Parse(bytes), [$"Resolved rig: {rig.Key.FullTgi}"]);
+            try
+            {
+                var rigPackageName = Path.GetFileName(resource.PackagePath);
+                var bytes = await resourceCatalogService.GetResourceBytesAsync(
+                    resource.PackagePath,
+                    resource.Key,
+                    raw: false,
+                    cancellationToken,
+                    CreateReadProgressReporter(null, 0d, 1d, rigPackageName)).ConfigureAwait(false);
+                var parsedRig = Ts4RigResource.Parse(bytes);
+                var overlap = geomBoneHashes is null
+                    ? 0
+                    : parsedRig.Bones.Count(bone => geomBoneHashes.Contains(bone.NameHash));
+                if (bestRig is null ||
+                    overlap > bestOverlap ||
+                    (overlap == bestOverlap && isExactInstance && !bestIsExactInstance))
+                {
+                    bestRig = parsedRig;
+                    bestRigResource = resource;
+                    bestOverlap = overlap;
+                    bestIsExactInstance = isExactInstance;
+                    bestIsPreferred = isPreferred;
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"Rig parsing failed for {resource.Key.FullTgi}: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+
+        if (bestRig is null || bestRigResource is null)
         {
-            return new Ts4RigResolution(null, [$"Rig parsing failed for {rig.Key.FullTgi}: {ex.Message}"]);
+            diagnostics.Add("No usable Rig resource was resolved for this geometry. Bone names will fall back to GEOM hashes.");
+            return new Ts4RigResolution(null, diagnostics);
         }
+
+        var sharedBoneSummary = bestOverlap > 0
+            ? $" ({bestOverlap:N0} shared GEOM bone hash(es))"
+            : string.Empty;
+        diagnostics.Insert(0, bestIsPreferred && !bestIsExactInstance
+            ? $"Resolved rig from CAS-linked companion resource: {bestRigResource.Key.FullTgi}{sharedBoneSummary}"
+            : $"Resolved rig: {bestRigResource.Key.FullTgi}{sharedBoneSummary}");
+        return new Ts4RigResolution(bestRig, diagnostics);
     }
 
     private static IReadOnlyList<CanonicalBone> BuildCanonicalBones(Ts4GeomResource geom, Ts4RigResource? rig)
@@ -365,6 +713,7 @@ internal sealed class Ts4GeomResource
             float[]? position = null;
             float[]? normal = null;
             float[]? uv0 = null;
+            float[]? uv1 = null;
             byte[]? blendIndices = null;
             float[]? blendWeights = null;
             float[]? tangent = null;
@@ -380,7 +729,15 @@ internal sealed class Ts4GeomResource
                         normal = [reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()];
                         break;
                     case 0x03:
-                        uv0 = [reader.ReadSingle(), reader.ReadSingle()];
+                        var uv = new[] { reader.ReadSingle(), reader.ReadSingle() };
+                        if (uv0 is null)
+                        {
+                            uv0 = uv;
+                        }
+                        else if (uv1 is null)
+                        {
+                            uv1 = uv;
+                        }
                         break;
                     case 0x04:
                         blendIndices = reader.ReadBytes(4);
@@ -405,7 +762,7 @@ internal sealed class Ts4GeomResource
 
             if (position is not null)
             {
-                results.Add(new Ts4GeomVertex(position, normal, tangent, uv0, blendIndices, blendWeights));
+                results.Add(new Ts4GeomVertex(position, normal, tangent, uv0, uv1, blendIndices, blendWeights));
             }
         }
 
@@ -550,6 +907,7 @@ internal readonly record struct Ts4GeomVertex(
     float[]? Normal,
     float[]? Tangent,
     float[]? Uv0,
+    float[]? Uv1,
     byte[]? BlendIndices,
     float[]? BlendWeights);
 

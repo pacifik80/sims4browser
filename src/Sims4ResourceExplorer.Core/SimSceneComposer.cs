@@ -15,7 +15,10 @@ public static class SimSceneComposer
         ScenePreviewContent? headPreview,
         IReadOnlyList<ResourceMetadata>? headRigResources,
         SimInfoSummary? simMetadata = null,
-        IReadOnlyList<SimMorphGroupSummary>? morphGroups = null)
+        IReadOnlyList<SimMorphGroupSummary>? morphGroups = null,
+        SimSkintoneRenderSummary? skintoneRender = null,
+        IReadOnlyList<CasRegionMapSummary>? bodyRegionMaps = null,
+        IReadOnlyList<CasRegionMapSummary>? headRegionMaps = null)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(bodyPreview);
@@ -34,7 +37,10 @@ public static class SimSceneComposer
             headPreview,
             rigCompatibility,
             simMetadata,
-            morphGroups);
+            morphGroups,
+            skintoneRender,
+            bodyRegionMaps,
+            headRegionMaps);
         var graph = BuildGraph(
             execution.BodySceneResolved,
             execution.HeadSceneResolved,
@@ -68,7 +74,10 @@ public static class SimSceneComposer
         ScenePreviewContent? headPreview,
         SimRigCompatibilityResult rigCompatibility,
         SimInfoSummary? simMetadata,
-        IReadOnlyList<SimMorphGroupSummary>? morphGroups)
+        IReadOnlyList<SimMorphGroupSummary>? morphGroups,
+        SimSkintoneRenderSummary? skintoneRender,
+        IReadOnlyList<CasRegionMapSummary>? bodyRegionMaps,
+        IReadOnlyList<CasRegionMapSummary>? headRegionMaps)
     {
         var bodySceneResolved = bodyPreview.Scene is not null;
         var headSceneResolved = headPreview?.Scene is not null;
@@ -108,7 +117,7 @@ public static class SimSceneComposer
                 includesHeadShell: false,
                 "No renderable body shell scene was available.");
             stages.Add(new SimAssemblyStageSummary("Resolve assembly basis", 2, SimAssemblyStageState.Unavailable, missingBodyPlan.Notes));
-            stages.Add(new SimAssemblyStageSummary("Compose assembled scene", 3, SimAssemblyStageState.Unavailable, "Sim assembly could not proceed because no body shell scene was available."));
+            stages.Add(new SimAssemblyStageSummary("Materialize torso/head payload seam", 3, SimAssemblyStageState.Unavailable, "No torso/head payload seam could be materialized because no body shell scene was available."));
             return new SimAssemblyStageExecutionResult(
                 preview,
                 missingBodyPlan,
@@ -139,9 +148,9 @@ public static class SimSceneComposer
             var payloadAnchor = BuildPayloadAnchor(bodyPreview);
             var payloadMeshBatches = BuildAnchorOnlyMeshBatches(bodyPreview);
             var bodyOnlyPayloadData = BuildAnchorOnlyPayloadData(bodyPreview, bodyPreview.Scene!);
-            var bodyOnlyApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, morphGroups);
+            var bodyOnlyApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, skintoneRender, morphGroups, bodyRegionMaps, []);
             stages.Add(new SimAssemblyStageSummary("Resolve assembly basis", 2, SimAssemblyStageState.Pending, bodyOnlyPlan.Notes));
-            stages.Add(new SimAssemblyStageSummary("Compose assembled scene", 3, SimAssemblyStageState.Approximate, "The current Sim assembly is body-only because no head shell scene was resolved."));
+            stages.Add(new SimAssemblyStageSummary("Materialize torso/head payload seam", 3, SimAssemblyStageState.Resolved, "An anchor-only torso/head payload seam was materialized because no head shell scene was resolved."));
             var preview = ApplyApplicationDataToPreview(
                 RenameBodyPreview(
                     name,
@@ -163,7 +172,7 @@ public static class SimSceneComposer
                 BuildApplicationPlans(bodyOnlyApplicationData),
                 BuildApplicationTransforms(bodyOnlyApplicationData),
                 BuildApplicationOutcomes(bodyOnlyApplicationData),
-                BuildOutputSummary(preview, bodyOnlyPlan.BasisKind, includesHeadShell: false),
+                BuildOutputSummary(preview, bodyOnlyPlan.BasisKind, includesHeadShell: false, bodyOnlyPayloadData),
                 BuildAnchorOnlyContributions(bodyPreview),
                 bodySceneResolved,
                 headSceneResolved,
@@ -196,9 +205,9 @@ public static class SimSceneComposer
             var payloadAnchor = BuildPayloadAnchor(bodyPreview);
             var payloadMeshBatches = BuildAnchorOnlyMeshBatches(bodyPreview);
             var bodyOnlyPayloadData = BuildAnchorOnlyPayloadData(bodyPreview, bodyPreview.Scene!);
-            var mismatchApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, morphGroups);
+            var mismatchApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, skintoneRender, morphGroups, bodyRegionMaps, []);
             stages.Add(new SimAssemblyStageSummary("Resolve assembly basis", 2, SimAssemblyStageState.Pending, mismatchPlan.Notes));
-            stages.Add(new SimAssemblyStageSummary("Compose assembled scene", 3, SimAssemblyStageState.Approximate, "The current Sim assembly is body-only because the body/head rig basis does not match."));
+            stages.Add(new SimAssemblyStageSummary("Materialize torso/head payload seam", 3, SimAssemblyStageState.Resolved, "An anchor-only torso/head payload seam was materialized because the body/head rig basis does not match."));
             var preview = ApplyApplicationDataToPreview(
                 RenameBodyPreview(
                     name,
@@ -220,7 +229,7 @@ public static class SimSceneComposer
                 BuildApplicationPlans(mismatchApplicationData),
                 BuildApplicationTransforms(mismatchApplicationData),
                 BuildApplicationOutcomes(mismatchApplicationData),
-                BuildOutputSummary(preview, mismatchPlan.BasisKind, includesHeadShell: false),
+                BuildOutputSummary(preview, mismatchPlan.BasisKind, includesHeadShell: false, bodyOnlyPayloadData),
                 BuildAnchorOnlyContributions(bodyPreview),
                 bodySceneResolved,
                 headSceneResolved,
@@ -240,9 +249,9 @@ public static class SimSceneComposer
             var payloadAnchor = BuildPayloadAnchor(bodyPreview);
             var payloadMeshBatches = BuildAnchorOnlyMeshBatches(bodyPreview);
             var bodyOnlyPayloadData = BuildAnchorOnlyPayloadData(bodyPreview, bodyPreview.Scene!);
-            var missingCoverageApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, morphGroups);
+            var missingCoverageApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, skintoneRender, morphGroups, bodyRegionMaps, []);
             stages.Add(new SimAssemblyStageSummary("Resolve assembly basis", 2, SimAssemblyStageState.Pending, missingCoveragePlan.Notes));
-            stages.Add(new SimAssemblyStageSummary("Compose assembled scene", 3, SimAssemblyStageState.Approximate, "The current Sim assembly is body-only because canonical bone coverage is incomplete."));
+            stages.Add(new SimAssemblyStageSummary("Materialize torso/head payload seam", 3, SimAssemblyStageState.Resolved, "An anchor-only torso/head payload seam was materialized because canonical bone coverage is incomplete."));
             var preview = ApplyApplicationDataToPreview(
                 RenameBodyPreview(
                     name,
@@ -264,7 +273,7 @@ public static class SimSceneComposer
                 BuildApplicationPlans(missingCoverageApplicationData),
                 BuildApplicationTransforms(missingCoverageApplicationData),
                 BuildApplicationOutcomes(missingCoverageApplicationData),
-                BuildOutputSummary(preview, missingCoveragePlan.BasisKind, includesHeadShell: false),
+                BuildOutputSummary(preview, missingCoveragePlan.BasisKind, includesHeadShell: false, bodyOnlyPayloadData),
                 BuildAnchorOnlyContributions(bodyPreview),
                 bodySceneResolved,
                 headSceneResolved,
@@ -286,9 +295,9 @@ public static class SimSceneComposer
             var payloadAnchor = BuildPayloadAnchor(bodyPreview);
             var payloadMeshBatches = BuildAnchorOnlyMeshBatches(bodyPreview);
             var bodyOnlyPayloadData = BuildAnchorOnlyPayloadData(bodyPreview, bodyPreview.Scene!);
-            var noOverlapApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, morphGroups);
+            var noOverlapApplicationData = BuildApplicationData(bodyOnlyPayloadData, simMetadata, skintoneRender, morphGroups, bodyRegionMaps, []);
             stages.Add(new SimAssemblyStageSummary("Resolve assembly basis", 2, SimAssemblyStageState.Pending, noOverlapPlan.Notes));
-            stages.Add(new SimAssemblyStageSummary("Compose assembled scene", 3, SimAssemblyStageState.Approximate, "The current Sim assembly is body-only because no shared body/head basis could be confirmed."));
+            stages.Add(new SimAssemblyStageSummary("Materialize torso/head payload seam", 3, SimAssemblyStageState.Resolved, "An anchor-only torso/head payload seam was materialized because no shared body/head basis could be confirmed."));
             var preview = ApplyApplicationDataToPreview(
                 RenameBodyPreview(
                     name,
@@ -310,7 +319,7 @@ public static class SimSceneComposer
                 BuildApplicationPlans(noOverlapApplicationData),
                 BuildApplicationTransforms(noOverlapApplicationData),
                 BuildApplicationOutcomes(noOverlapApplicationData),
-                BuildOutputSummary(preview, noOverlapPlan.BasisKind, includesHeadShell: false),
+                BuildOutputSummary(preview, noOverlapPlan.BasisKind, includesHeadShell: false, bodyOnlyPayloadData),
                 BuildAnchorOnlyContributions(bodyPreview),
                 bodySceneResolved,
                 headSceneResolved,
@@ -325,7 +334,7 @@ public static class SimSceneComposer
             rigCompatibility.HasAuthoritativeRigMatch
                 ? rigCompatibility.Diagnostic
                 : "Body/head assembly is currently using canonical-bone fallback because shared rig metadata is incomplete.");
-        var assembledApplicationData = BuildApplicationData(composed.PayloadData, simMetadata, morphGroups);
+        var assembledApplicationData = BuildApplicationData(composed.PayloadData, simMetadata, skintoneRender, morphGroups, bodyRegionMaps, headRegionMaps);
         stages.Add(
             new SimAssemblyStageSummary(
                 "Resolve assembly basis",
@@ -342,10 +351,10 @@ public static class SimSceneComposer
                 : $"Assembled Sim body/head scene using {sharedBoneCount:N0} shared canonical bone(s) across {bodyBoneNames.Count:N0} body bone(s) and {headBoneNames.Length:N0} head bone(s).");
         stages.Add(
             new SimAssemblyStageSummary(
-                "Compose assembled scene",
+                "Materialize torso/head payload seam",
                 3,
                 SimAssemblyStageState.Resolved,
-                "The current Sim assembly produced a combined body/head scene from the accepted assembly inputs."));
+                "A rig-centered torso/head payload seam was materialized from the accepted body/head inputs."));
         var appliedPreview = ApplyApplicationDataToPreview(
             composed.Preview with { Diagnostics = assemblyDiagnostics },
             assembledApplicationData);
@@ -363,7 +372,7 @@ public static class SimSceneComposer
             BuildApplicationPlans(assembledApplicationData),
             BuildApplicationTransforms(assembledApplicationData),
             BuildApplicationOutcomes(assembledApplicationData),
-            BuildOutputSummary(appliedPreview, assembledPlan.BasisKind, includesHeadShell: true),
+            BuildOutputSummary(appliedPreview, assembledPlan.BasisKind, includesHeadShell: true, composed.PayloadData),
             composed.Contributions,
             bodySceneResolved,
             headSceneResolved,
@@ -491,18 +500,16 @@ public static class SimSceneComposer
                 },
                 notes),
             new SimBodyGraphNodeSummary(
-                "Sim assembly result",
+                "Torso/head payload seam",
                 3,
-                includesHeadShell
+                bodySceneResolved
                     ? SimBodyGraphNodeState.Resolved
-                    : bodySceneResolved
-                        ? SimBodyGraphNodeState.Approximate
-                        : SimBodyGraphNodeState.Unavailable,
+                    : SimBodyGraphNodeState.Unavailable,
                 includesHeadShell
-                    ? "Body and head shells both participate in the current Sim assembly."
+                    ? "A rig-centered torso/head payload seam was materialized from both accepted shell inputs."
                     : bodySceneResolved
-                        ? "The current Sim assembly is body-only."
-                        : "Sim assembly could not proceed because no renderable body shell was available.")
+                        ? "An anchor-only torso/head payload seam was materialized from the accepted body shell input."
+                        : "No torso/head payload seam is available because no renderable body shell was resolved.")
         };
 
         return new SimAssemblyGraphSummary(
@@ -553,9 +560,9 @@ public static class SimSceneComposer
                     Scene = renamedScene,
                     Diagnostics = JoinDiagnostics(
                         bodyInput.Diagnostics,
-                        "Sim assembly output is currently anchored to the accepted body shell scene.")
+                        "Torso/head payload seam is currently anchored to the accepted body shell scene.")
                 },
-                BuildPayloadSummary(anchorOnlyPayloadData, "The current assembly payload contains only the accepted body shell anchor and is ready for later rig-native augmentation."),
+                BuildPayloadSummary(anchorOnlyPayloadData, "The current torso/head payload contains only the accepted body shell anchor and is ready for later rig-native augmentation."),
                 BuildPayloadAnchor(anchorOnlyPayloadData),
                 BuildPayloadBoneMaps(anchorOnlyPayloadData),
                 BuildPayloadMeshBatches(anchorOnlyPayloadData),
@@ -582,12 +589,12 @@ public static class SimSceneComposer
         var diagnostics = JoinDiagnostics(
             [
                 .. renderableInputs.Select(static input => input.Diagnostics),
-                $"Sim assembly output merged {renderableInputs.Length:N0} accepted scene input(s) using the body shell scene as the skeletal anchor."
+                $"Torso/head payload seam merged {renderableInputs.Length:N0} accepted scene input(s) using the body shell scene as the skeletal anchor."
             ]);
         var status = DetermineAggregateStatus(renderableInputs);
         return new SimAssemblyOutputComputationResult(
             new ScenePreviewContent(bodyInput.Resource, composedScene, diagnostics, status),
-            BuildPayloadSummary(payloadData, "The current assembly payload is anchored to the body shell basis and tracks rebased head-shell contributions before final scene rendering."),
+            BuildPayloadSummary(payloadData, "The current torso/head payload is anchored to the body shell basis and tracks rebased head-shell contributions before downstream modifier consumption."),
             BuildPayloadAnchor(payloadData),
             BuildPayloadBoneMaps(payloadData),
             BuildPayloadMeshBatches(payloadData),
@@ -612,6 +619,9 @@ public static class SimSceneComposer
         new(
             "Current payload anchor",
             "Unavailable",
+            "(unavailable)",
+            string.Empty,
+            string.Empty,
             0,
             [],
             "No assembly anchor is currently available because no renderable body shell scene was resolved.");
@@ -646,6 +656,9 @@ public static class SimSceneComposer
         new(
             "Current payload anchor",
             "Body shell anchor",
+            GetSourceLabel(payloadData.Anchor.SourceInput),
+            GetSourceResourceTgi(payloadData.Anchor.SourceInput),
+            GetSourcePackagePath(payloadData.Anchor.SourceInput),
             payloadData.Anchor.Bones.Count,
             payloadData.Anchor.Bones
                 .Select(static bone => bone.Name)
@@ -666,7 +679,8 @@ public static class SimSceneComposer
                 remap.SourceBoneCount,
                 remap.ReusedBoneReferenceCount,
                 remap.AddedBoneCount,
-                remap.RebasedWeightCount))
+                remap.RebasedWeightCount,
+                BuildBoneMapEntries(remap)))
             .ToArray();
 
     private static IReadOnlyList<SimAssemblyMeshBatchSummary> BuildPayloadMeshBatches(SimAssemblyPayloadData payloadData) =>
@@ -674,6 +688,8 @@ public static class SimSceneComposer
             .Select(batch => CreateMeshBatchSummary(
                 batch.Label,
                 batch.SourceLabel,
+                batch.SourceInput,
+                batch.MeshStartIndex,
                 batch.MeshCount,
                 batch.MaterialStartIndex,
                 batch.MaterialCount,
@@ -711,7 +727,7 @@ public static class SimSceneComposer
                 order++,
                 SimAssemblyPayloadNodeKind.MeshSet,
                 "Resolved",
-                $"meshes {meshBatch.MeshCount:N0}, materials {meshBatch.MaterialStartIndex:N0}..{(meshBatch.MaterialStartIndex + Math.Max(0, meshBatch.MaterialCount - 1)):N0}",
+                $"meshes {meshBatch.MeshStartIndex:N0}..{(meshBatch.MeshStartIndex + Math.Max(0, meshBatch.MeshCount - 1)):N0}, materials {meshBatch.MaterialStartIndex:N0}..{(meshBatch.MaterialStartIndex + Math.Max(0, meshBatch.MaterialCount - 1)):N0}",
                 meshBatch.Notes)));
         return nodes;
     }
@@ -754,7 +770,10 @@ public static class SimSceneComposer
     private static SimAssemblyApplicationData BuildApplicationData(
         SimAssemblyPayloadData payloadData,
         SimInfoSummary? simMetadata,
-        IReadOnlyList<SimMorphGroupSummary>? morphGroups)
+        SimSkintoneRenderSummary? skintoneRender,
+        IReadOnlyList<SimMorphGroupSummary>? morphGroups,
+        IReadOnlyList<CasRegionMapSummary>? bodyRegionMaps,
+        IReadOnlyList<CasRegionMapSummary>? headRegionMaps)
     {
         var preparedPasses = new List<SimAssemblyApplicationPassData>();
         var pendingPasses = new List<SimAssemblyApplicationPassData>();
@@ -765,14 +784,16 @@ public static class SimSceneComposer
         IReadOnlyList<SimAssemblySkintoneMaterialRouteData> skintoneRouteData = [];
         IReadOnlyList<SimAssemblyMorphTransformOperationData> morphTransformOperations = [];
 
-        var hasSkintone = simMetadata is not null &&
-                          (!string.IsNullOrWhiteSpace(simMetadata.SkintoneInstanceHex) || simMetadata.SkintoneShift.HasValue);
+        var hasSkintone = skintoneRender is not null ||
+                          (simMetadata is not null &&
+                           (!string.IsNullOrWhiteSpace(simMetadata.SkintoneInstanceHex) || simMetadata.SkintoneShift.HasValue));
         if (hasSkintone)
         {
-            skintoneRouteData = BuildSkintoneMaterialRoutes(payloadData, simMetadata!);
-            var notes = simMetadata!.SkintoneShift.HasValue
-                ? $"Skintone metadata is available for the current payload: instance {simMetadata.SkintoneInstanceHex ?? "(unknown)"} | shift {simMetadata.SkintoneShift.Value:0.###}."
-                : $"Skintone metadata is available for the current payload: instance {simMetadata.SkintoneInstanceHex}.";
+            skintoneRouteData = BuildSkintoneMaterialRoutes(payloadData, simMetadata, skintoneRender, bodyRegionMaps, headRegionMaps);
+            var notes = skintoneRender?.Notes
+                ?? (simMetadata!.SkintoneShift.HasValue
+                    ? $"Skintone metadata is available for the current payload: instance {simMetadata.SkintoneInstanceHex ?? "(unknown)"} | shift {simMetadata.SkintoneShift.Value:0.###}."
+                    : $"Skintone metadata is available for the current payload: instance {simMetadata!.SkintoneInstanceHex}.");
             preparedPasses.Add(new SimAssemblyApplicationPassData(
                 "Skintone application",
                 Order: 0,
@@ -781,35 +802,51 @@ public static class SimSceneComposer
             targets.Add(new SimAssemblyApplicationTargetData(
                 "Skintone material targets",
                 "Skintone application",
-                payloadData.MergedMaterials.Count,
-                $"Prepared skintone application targets {payloadData.MergedMaterials.Count:N0} merged material(s) in the current payload."));
+                skintoneRouteData.Count,
+                skintoneRouteData.Count > 0
+                    ? $"Prepared skintone application targets {skintoneRouteData.Count:N0} merged material(s) with region-map-aware routing support."
+                    : skintoneRender is not null
+                        ? "Resolved skintone inputs are available, but no region-map-bound payload materials exposed color-shift routing support."
+                        : "Authoritative skintone metadata is available, but no merged payload materials are currently available for routing."));
             plans.Add(new SimAssemblyApplicationPlanData(
                 "Skintone material routing",
                 "Skintone application",
                 Order: 0,
-                payloadData.MergedMaterials.Count,
+                skintoneRouteData.Count,
                 skintoneRouteData.Count,
                 skintoneRouteData.Count > 0
-                    ? $"Prepared routing across {skintoneRouteData.Count:N0} merged material target(s) using authoritative skintone metadata."
-                    : "Authoritative skintone metadata is available, but no merged payload materials are currently available for routing."));
+                    ? skintoneRender is not null
+                        ? $"Prepared region-map-aware routing across {skintoneRouteData.Count:N0} merged material target(s) using resolved skintone inputs."
+                        : $"Prepared routing across {skintoneRouteData.Count:N0} merged material target(s) using authoritative skintone metadata."
+                    : skintoneRender is not null
+                        ? "Resolved skintone inputs are available, but no region-map-bound payload materials were eligible for routing."
+                        : "Authoritative skintone metadata is available, but no merged payload materials are currently available for routing."));
             transforms.Add(new SimAssemblyApplicationTransformData(
                 "Skintone routing transform",
                 "Skintone application",
                 Order: 0,
-                payloadData.MergedMaterials.Count,
+                skintoneRouteData.Count,
                 skintoneRouteData.Count,
                 skintoneRouteData.Count > 0
-                    ? $"Materialized {skintoneRouteData.Count:N0} internal skintone route record(s) against merged payload materials."
-                    : "Skintone metadata is available, but no merged payload materials were available to materialize internal routing records."));
+                    ? skintoneRender is not null
+                        ? $"Materialized {skintoneRouteData.Count:N0} region-map-aware skintone route record(s) against merged payload materials."
+                        : $"Materialized {skintoneRouteData.Count:N0} internal skintone route record(s) against merged payload materials."
+                    : skintoneRender is not null
+                        ? "Resolved skintone inputs are available, but no region-map-bound material routes could be materialized."
+                        : "Skintone metadata is available, but no merged payload materials were available to materialize internal routing records."));
             outcomes.Add(new SimAssemblyApplicationOutcomeData(
                 "Skintone routing outcome",
                 "Skintone application",
                 Order: 0,
-                payloadData.MergedMaterials.Count,
+                skintoneRouteData.Count,
                 skintoneRouteData.Count,
                 skintoneRouteData.Count > 0
-                    ? $"Applied internal skintone routing outcome to {skintoneRouteData.Count:N0} merged material target(s)."
-                    : "Skintone metadata is available, but no merged material routing outcome could be materialized."));
+                    ? skintoneRender is not null
+                        ? $"Applied region-map-aware skintone routing outcome to {skintoneRouteData.Count:N0} merged material target(s)."
+                        : $"Applied internal skintone routing outcome to {skintoneRouteData.Count:N0} merged material target(s)."
+                    : skintoneRender is not null
+                        ? "Resolved skintone inputs are available, but no region-map-bound routing outcome could be materialized."
+                        : "Skintone metadata is available, but no merged material routing outcome could be materialized."));
         }
         else
         {
@@ -1017,12 +1054,23 @@ public static class SimSceneComposer
         var routeNote = route.SkintoneShift.HasValue
             ? $"Sim skintone route {route.SkintoneInstanceHex ?? "(unknown)"} shift {route.SkintoneShift.Value:0.###}"
             : $"Sim skintone route {route.SkintoneInstanceHex ?? "(unknown)"}";
+        var regionNote = route.RegionLabels.Count > 0
+            ? $"region_map {string.Join(", ", route.RegionLabels)}"
+            : null;
+        var sourceNote = string.IsNullOrWhiteSpace(route.SourceLabel)
+            ? null
+            : $"source {route.SourceLabel}";
         var approximation = string.IsNullOrWhiteSpace(material.Approximation)
-            ? routeNote
-            : $"{material.Approximation} | {routeNote}";
+            ? string.Join(" | ", new[] { routeNote, regionNote, sourceNote }.Where(static note => !string.IsNullOrWhiteSpace(note)))
+            : $"{material.Approximation} | {string.Join(" | ", new[] { routeNote, regionNote, sourceNote }.Where(static note => !string.IsNullOrWhiteSpace(note)))}";
         return material with
         {
-            Approximation = approximation
+            Approximation = approximation,
+            SourceKind = route.ViewportTintColor is not null
+                ? CanonicalMaterialSourceKind.ApproximateCas
+                : material.SourceKind,
+            ViewportTintColor = route.ViewportTintColor ?? material.ViewportTintColor,
+            ApproximateBaseColor = route.ViewportTintColor ?? material.ApproximateBaseColor
         };
     }
 
@@ -1051,18 +1099,122 @@ public static class SimSceneComposer
 
     private static IReadOnlyList<SimAssemblySkintoneMaterialRouteData> BuildSkintoneMaterialRoutes(
         SimAssemblyPayloadData payloadData,
-        SimInfoSummary simMetadata) =>
-        payloadData.MergedMaterials
+        SimInfoSummary? simMetadata,
+        SimSkintoneRenderSummary? skintoneRender,
+        IReadOnlyList<CasRegionMapSummary>? bodyRegionMaps,
+        IReadOnlyList<CasRegionMapSummary>? headRegionMaps)
+    {
+        if (skintoneRender is not null)
+        {
+            if (skintoneRender.ViewportTintColor is null)
+            {
+                return [];
+            }
+
+            var routes = new List<SimAssemblySkintoneMaterialRouteData>();
+            foreach (var target in ResolveRegionMapAwareSkintoneTargets(payloadData, bodyRegionMaps, headRegionMaps))
+            {
+                var material = payloadData.MergedMaterials[target.MaterialIndex];
+                routes.Add(new SimAssemblySkintoneMaterialRouteData(
+                    target.MaterialIndex,
+                    string.IsNullOrWhiteSpace(material.Name) ? $"Material {target.MaterialIndex + 1}" : material.Name,
+                    skintoneRender.SkintoneInstanceHex,
+                    skintoneRender.SkintoneShift,
+                    skintoneRender.ViewportTintColor,
+                    target.SourceLabel,
+                    target.RegionLabels,
+                    skintoneRender.SkintoneShift.HasValue
+                        ? $"Route material {target.MaterialIndex + 1:N0} through resolved skintone {skintoneRender.SkintoneInstanceHex ?? "(unknown)"} with shift {skintoneRender.SkintoneShift.Value:0.###} across region_map {string.Join(", ", target.RegionLabels)}."
+                        : $"Route material {target.MaterialIndex + 1:N0} through resolved skintone {skintoneRender.SkintoneInstanceHex ?? "(unknown)"} across region_map {string.Join(", ", target.RegionLabels)}."));
+            }
+
+            return routes;
+        }
+
+        if (simMetadata is null)
+        {
+            return [];
+        }
+
+        return payloadData.MergedMaterials
             .Select((material, index) => new SimAssemblySkintoneMaterialRouteData(
                 index,
                 string.IsNullOrWhiteSpace(material.Name) ? $"Material {index + 1}" : material.Name,
                 simMetadata.SkintoneInstanceHex,
                 simMetadata.SkintoneShift,
+                null,
+                string.Empty,
+                [],
                 simMetadata.SkintoneShift.HasValue
                     ? $"Route material {index + 1:N0} through skintone instance {simMetadata.SkintoneInstanceHex ?? "(unknown)"} with shift {simMetadata.SkintoneShift.Value:0.###}."
-                    : $"Route material {index + 1:N0} through skintone instance {simMetadata.SkintoneInstanceHex ?? "(unknown)"}.")
-            )
+                    : $"Route material {index + 1:N0} through skintone instance {simMetadata.SkintoneInstanceHex ?? "(unknown)"}."))
             .ToArray();
+    }
+
+    private static IReadOnlyList<SimAssemblySkintoneMaterialTargetData> ResolveRegionMapAwareSkintoneTargets(
+        SimAssemblyPayloadData payloadData,
+        IReadOnlyList<CasRegionMapSummary>? bodyRegionMaps,
+        IReadOnlyList<CasRegionMapSummary>? headRegionMaps)
+    {
+        var targets = new List<SimAssemblySkintoneMaterialTargetData>();
+        foreach (var batch in payloadData.MeshBatches)
+        {
+            var regionMaps = batch.SourceLabel.StartsWith("Body shell", StringComparison.OrdinalIgnoreCase)
+                ? bodyRegionMaps ?? []
+                : batch.SourceLabel.StartsWith("Head shell", StringComparison.OrdinalIgnoreCase)
+                    ? headRegionMaps ?? []
+                    : [];
+            if (regionMaps.Count == 0)
+            {
+                continue;
+            }
+
+            var regionLabels = regionMaps
+                .SelectMany(static map => map.RegionLabels)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static label => label, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            for (var offset = 0; offset < batch.MaterialCount; offset++)
+            {
+                var materialIndex = batch.MaterialStartIndex + offset;
+                if (materialIndex < 0 || materialIndex >= payloadData.MergedMaterials.Count)
+                {
+                    continue;
+                }
+
+                if (!MaterialSupportsRegionMapSkintoneRouting(payloadData.MergedMaterials[materialIndex]))
+                {
+                    continue;
+                }
+
+                targets.Add(new SimAssemblySkintoneMaterialTargetData(
+                    materialIndex,
+                    batch.SourceLabel,
+                    regionLabels));
+            }
+        }
+
+        return targets
+            .GroupBy(static target => target.MaterialIndex)
+            .Select(static group => group.First())
+            .OrderBy(static target => target.MaterialIndex)
+            .ToArray();
+    }
+
+    private static bool MaterialSupportsRegionMapSkintoneRouting(CanonicalMaterial material)
+    {
+        if (material.Textures.Any(static texture => texture.Slot.Equals("color_shift_mask", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (material.Textures.Any(static texture => texture.Slot.Equals("region_map", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return material.SourceKind == CanonicalMaterialSourceKind.ApproximateCas;
+    }
 
     private static IReadOnlyList<SimAssemblyMorphMeshTransformData> BuildMorphMeshTransforms(
         SimAssemblyPayloadData payloadData,
@@ -1098,31 +1250,34 @@ public static class SimSceneComposer
     private static SimAssemblyOutputSummary BuildOutputSummary(
         ScenePreviewContent preview,
         SimAssemblyBasisKind basisKind,
-        bool includesHeadShell)
+        bool includesHeadShell,
+        SimAssemblyPayloadData? payloadData = null)
     {
         var scene = preview.Scene;
         var status = scene is null
             ? "Unavailable"
             : includesHeadShell
-                ? "Assembled body + head scene"
-                : "Body-only assembled scene";
+                ? "Resolved multi-part rig seam"
+                : "Resolved anchor-only rig seam";
         var notes = scene is null
-            ? "No assembled Sim scene output is currently available."
+            ? "No rig-centered torso/head payload seam is currently available."
             : basisKind switch
             {
-                SimAssemblyBasisKind.SharedRigResource => "The assembled Sim output is rig-centered and anchored to a shared exact rig resource.",
-                SimAssemblyBasisKind.SharedRigInstance => "The assembled Sim output is rig-centered and anchored to a shared rig instance id.",
-                SimAssemblyBasisKind.CanonicalBoneFallback => "The assembled Sim output is rig-centered but currently relies on canonical-bone fallback instead of a shared authoritative rig.",
-                SimAssemblyBasisKind.BodyOnly => "The assembled Sim output is currently body-only.",
-                _ => "The assembled Sim output does not yet expose a stable assembly basis."
+                SimAssemblyBasisKind.SharedRigResource => "The current torso/head payload seam is rig-centered and anchored to a shared exact rig resource.",
+                SimAssemblyBasisKind.SharedRigInstance => "The current torso/head payload seam is rig-centered and anchored to a shared rig instance id.",
+                SimAssemblyBasisKind.CanonicalBoneFallback => "The current torso/head payload seam is rig-centered but currently relies on canonical-bone fallback instead of a shared authoritative rig.",
+                SimAssemblyBasisKind.BodyOnly => "The current torso/head payload seam is anchor-only and currently carries only the body shell contribution.",
+                _ => "The current torso/head payload seam does not yet expose a stable assembly basis."
             };
 
         return new SimAssemblyOutputSummary(
-            "Current assembled scene output",
+            "Current torso/head payload seam",
             status,
             scene?.Meshes.Count ?? 0,
             scene?.Materials.Count ?? 0,
             scene?.Bones.Count ?? 0,
+            payloadData?.AcceptedContributionCount ?? 0,
+            payloadData is null ? [] : BuildAcceptedSeamInputs(payloadData),
             notes);
     }
 
@@ -1150,19 +1305,25 @@ public static class SimSceneComposer
         int sourceBoneCount,
         int reusedBoneReferenceCount,
         int addedBoneCount,
-        int rebasedWeightCount) =>
+        int rebasedWeightCount,
+        IReadOnlyList<SimAssemblyBoneMapEntrySummary> entries) =>
         new(
             "Head shell bone map",
-            input.Scene?.Name ?? input.Resource.Name ?? "Head shell contribution",
+            GetSourceLabel(input),
+            GetSourceResourceTgi(input),
+            GetSourcePackagePath(input),
             sourceBoneCount,
             reusedBoneReferenceCount,
             addedBoneCount,
             rebasedWeightCount,
-            "The accepted head shell contribution was mapped onto the body skeletal anchor before final scene output.");
+            entries,
+            "The accepted head shell contribution was mapped onto the body skeletal anchor before downstream torso/head modifier consumption.");
 
     private static SimAssemblyMeshBatchSummary CreateMeshBatchSummary(
         string label,
         string sourceLabel,
+        ScenePreviewContent sourceInput,
+        int meshStartIndex,
         int meshCount,
         int materialStartIndex,
         int materialCount,
@@ -1170,6 +1331,9 @@ public static class SimSceneComposer
         new(
             label,
             sourceLabel,
+            GetSourceResourceTgi(sourceInput),
+            GetSourcePackagePath(sourceInput),
+            meshStartIndex,
             meshCount,
             materialStartIndex,
             materialCount,
@@ -1191,6 +1355,56 @@ public static class SimSceneComposer
             addedBoneCount,
             "The accepted head shell scene was merged onto the body skeletal anchor.");
     }
+
+    private static IReadOnlyList<SimAssemblySeamInputSummary> BuildAcceptedSeamInputs(SimAssemblyPayloadData payloadData)
+    {
+        var remapsByResourceId = payloadData.BoneRemaps
+            .ToDictionary(static remap => remap.SourceInput.Resource.Id);
+
+        return payloadData.MeshBatches
+            .Select(batch =>
+            {
+                var sourceInput = batch.SourceInput;
+                var isAnchor = sourceInput.Resource.Id == payloadData.Anchor.SourceInput.Resource.Id;
+                var sourceScene = sourceInput.Scene;
+                remapsByResourceId.TryGetValue(sourceInput.Resource.Id, out var remap);
+                return new SimAssemblySeamInputSummary(
+                    isAnchor ? "Body shell seam input" : "Head shell seam input",
+                    isAnchor ? "Anchor" : "Merged",
+                    GetSourceLabel(sourceInput),
+                    GetSourceResourceTgi(sourceInput),
+                    GetSourcePackagePath(sourceInput),
+                    batch.MeshStartIndex,
+                    batch.MeshCount,
+                    batch.MaterialStartIndex,
+                    batch.MaterialCount,
+                    sourceScene?.Bones.Count ?? 0,
+                    remap?.RebasedWeightCount ?? 0,
+                    remap?.AddedBoneCount ?? 0,
+                    isAnchor
+                        ? "The accepted body shell contribution defines the rig anchor and initial mesh/material ranges for the current seam."
+                        : "The accepted head shell contribution is tracked as an explicit merged seam input with rebased rig references.");
+            })
+            .ToArray();
+    }
+
+    private static IReadOnlyList<SimAssemblyBoneMapEntrySummary> BuildBoneMapEntries(SimAssemblyBoneRemapData remap) =>
+        remap.BoneIndexMap
+            .OrderBy(static pair => pair.Key)
+            .Select(pair => new SimAssemblyBoneMapEntrySummary(
+                pair.Key,
+                pair.Value,
+                remap.SourceInput.Scene?.Bones[pair.Key].Name ?? $"Bone {pair.Key}"))
+            .ToArray();
+
+    private static string GetSourceLabel(ScenePreviewContent input) =>
+        input.Scene?.Name ?? input.Resource.Name ?? input.Resource.Key.FullTgi;
+
+    private static string GetSourceResourceTgi(ScenePreviewContent input) =>
+        input.Resource.Key.FullTgi;
+
+    private static string GetSourcePackagePath(ScenePreviewContent input) =>
+        input.Resource.PackagePath;
 
     private static IReadOnlyList<VertexWeight> RebaseSkinWeights(
         IReadOnlyList<VertexWeight> weights,
@@ -1224,6 +1438,8 @@ public static class SimSceneComposer
             [new SimAssemblyMeshBatchData(
                 "Body shell mesh batch",
                 "Body shell contribution",
+                bodyInput,
+                0,
                 bodyScene.Meshes.Count,
                 0,
                 bodyScene.Materials.Count,
@@ -1251,6 +1467,8 @@ public static class SimSceneComposer
             new(
                 "Body shell mesh batch",
                 "Body shell contribution",
+                bodyInput,
+                0,
                 bodyScene.Meshes.Count,
                 0,
                 bodyScene.Materials.Count,
@@ -1263,6 +1481,7 @@ public static class SimSceneComposer
         foreach (var input in renderableInputs.Skip(1))
         {
             var scene = input.Scene!;
+            var meshStartIndex = meshes.Count;
             var materialOffset = materials.Count;
             materials.AddRange(scene.Materials);
 
@@ -1312,6 +1531,8 @@ public static class SimSceneComposer
             meshBatches.Add(new SimAssemblyMeshBatchData(
                 "Head shell mesh batch",
                 "Head shell contribution",
+                input,
+                meshStartIndex,
                 scene.Meshes.Count,
                 materialOffset,
                 scene.Materials.Count,
@@ -1490,6 +1711,8 @@ internal sealed record SimAssemblyBoneRemapData(
 internal sealed record SimAssemblyMeshBatchData(
     string Label,
     string SourceLabel,
+    ScenePreviewContent SourceInput,
+    int MeshStartIndex,
     int MeshCount,
     int MaterialStartIndex,
     int MaterialCount,
@@ -1554,11 +1777,19 @@ internal sealed record SimAssemblyAppliedPayloadData(
     IReadOnlyList<CanonicalMesh> Meshes,
     IReadOnlyList<SimAssemblyAppliedMorphSetData> MorphSets);
 
+internal sealed record SimAssemblySkintoneMaterialTargetData(
+    int MaterialIndex,
+    string SourceLabel,
+    IReadOnlyList<string> RegionLabels);
+
 internal sealed record SimAssemblySkintoneMaterialRouteData(
     int MaterialIndex,
     string MaterialName,
     string? SkintoneInstanceHex,
     float? SkintoneShift,
+    CanonicalColor? ViewportTintColor,
+    string SourceLabel,
+    IReadOnlyList<string> RegionLabels,
     string Notes);
 
 internal sealed record SimAssemblyMorphMeshTransformData(

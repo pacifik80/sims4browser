@@ -63,6 +63,16 @@ public sealed class PlaceholderSceneBuildService : ISceneBuildService
             [$"Scene reconstruction for {resource.Key.TypeName} is not implemented yet. Metadata, diagnostics, and raw export remain available."],
             SceneBuildStatus.Unsupported));
     }
+
+    public Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new SceneBuildResult(
+            false,
+            null,
+            [$"CAS scene reconstruction for {casGraph.CasPartResource.Key.TypeName} is not implemented yet. Metadata, diagnostics, and raw export remain available."],
+            SceneBuildStatus.Unsupported));
+    }
 }
 
 public sealed class ResourcePreviewService : IPreviewService
@@ -104,6 +114,15 @@ public sealed class ResourcePreviewService : IPreviewService
             default:
                 return await CreateHexPreviewAsync(resource, cancellationToken);
         }
+    }
+
+    public async Task<PreviewResult> CreatePreviewAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+    {
+        var resource = casGraph.GeometryResource ?? casGraph.CasPartResource;
+        progress?.Report(new PreviewBuildProgress("Preparing CAS scene build...", 0.02));
+        var result = await sceneBuildService.BuildSceneAsync(casGraph, cancellationToken, progress);
+        progress?.Report(new PreviewBuildProgress("CAS scene build complete.", 1.0));
+        return new PreviewResult(PreviewKind.Scene, new ScenePreviewContent(resource, result.Scene, string.Join(Environment.NewLine, result.Diagnostics), result.Status));
     }
 
     private async Task<PreviewResult> CreateTextPreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken)

@@ -13,7 +13,9 @@ The architecture favors thin UI layers, lazy resource loading, persistent indexi
 
 - Read-only by default. Package access code never mutates source files.
 - Index first, decode on demand. Browsing/searching runs against SQLite, not against package payloads.
+- The serving index is immutable after a successful explicit index build. Browse/open/export read paths may use in-memory caches, but they must not persist newly derived metadata back into the live serving catalog.
 - Canonical models between parsing and rendering/export. Scene export is not coupled to any one parser or UI toolkit.
+- Material/texture routing is shared across asset domains. `BuildBuy`, `CAS`, and `Sim` preview/export paths must converge on the same shader-semantic, texture-role, and UV-routing rules instead of carrying asset-specific mapping logic that drifts over time.
 - Graceful fallback. Unsupported content still exposes metadata, diagnostics, and raw export.
 - Vertical slices. Each feature lands with its storage, service, UI, tests, and documentation touch points.
 
@@ -39,6 +41,8 @@ SQLite-backed persistent index/cache and background indexing orchestration. This
 
 - full catalog rebuilds into a shadow shard set of SQLite databases
 - storing resource rows and logical asset summaries
+- producing all persisted derived metadata and facts during explicit indexing passes rather than lazily on browse/open paths
+- versioning persisted derived data so logic changes invalidate stale facts instead of silently mixing old extractor output with new runtime behavior
 - fan-out search/filter queries across the active shard set
 
 ### `Sims4ResourceExplorer.Assets`
@@ -52,6 +56,13 @@ Logical asset graph construction and dependency resolution for Build/Buy, CAS, a
 ### `Sims4ResourceExplorer.Preview`
 
 Preview dispatch for images, text, binary, and scene previews. This layer builds preview models and diagnostics, not UI controls.
+
+For 3D content, preview should prefer one shared material pipeline:
+
+- one canonical texture-role model
+- one shader/material semantic decoder
+- one UV-channel and UV-transform routing model
+- asset-specific graph resolution only before the canonical scene/material stage, not separate per-domain texture-mapping implementations after it
 
 ### `Sims4ResourceExplorer.Export`
 
@@ -84,7 +95,7 @@ Unit and integration tests using a small documented fixture corpus.
 3. `IIndexStore` opens a fresh shadow SQLite database set for the run and seeds it with the configured data sources before any package rows are written. The previously active serving catalog stays untouched until the rebuild succeeds.
 4. After scope is locked, discovered packages are queued into the bounded package-worker pipeline for the actual index-build stage.
 5. Package scans stay metadata-first inside each package; very large packages may parallelize cheap entry enumeration and seed-enrichment work, while multiple packages still scan concurrently.
-6. The hot scan path records cheap browse metadata only: TGI/type, preview/export flags, and linkage hints. Resource names and precise sizes are deferred until a specific resource is opened or exported.
+6. The hot scan path records cheap browse metadata first: TGI/type, preview/export flags, and linkage hints. If richer persisted metadata is required for stable runtime behavior, indexing must add an explicit later pass for it instead of mutating the serving catalog from browse/open/export read paths.
 7. The rebuild opens a small fixed shard set of SQLite writer sessions, routes each package to a stable shard by package path, and writes package/resource/asset rows into shard-local shadow catalogs without mutating the active serving catalog.
 8. Shadow-build ingest keeps `resources` and `assets` free of hot-path `PRIMARY KEY` maintenance. Rows are inserted into plain tables first, then unique browse indexes and FTS are built once during a dedicated `finalizing` phase after package writes complete. Finalization also canonicalizes logical assets across the whole shard set so the serving asset catalog exposes one row per logical family instead of separate base/delta shadow duplicates. For Build/Buy, that finalization step now also backfills `logical_root_tgi` onto `ObjectCatalog`-only delta rows by matching them to persisted `ObjectDefinition` scene-root hints with the same identity instance, so delta catalog shadows do not survive as separate top-level assets even when the corresponding `ObjectDefinition` family was already collapsed before SQLite write. Seed metadata parsing is defensive: malformed CASPart/Object/SimInfo metadata should fail closed for the single resource and not fail the whole package. CASPart technical names are extracted from the stable managed-string header, the fuller CASPart semantic parser now follows a versioned layout model instead of relying on legacy v27/v28-era offsets, and `SimInfo` roots now also receive factual display/description metadata during seed enrichment so the metadata-only `Sim` domain is searchable immediately after indexing. The same seed pass also extracts the first real CAS variant layer, writes `CASPart` slot/compatibility summaries back into indexed metadata, and links swatch rows plus preset slots through `asset_variants` so `VariantCount`, CAS slot filters, and first-pass `Sim Archetype -> CAS` candidate-family queries are driven by indexed facts instead of hard-coded placeholders.
 9. Query-time browsing/searching fans out across the active shard set and merges sorted windows, counts, and facet values back into one logical catalog surface for the app.
@@ -175,7 +186,7 @@ SQLite stores the browse-time index. The active serving catalog is one logical c
 - `resources_fts`
 - `assets_fts`
 
-Deferred enrichment fields such as resource names, sizes, scan tokens, cheap capability flags, and the asset `is_canonical` flag live on the `resources`/`assets` rows rather than in separate side tables. Payload blobs are not persisted in SQLite; preview/export caches stay in app-controlled filesystem and in-memory caches. Full indexing runs build a temporary shadow shard set under the cache root, ingest into `resources`/`assets` without hot-path `PRIMARY KEY` maintenance, canonicalize logical assets across shards during finalization, build unique browse indexes and FTS over that canonicalized asset set, and only then activate the rebuilt shard set as the new live catalog.
+Derived browse-time fields such as resource names, sizes, scan tokens, cheap capability flags, and the asset `is_canonical` flag live on the `resources`/`assets` rows rather than in separate side tables, but they are part of the indexed artifact and must be produced by explicit indexing passes. If a field cannot be resolved in the first pass, add a second explicit indexing/finalization pass rather than writing it later from runtime browse/open/export code. Payload blobs are not persisted in SQLite; preview/export caches stay in app-controlled filesystem and in-memory caches. Full indexing runs build a temporary shadow shard set under the cache root, ingest into `resources`/`assets` without hot-path `PRIMARY KEY` maintenance, canonicalize logical assets across shards during finalization, build unique browse indexes and FTS over that canonicalized asset set, and only then activate the rebuilt shard set as the new live catalog. Any persisted derived-data contract change must invalidate or rebuild stale catalog content before the new logic serves queries from it.
 
 ## Async and responsiveness model
 
@@ -185,7 +196,7 @@ Deferred enrichment fields such as resource names, sizes, scan tokens, cheap cap
 - Long-running export/index tasks report structured progress and warnings.
 - Indexing progress is intentionally throttled before it reaches the UI so status visibility does not become the next bottleneck.
 - The browser surface is decoupled from live indexing progress updates; indexing uses a dedicated modal dialog and the main browse lists refresh only after the run completes or when the user explicitly refreshes.
-- Deferred metadata means browse rows may initially show blank/deferred names and sizes until a resource is explicitly inspected or exported.
+- Until the indexing pipeline grows the needed later pass, some browse rows may still show blank/deferred names and sizes; that is preferable to mutating the serving catalog on demand from runtime read paths.
 - Indexing also emits per-run telemetry under `%LOCALAPPDATA%\\Sims4ResourceExplorer\\Telemetry\\Indexing`, and `profile-live-indexing.ps1` can attach `dotnet-trace` to a live indexing run for CPU sampling.
 
 ## Biggest technical risks

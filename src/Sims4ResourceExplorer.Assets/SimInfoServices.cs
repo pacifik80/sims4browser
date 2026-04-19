@@ -522,6 +522,35 @@ internal static class Ts4SimInfoParser
     public static string? TryExtractSpeciesLabelFromSummary(string? description) =>
         TryExtractSummaryField(description, "species");
 
+    public static int? TryExtractVersionFromSummary(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return null;
+        }
+
+        const string prefix = "SimInfo v";
+        if (!description.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var digits = new StringBuilder();
+        foreach (var character in description[prefix.Length..])
+        {
+            if (!char.IsDigit(character))
+            {
+                break;
+            }
+
+            digits.Append(character);
+        }
+
+        return digits.Length > 0 && int.TryParse(digits.ToString(), out var version)
+            ? version
+            : null;
+    }
+
     public static string? TryExtractAgeLabelFromSummary(string? description) =>
         TryExtractSummaryField(description, "age");
 
@@ -599,6 +628,16 @@ internal static class Ts4SimInfoParser
 
     public static string? TryExtractSkintoneInstanceFromSummary(string? description) =>
         TryExtractSummaryField(description, "skintone");
+
+    public static bool IsLegacyOpaqueSpeciesSummary(string? description)
+    {
+        var version = TryExtractVersionFromSummary(description);
+        var species = TryExtractSpeciesLabelFromSummary(description);
+        return version.HasValue &&
+               version.Value <= 20 &&
+               !string.IsNullOrWhiteSpace(species) &&
+               species.StartsWith("Species 0x", StringComparison.OrdinalIgnoreCase);
+    }
 
     public static string BuildDisplayNameFromSummary(string? description, ulong fullInstance, string? fallbackDisplayName = null)
     {

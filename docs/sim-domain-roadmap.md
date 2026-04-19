@@ -136,6 +136,12 @@ Our current `Sim` slice only touches parts of steps 1, 3, and some early factual
 
 The current body preview should be treated as a debugging scaffold, not as trustworthy character assembly. If it renders the wrong species body, a dress instead of a torso shell, or overlay layers without a correct body foundation, that is a real architectural gap rather than a small bug in an otherwise complete pipeline.
 
+The target end state is now explicit:
+
+- indexing should persist the authoritative character-assembly graph inputs and links needed for runtime body/head/outfit/rig/skintone/morph selection
+- runtime `Sim` preview should start from the chosen archetype/template root and traverse those indexed links instead of rediscovering candidate resources heuristically during preview
+- when the indexed graph does not yet provide enough authoritative data for the next step, the result should stay honestly `Unresolved` and reopen indexing/parser work rather than widening runtime search
+
 ## Implementation Phases
 
 ### Phase 1: Discovery and indexing groundwork
@@ -157,6 +163,7 @@ Current state:
 
 - `CASPreset`, `RegionMap`, and `Skintone` now already parse into cached factual summaries during lazy raw-resource enrichment
 - those summaries are intentionally descriptive, not authoritative assembled-character logic yet
+- the long-term contract is to move any persisted facts that runtime assembly depends on into explicit indexing passes with version invalidation, not to keep them in lazy browse/open write paths
 
 ### Phase 3: Metadata-only logical `Sim` assets
 

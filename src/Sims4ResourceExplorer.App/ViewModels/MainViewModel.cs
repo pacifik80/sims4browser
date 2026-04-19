@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Reflection;
@@ -17,6 +18,7 @@ namespace Sims4ResourceExplorer.App.ViewModels;
 public sealed partial class MainViewModel : ObservableObject
 {
     private const int DefaultResultWindowSize = 200;
+    private const int SimBodyCandidateProbeBatchSize = 3;
 
     private readonly IIndexStore indexStore;
     private readonly PackageIndexCoordinator packageIndexCoordinator;
@@ -29,10 +31,14 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IndexingRunOptions defaultIndexingOptions;
     private readonly IAppPreferencesService appPreferencesService;
     private readonly IIndexingTelemetryRecorderService indexingTelemetryRecorderService;
+    private readonly IAssetSessionLogService assetSessionLogService;
     private readonly ISystemMemoryService systemMemoryService;
     private readonly AssetBrowserState assetBrowserState = new();
     private readonly RawResourceBrowserState rawResourceBrowserState = new();
     private readonly Dictionary<string, CanonicalTexture?> assetVariantTextureCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Task<AssetSummary?>> simBodyCandidateAssetCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<(string PackagePath, ulong FullInstance), Task<IReadOnlyList<ResourceMetadata>>> simBodyPackageInstanceResourceCache = new();
+    private readonly ConcurrentDictionary<string, Task<SimBodyCandidatePreviewBuildResult?>> simBodyCandidatePreviewCache = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? indexingCancellationTokenSource;
     private CancellationTokenSource? assetSearchDebounceTokenSource;
@@ -62,6 +68,28 @@ public sealed partial class MainViewModel : ObservableObject
     private SimAssemblyPlanSummary? lastSimAssemblyPlan;
     private SimAssemblyGraphSummary? lastSimAssemblyGraph;
 
+    private sealed record SimBodyCandidatePreviewBuildResult(
+        ScenePreviewContent? Preview,
+        ResourceMetadata? SceneRoot,
+        IReadOnlyList<ResourceMetadata> RigResources,
+        IReadOnlyList<CasRegionMapSummary> RegionMaps,
+        string Diagnostics)
+    {
+        public bool IsUsable => Preview?.Scene is not null && SceneRoot is not null;
+    }
+
+    private sealed record SimBodyPreviewLayerResolutionResult(
+        AssetSummary Asset,
+        ScenePreviewContent Preview,
+        ResourceMetadata SceneRoot,
+        IReadOnlyList<ResourceMetadata> RigResources,
+        IReadOnlyList<CasRegionMapSummary> RegionMaps,
+        IReadOnlyList<string> Diagnostics);
+
+    private sealed record SimBodyPreviewLayerProbeResult(
+        SimBodyPreviewLayerResolutionResult? Resolution,
+        IReadOnlyList<string> Diagnostics);
+
     public MainViewModel(
         IIndexStore indexStore,
         PackageIndexCoordinator packageIndexCoordinator,
@@ -74,6 +102,7 @@ public sealed partial class MainViewModel : ObservableObject
         IndexingRunOptions defaultIndexingOptions,
         IAppPreferencesService appPreferencesService,
         IIndexingTelemetryRecorderService indexingTelemetryRecorderService,
+        IAssetSessionLogService assetSessionLogService,
         ISystemMemoryService systemMemoryService)
     {
         this.indexStore = indexStore;
@@ -87,6 +116,7 @@ public sealed partial class MainViewModel : ObservableObject
         this.defaultIndexingOptions = defaultIndexingOptions;
         this.appPreferencesService = appPreferencesService;
         this.indexingTelemetryRecorderService = indexingTelemetryRecorderService;
+        this.assetSessionLogService = assetSessionLogService;
         this.systemMemoryService = systemMemoryService;
 
         AvailableWorkerCounts = Enumerable.Range(1, IndexingRunOptions.GetMachineWorkerLimit()).ToArray();
@@ -100,6 +130,7 @@ public sealed partial class MainViewModel : ObservableObject
         selectedWorkerCount = defaultIndexingOptions.MaxPackageConcurrency;
         selectedMemoryUsagePercent = IndexingMemoryBudgetCalculator.NormalizePercent(25);
         UpdateBrowsePresentation();
+        AppendLog($"Asset session log: {assetSessionLogService.LogPath}");
     }
 
     public ObservableCollection<DataSourceDefinition> DataSources { get; } = [];
@@ -478,6 +509,7 @@ public sealed partial class MainViewModel : ObservableObject
         IsBusy = true;
         suspendBrowserQueriesDuringIndexing = true;
         CancelPendingBrowserQueries();
+        ClearSimPreviewCaches();
         indexingCancellationTokenSource = new CancellationTokenSource();
         var packageByteCacheBudgetBytes = ResolvePackageByteCacheBudgetBytes(SelectedMemoryUsagePercent);
         StatusMessage = $"Indexing started with {SelectedWorkerCount} workers.";
@@ -508,6 +540,7 @@ public sealed partial class MainViewModel : ObservableObject
             await telemetrySession.CompleteAsync("completed", CancellationToken.None);
             indexingDialogViewModel.MarkCompleted("Indexing completed. Refreshing browser results...");
             suspendBrowserQueriesDuringIndexing = false;
+            ClearSimPreviewCaches();
             MarkAllQueriesDirty();
             await ReloadAssetFacetOptionsAsync();
             await RefreshActiveBrowserAsync(resetWindow: true);
@@ -694,7 +727,9 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetVariants = await indexStore.GetAssetVariantsAsync(asset.Id, CancellationToken.None);
         SetAssetVariantOptions(selectedAssetVariants);
         await AdvancePreviewLoadAsync(0.12, "Building asset graph...");
-        var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
+        var graph = asset.AssetKind == AssetKind.Sim
+            ? await assetGraphBuilder.BuildPreviewGraphAsync(asset, packageResources, CancellationToken.None)
+            : await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, CancellationToken.None);
         selectedAssetGraph = graph;
         SetSimArchetypeInspectorState(graph.SimGraph, graph.SimGraph?.SimInfoResource.Id);
         if (asset.AssetKind == AssetKind.Sim &&
@@ -703,7 +738,7 @@ public sealed partial class MainViewModel : ObservableObject
             SelectedSimTemplateOption.ResourceId != graph.SimGraph.SimInfoResource.Id)
         {
             await AdvancePreviewLoadAsync(0.14, "Selecting body-driving SimInfo template...");
-            var refreshedGraph = await RebuildSimGraphForSelectedTemplateAsync(CancellationToken.None);
+            var refreshedGraph = await RebuildSimPreviewGraphForSelectedTemplateAsync(CancellationToken.None);
             if (refreshedGraph?.SimGraph is not null)
             {
                 graph = refreshedGraph;
@@ -741,7 +776,7 @@ public sealed partial class MainViewModel : ObservableObject
                 var casGraph = graph.CasGraph;
                 if (casGraph is null || !casGraph.IsSupported || casGraph.GeometryResource is null)
                 {
-                    unsupportedMessage = "This CAS asset is outside the currently supported adult/young-adult human skinned subset.";
+                    unsupportedMessage = "This CAS asset is outside the currently supported human skinned subset.";
                 }
                 else
                 {
@@ -756,7 +791,7 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 var simGraph = graph.SimGraph;
                 selectedResource = simGraph?.SimInfoResource;
-                unsupportedMessage = "This Sim archetype is currently metadata-only and is derived from grouped SimInfo rows; full assembled character preview is not implemented yet.";
+                unsupportedMessage = "This Sim archetype does not currently resolve a renderable body-first preview from the selected SimInfo template.";
                 break;
             }
 
@@ -807,6 +842,7 @@ public sealed partial class MainViewModel : ObservableObject
                 PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
                 PreviewSurfaceTitle = "Diagnostics";
                 NotifyPreviewStateChanged();
+                RecordCurrentAssetSessionDiagnostics("SelectAssetAsync:SimUnresolved");
                 CompletePreviewLoad();
                 return;
             }
@@ -822,6 +858,7 @@ public sealed partial class MainViewModel : ObservableObject
                 PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
                 PreviewSurfaceTitle = "Diagnostics";
                 NotifyPreviewStateChanged();
+                RecordCurrentAssetSessionDiagnostics("SelectAssetAsync:AssetUnresolved");
             }
 
             CompletePreviewLoad();
@@ -898,6 +935,7 @@ public sealed partial class MainViewModel : ObservableObject
             PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
             PreviewSurfaceTitle = "Diagnostics";
             NotifyPreviewStateChanged();
+            RecordCurrentAssetSessionDiagnostics("RefreshSelectedSimBodyPreviewAsync:Unresolved");
         }
 
         CompletePreviewLoad();
@@ -915,7 +953,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         try
         {
-            var refreshedGraph = await RebuildSimGraphForSelectedTemplateAsync(CancellationToken.None);
+            var refreshedGraph = await RebuildSimPreviewGraphForSelectedTemplateAsync(CancellationToken.None);
             if (refreshedGraph?.SimGraph is null)
             {
                 return;
@@ -950,6 +988,7 @@ public sealed partial class MainViewModel : ObservableObject
                 PreviewSurfaceMode = PreviewSurfaceMode.Diagnostics;
                 PreviewSurfaceTitle = "Diagnostics";
                 NotifyPreviewStateChanged();
+                RecordCurrentAssetSessionDiagnostics("RefreshSelectedSimTemplateAsync:Unresolved");
             }
         }
         finally
@@ -965,97 +1004,60 @@ public sealed partial class MainViewModel : ObservableObject
             return false;
         }
 
-        static double InterpolateStep(double start, double end, int index, int total, double offset = 0d)
-        {
-            if (total <= 0)
-            {
-                return end;
-            }
-
-            var progress = Math.Clamp((index + offset) / total, 0d, 1d);
-            return start + ((end - start) * progress);
-        }
-
         lastSimBodyProxyDiagnostics = null;
         lastSimAssemblyPlan = null;
         lastSimAssemblyGraph = null;
-        var preferredFamily = GetPreferredSimBodyPreviewShellFamily();
-        if (preferredFamily is null)
+        var preferredBodyFamilies = GetPreferredSimBodyPreviewFamilies();
+        if (preferredBodyFamilies.Count == 0)
         {
             return false;
         }
 
-        await AdvancePreviewLoadAsync(0.30, "Resolving base-body shell...");
-        await AdvancePreviewLoadAsync(0.42, "Building base-body shell graph...");
-        var resolvedFamilyAssets = await ResolveSimBodyCandidateAssetsAsync(
-            GetPreferredSimBodyPreviewOptions(preferredFamily),
-            cancellationToken);
-        if (resolvedFamilyAssets.Count == 0)
-        {
-            lastSimBodyProxyDiagnostics = $"No resolved base-body shell asset is currently available for family {preferredFamily.Label}.";
-            lastSimAssemblyPlan = null;
-            lastSimAssemblyGraph = null;
-            ReplaceCollection(SelectedSimBodyPreviewLayers, []);
-            RebuildSimResolvedBodyGraphState();
-            RebuildSimBodyPreviewCoverageState();
-            NotifySimArchetypeInspectorStateChanged();
-            return false;
-        }
+        await AdvancePreviewLoadAsync(0.30, preferredBodyFamilies.Count == 1 ? "Resolving active base-body layer..." : "Resolving active base-body layers...");
 
         ResourceMetadata? primarySceneRoot = null;
-        ScenePreviewContent? successfulPreview = null;
-        AssetSummary? successfulAsset = null;
-        IReadOnlyList<ResourceMetadata> successfulBodyRigResources = [];
+        var successfulBodyLayers = new List<(
+            SimBodyCandidateFamilyPickerItem Family,
+            AssetSummary Asset,
+            ScenePreviewContent Preview,
+            ResourceMetadata SceneRoot,
+            IReadOnlyList<ResourceMetadata> RigResources,
+            IReadOnlyList<CasRegionMapSummary> RegionMaps)>();
         var previewDiagnostics = new List<string>();
-        for (var shellIndex = 0; shellIndex < resolvedFamilyAssets.Count; shellIndex++)
+        for (var familyIndex = 0; familyIndex < preferredBodyFamilies.Count; familyIndex++)
         {
-            var shellAsset = resolvedFamilyAssets[shellIndex];
-            var shellStepStart = InterpolateStep(0.42, 0.58, shellIndex, resolvedFamilyAssets.Count);
-            var shellStepMid = InterpolateStep(0.42, 0.58, shellIndex, resolvedFamilyAssets.Count, 0.45);
-            var shellStepEnd = InterpolateStep(0.42, 0.58, shellIndex, resolvedFamilyAssets.Count, 0.9);
-            await AdvancePreviewLoadAsync(shellStepStart, $"Loading base-body shell candidate {shellIndex + 1}/{resolvedFamilyAssets.Count}: {shellAsset.DisplayName}...");
-            var packageResources = await indexStore.GetResourcesByInstanceAsync(
-                shellAsset.PackagePath,
-                shellAsset.RootKey.FullInstance,
+            var preferredFamily = preferredBodyFamilies[familyIndex];
+            var familyStepStart = InterpolatePreviewStep(0.30, 0.58, familyIndex, preferredBodyFamilies.Count);
+            var familyStepSearch = InterpolatePreviewStep(0.30, 0.58, familyIndex, preferredBodyFamilies.Count, 0.18);
+            var familyStepEnd = InterpolatePreviewStep(0.30, 0.58, familyIndex, preferredBodyFamilies.Count, 0.95);
+            await AdvancePreviewLoadAsync(familyStepStart, $"Resolving {preferredFamily.Label} layer...");
+            await AdvancePreviewLoadAsync(familyStepSearch, $"Building {preferredFamily.Label} layer graph...");
+            var resolvedLayerProbe = await ResolveSimBodyPreviewLayerAsync(
+                preferredFamily,
+                familyStepSearch,
+                familyStepEnd,
+                "Resolving",
                 cancellationToken);
-            await AdvancePreviewLoadAsync(shellStepMid, $"Building base-body shell graph {shellIndex + 1}/{resolvedFamilyAssets.Count}: {shellAsset.DisplayName}...");
-            var shellGraph = await assetGraphBuilder.BuildAssetGraphAsync(shellAsset, packageResources, cancellationToken);
-            if (shellGraph.CasGraph is null || !shellGraph.CasGraph.IsSupported || shellGraph.CasGraph.GeometryResource is null)
+            previewDiagnostics.AddRange(resolvedLayerProbe.Diagnostics);
+            var resolvedLayer = resolvedLayerProbe.Resolution;
+            if (resolvedLayer is null)
             {
-                previewDiagnostics.Add(
-                    $"Skipped base-body shell candidate {shellAsset.DisplayName} ({preferredFamily.Label}): no supported CAS geometry root was resolved.");
+                previewDiagnostics.Add($"No usable body asset preview was built for active layer family {preferredFamily.Label}.");
                 continue;
             }
-
-            var shellPreviewProgress = CreatePreviewBuildProgressReporter(shellStepMid, Math.Max(0.01, shellStepEnd - shellStepMid));
-            var preview = await BuildCasPreviewResultAsync(shellGraph.CasGraph, cancellationToken, shellPreviewProgress);
-            var sceneRoot = shellGraph.CasGraph.GeometryResources
-                .FirstOrDefault(resource => string.Equals(resource.Key.FullTgi, (preview.Content as ScenePreviewContent)?.Resource.Key.FullTgi, StringComparison.OrdinalIgnoreCase))
-                ?? shellGraph.CasGraph.GeometryResource;
-            if (preview.Content is ScenePreviewContent { Scene: not null } scenePreview)
-            {
-                primarySceneRoot = sceneRoot;
-                successfulPreview = scenePreview;
-                successfulAsset = shellAsset;
-                successfulBodyRigResources = shellGraph.CasGraph.RigResources;
-                break;
-            }
-
-            var candidateDiagnostics = preview.Content switch
-            {
-                ScenePreviewContent scenePreviewContent => scenePreviewContent.Diagnostics,
-                UnsupportedPreviewContent unsupportedPreviewContent => unsupportedPreviewContent.Reason,
-                _ => null
-            };
-            previewDiagnostics.Add(
-                string.IsNullOrWhiteSpace(candidateDiagnostics)
-                    ? $"Skipped base-body shell candidate {shellAsset.DisplayName} ({preferredFamily.Label}): preview did not yield a usable scene."
-                    : $"Skipped base-body shell candidate {shellAsset.DisplayName} ({preferredFamily.Label}): {candidateDiagnostics}");
+            successfulBodyLayers.Add((
+                preferredFamily,
+                resolvedLayer.Asset,
+                resolvedLayer.Preview,
+                resolvedLayer.SceneRoot,
+                resolvedLayer.RigResources,
+                resolvedLayer.RegionMaps));
+            primarySceneRoot ??= resolvedLayer.SceneRoot;
         }
 
-        if (primarySceneRoot is null || successfulPreview is null || successfulAsset is null)
+        if (primarySceneRoot is null || successfulBodyLayers.Count == 0)
         {
-            previewDiagnostics.Add($"No usable base-body shell preview was built for family {preferredFamily.Label} from {resolvedFamilyAssets.Count} resolved candidate(s).");
+            previewDiagnostics.Add($"No usable base-body preview was built for {preferredBodyFamilies.Count} active layer family/families.");
             lastSimBodyProxyDiagnostics = string.Join(
                 Environment.NewLine,
                 previewDiagnostics.Where(static text => !string.IsNullOrWhiteSpace(text)));
@@ -1072,71 +1074,62 @@ public sealed partial class MainViewModel : ObservableObject
         selectedAssetSceneRoot = null;
         SetSceneLodOptions([]);
 
-        var previewLayers = new List<SimBodyPreviewLayerItem>
+        var successfulPreview = successfulBodyLayers.Count == 1
+            ? successfulBodyLayers[0].Preview
+            : CanonicalSceneComposer.Compose(
+                $"{selectedAsset.DisplayName} Base Body Shell",
+                successfulBodyLayers.Select(static layer => layer.Preview).ToArray());
+        var successfulBodyRigResources = successfulBodyLayers
+            .SelectMany(static layer => layer.RigResources)
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+        var successfulBodyRegionMaps = successfulBodyLayers
+            .SelectMany(static layer => layer.RegionMaps)
+            .GroupBy(static summary => summary.ResourceTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+        if (successfulBodyLayers.Count > 1)
         {
-            SimBodyPreviewLayerItem.Create(
-                preferredFamily.Label,
-                successfulAsset,
-                primarySceneRoot,
-                isPrimaryLayer: true)
-        };
-        var previewAssets = new List<AssetSummary> { successfulAsset };
+            previewDiagnostics.Add(
+                $"Composed split base-body preview from {successfulBodyLayers.Count:N0} active layer(s): {string.Join(", ", successfulBodyLayers.Select(static layer => layer.Family.Label))}.");
+        }
+
+        var previewLayers = successfulBodyLayers
+            .Select((layer, index) => SimBodyPreviewLayerItem.Create(
+                layer.Family.Label,
+                layer.Asset,
+                layer.SceneRoot,
+                isPrimaryLayer: index == 0))
+            .ToList();
+        var previewAssets = successfulBodyLayers
+            .Select(static layer => layer.Asset)
+            .ToList();
         ScenePreviewContent? successfulHeadPreview = null;
         AssetSummary? successfulHeadAsset = null;
         ResourceMetadata? successfulHeadSceneRoot = null;
         IReadOnlyList<ResourceMetadata> successfulHeadRigResources = [];
+        IReadOnlyList<CasRegionMapSummary> successfulHeadRegionMaps = [];
 
         var headFamily = GetPreferredSimBodyPreviewHeadFamily();
         if (headFamily?.SelectedOption is not null)
         {
             await AdvancePreviewLoadAsync(0.58, "Resolving head shell...");
-            var resolvedHeadAssets = await ResolveSimBodyCandidateAssetsAsync(
-                GetPreferredSimBodyPreviewOptions(headFamily),
+            var resolvedHeadLayerProbe = await ResolveSimBodyPreviewLayerAsync(
+                headFamily,
+                0.58,
+                0.72,
+                "Resolving",
                 cancellationToken);
-            for (var headIndex = 0; headIndex < resolvedHeadAssets.Count; headIndex++)
+            previewDiagnostics.AddRange(resolvedHeadLayerProbe.Diagnostics);
+            var resolvedHeadLayer = resolvedHeadLayerProbe.Resolution;
+            if (resolvedHeadLayer is not null)
             {
-                var headAsset = resolvedHeadAssets[headIndex];
-                var headStepStart = InterpolateStep(0.58, 0.72, headIndex, resolvedHeadAssets.Count);
-                var headStepMid = InterpolateStep(0.58, 0.72, headIndex, resolvedHeadAssets.Count, 0.45);
-                var headStepEnd = InterpolateStep(0.58, 0.72, headIndex, resolvedHeadAssets.Count, 0.9);
-                await AdvancePreviewLoadAsync(headStepStart, $"Loading head shell candidate {headIndex + 1}/{resolvedHeadAssets.Count}: {headAsset.DisplayName}...");
-                var packageResources = await indexStore.GetResourcesByInstanceAsync(
-                    headAsset.PackagePath,
-                    headAsset.RootKey.FullInstance,
-                    cancellationToken);
-                await AdvancePreviewLoadAsync(headStepMid, $"Building head shell graph {headIndex + 1}/{resolvedHeadAssets.Count}: {headAsset.DisplayName}...");
-                var headGraph = await assetGraphBuilder.BuildAssetGraphAsync(headAsset, packageResources, cancellationToken);
-                if (headGraph.CasGraph is null || !headGraph.CasGraph.IsSupported || headGraph.CasGraph.GeometryResource is null)
-                {
-                    previewDiagnostics.Add(
-                        $"Skipped head shell candidate {headAsset.DisplayName} ({headFamily.Label}): no supported CAS geometry root was resolved.");
-                    continue;
-                }
-
-                var headPreviewProgress = CreatePreviewBuildProgressReporter(headStepMid, Math.Max(0.01, headStepEnd - headStepMid));
-                var headPreview = await BuildCasPreviewResultAsync(headGraph.CasGraph, cancellationToken, headPreviewProgress);
-                var headSceneRoot = headGraph.CasGraph.GeometryResources
-                    .FirstOrDefault(resource => string.Equals(resource.Key.FullTgi, (headPreview.Content as ScenePreviewContent)?.Resource.Key.FullTgi, StringComparison.OrdinalIgnoreCase))
-                    ?? headGraph.CasGraph.GeometryResource;
-                if (headPreview.Content is ScenePreviewContent { Scene: not null } headScenePreview)
-                {
-                    successfulHeadPreview = headScenePreview;
-                    successfulHeadAsset = headAsset;
-                    successfulHeadSceneRoot = headSceneRoot;
-                    successfulHeadRigResources = headGraph.CasGraph.RigResources;
-                    break;
-                }
-
-                var headDiagnostics = headPreview.Content switch
-                {
-                    ScenePreviewContent scenePreviewContent => scenePreviewContent.Diagnostics,
-                    UnsupportedPreviewContent unsupportedPreviewContent => unsupportedPreviewContent.Reason,
-                    _ => null
-                };
-                previewDiagnostics.Add(
-                    string.IsNullOrWhiteSpace(headDiagnostics)
-                        ? $"Skipped head shell candidate {headAsset.DisplayName} ({headFamily.Label}): preview did not yield a usable scene."
-                        : $"Skipped head shell candidate {headAsset.DisplayName} ({headFamily.Label}): {headDiagnostics}");
+                successfulHeadPreview = resolvedHeadLayer.Preview;
+                successfulHeadAsset = resolvedHeadLayer.Asset;
+                successfulHeadSceneRoot = resolvedHeadLayer.SceneRoot;
+                successfulHeadRigResources = resolvedHeadLayer.RigResources;
+                successfulHeadRegionMaps = resolvedHeadLayer.RegionMaps;
             }
         }
 
@@ -1147,7 +1140,10 @@ public sealed partial class MainViewModel : ObservableObject
             successfulHeadPreview,
             successfulHeadRigResources,
             selectedAssetGraph.SimGraph.Metadata,
-            selectedAssetGraph.SimGraph.MorphGroups);
+            selectedAssetGraph.SimGraph.MorphGroups,
+            selectedAssetGraph.SimGraph.SkintoneRender,
+            successfulBodyRegionMaps,
+            successfulHeadRegionMaps);
         lastSimAssemblyPlan = assembledPreview.Plan;
         lastSimAssemblyGraph = assembledPreview.Graph;
         if (assembledPreview.IncludesHeadShell &&
@@ -1232,6 +1228,39 @@ public sealed partial class MainViewModel : ObservableObject
         return await assetGraphBuilder.BuildAssetGraphAsync(templateSummary, packageResources, cancellationToken);
     }
 
+    private async Task<AssetGraph?> RebuildSimPreviewGraphForSelectedTemplateAsync(CancellationToken cancellationToken)
+    {
+        if (selectedAsset?.AssetKind != AssetKind.Sim || SelectedSimTemplateOption is null)
+        {
+            return null;
+        }
+
+        await AdvancePreviewLoadAsync(0.18, "Resolving selected SimInfo template...");
+        var templateResource = await indexStore.GetResourceByTgiAsync(
+            SelectedSimTemplateOption.PackagePath,
+            SelectedSimTemplateOption.RootTgi,
+            cancellationToken);
+        if (templateResource is null)
+        {
+            return null;
+        }
+
+        await AdvancePreviewLoadAsync(0.28, "Loading template package resources...");
+        var packageResources = await indexStore.GetResourcesByInstanceAsync(
+            templateResource.PackagePath,
+            templateResource.Key.FullInstance,
+            cancellationToken);
+        var templateSummary = selectedAsset with
+        {
+            PackagePath = templateResource.PackagePath,
+            PackageName = Path.GetFileName(templateResource.PackagePath),
+            RootKey = templateResource.Key
+        };
+
+        await AdvancePreviewLoadAsync(0.40, "Building template preview graph...");
+        return await assetGraphBuilder.BuildPreviewGraphAsync(templateSummary, packageResources, cancellationToken);
+    }
+
     private string? BuildSelectedSimTemplateSupplement()
     {
         if (SelectedSimTemplateOption is null)
@@ -1271,17 +1300,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static IReadOnlyList<SimCasSlotOptionPickerItem> GetPreferredSimBodyPreviewOptions(SimBodyCandidateFamilyPickerItem family)
     {
-        var ordered = new List<SimCasSlotOptionPickerItem>();
-        if (family.SelectedOption is not null)
-        {
-            ordered.Add(family.SelectedOption);
-        }
-
-        ordered.AddRange(
-            family.Options.Where(option =>
-                family.SelectedOption is null ||
-                option.AssetId != family.SelectedOption.AssetId));
-        return ordered;
+        return family.SelectedOption is null
+            ? []
+            : [family.SelectedOption];
     }
 
     private static int GetBodyRecipeSortOrder(string? label) => label switch
@@ -1297,13 +1318,30 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task<AssetSummary?> ResolveSimBodyCandidateAssetAsync(SimCasSlotOptionPickerItem option, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var cacheKey = BuildSimBodyCandidateCacheKey(option.PackagePath, option.RootTgi, option.AssetId);
+        var cachedTask = simBodyCandidateAssetCache.GetOrAdd(
+            cacheKey,
+            static (_, state) => state.ViewModel.ResolveSimBodyCandidateAssetCoreAsync(state.Option, CancellationToken.None),
+            (ViewModel: this, Option: option));
+
+        try
+        {
+            return await cachedTask.WaitAsync(cancellationToken);
+        }
+        catch when (cachedTask.IsFaulted || cachedTask.IsCanceled)
+        {
+            simBodyCandidateAssetCache.TryRemove(new KeyValuePair<string, Task<AssetSummary?>>(cacheKey, cachedTask));
+            throw;
+        }
+    }
+
+    private async Task<AssetSummary?> ResolveSimBodyCandidateAssetCoreAsync(SimCasSlotOptionPickerItem option, CancellationToken cancellationToken)
+    {
         if (!string.IsNullOrWhiteSpace(option.PackagePath))
         {
-            var packageAssets = await indexStore.GetPackageAssetsAsync(option.PackagePath, cancellationToken);
-            var exact = packageAssets.FirstOrDefault(asset =>
-                asset.Id == option.AssetId ||
-                (!string.IsNullOrWhiteSpace(option.RootTgi) &&
-                 asset.RootKey.FullTgi.Equals(option.RootTgi, StringComparison.OrdinalIgnoreCase)));
+            var exact = await indexStore.GetPackageAssetByIdAsync(option.PackagePath, option.AssetId, cancellationToken);
             if (exact is not null)
             {
                 return exact;
@@ -1333,22 +1371,197 @@ public sealed partial class MainViewModel : ObservableObject
             asset.RootKey.FullTgi.Equals(option.RootTgi, StringComparison.OrdinalIgnoreCase));
     }
 
-    private async Task<IReadOnlyList<AssetSummary>> ResolveSimBodyCandidateAssetsAsync(
-        IReadOnlyList<SimCasSlotOptionPickerItem> options,
+    private static string BuildSimBodyCandidateCacheKey(string? packagePath, string? rootTgi, Guid assetId) =>
+        $"{packagePath ?? string.Empty}|{rootTgi ?? string.Empty}|{assetId:D}";
+
+    private async Task<IReadOnlyList<ResourceMetadata>> GetSimBodyPackageInstanceResourcesAsync(
+        string packagePath,
+        ulong fullInstance,
         CancellationToken cancellationToken)
     {
-        var results = new List<AssetSummary>();
-        var seenAssetIds = new HashSet<Guid>();
-        foreach (var option in options)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var cachedTask = simBodyPackageInstanceResourceCache.GetOrAdd(
+            (packagePath, fullInstance),
+            static (key, store) => store.GetResourcesByInstanceAsync(key.PackagePath, key.FullInstance, CancellationToken.None),
+            indexStore);
+
+        try
         {
-            var asset = await ResolveSimBodyCandidateAssetAsync(option, cancellationToken);
-            if (asset is not null && seenAssetIds.Add(asset.Id))
+            return await cachedTask.WaitAsync(cancellationToken);
+        }
+        catch when (cachedTask.IsFaulted || cachedTask.IsCanceled)
+        {
+            simBodyPackageInstanceResourceCache.TryRemove(
+                new KeyValuePair<(string PackagePath, ulong FullInstance), Task<IReadOnlyList<ResourceMetadata>>>((packagePath, fullInstance), cachedTask));
+            throw;
+        }
+    }
+
+    private async Task<SimBodyCandidatePreviewBuildResult?> BuildSimBodyCandidatePreviewAsync(
+        AssetSummary asset,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var cacheKey = BuildSimBodyCandidateCacheKey(asset.PackagePath, asset.RootKey.FullTgi, asset.Id);
+        var cachedTask = simBodyCandidatePreviewCache.GetOrAdd(
+            cacheKey,
+            static (_, state) => state.ViewModel.BuildSimBodyCandidatePreviewCoreAsync(state.Asset, CancellationToken.None),
+            (ViewModel: this, Asset: asset));
+
+        try
+        {
+            return await cachedTask.WaitAsync(cancellationToken);
+        }
+        catch when (cachedTask.IsFaulted || cachedTask.IsCanceled)
+        {
+            simBodyCandidatePreviewCache.TryRemove(new KeyValuePair<string, Task<SimBodyCandidatePreviewBuildResult?>>(cacheKey, cachedTask));
+            throw;
+        }
+    }
+
+    private async Task<SimBodyCandidatePreviewBuildResult?> BuildSimBodyCandidatePreviewCoreAsync(
+        AssetSummary asset,
+        CancellationToken cancellationToken)
+    {
+        var packageResources = await GetSimBodyPackageInstanceResourcesAsync(
+            asset.PackagePath,
+            asset.RootKey.FullInstance,
+            cancellationToken);
+        var graph = await assetGraphBuilder.BuildAssetGraphAsync(asset, packageResources, cancellationToken);
+        if (graph.CasGraph is null || !graph.CasGraph.IsSupported || graph.CasGraph.GeometryResource is null)
+        {
+            return new SimBodyCandidatePreviewBuildResult(
+                Preview: null,
+                SceneRoot: null,
+                RigResources: [],
+                RegionMaps: [],
+                $"Skipped candidate {asset.DisplayName}: no supported CAS geometry root was resolved.");
+        }
+
+        var preview = await BuildCasPreviewResultAsync(graph.CasGraph, cancellationToken);
+        var sceneRoot = graph.CasGraph.GeometryResources
+            .FirstOrDefault(resource => string.Equals(resource.Key.FullTgi, (preview.Content as ScenePreviewContent)?.Resource.Key.FullTgi, StringComparison.OrdinalIgnoreCase))
+            ?? graph.CasGraph.GeometryResource;
+
+        return preview.Content switch
+        {
+            ScenePreviewContent { Scene: not null } scenePreview => new SimBodyCandidatePreviewBuildResult(
+                scenePreview,
+                sceneRoot,
+                graph.CasGraph.RigResources,
+                graph.CasGraph.RegionMaps,
+                scenePreview.Diagnostics),
+            ScenePreviewContent scenePreview => new SimBodyCandidatePreviewBuildResult(
+                Preview: scenePreview,
+                SceneRoot: sceneRoot,
+                graph.CasGraph.RigResources,
+                graph.CasGraph.RegionMaps,
+                string.IsNullOrWhiteSpace(scenePreview.Diagnostics)
+                    ? $"Skipped candidate {asset.DisplayName}: preview did not yield a usable scene."
+                    : $"Skipped candidate {asset.DisplayName}: {scenePreview.Diagnostics}"),
+            UnsupportedPreviewContent unsupportedPreview => new SimBodyCandidatePreviewBuildResult(
+                Preview: null,
+                SceneRoot: null,
+                RigResources: [],
+                RegionMaps: [],
+                string.IsNullOrWhiteSpace(unsupportedPreview.Reason)
+                    ? $"Skipped candidate {asset.DisplayName}: preview did not yield a usable scene."
+                    : $"Skipped candidate {asset.DisplayName}: {unsupportedPreview.Reason}"),
+            _ => new SimBodyCandidatePreviewBuildResult(
+                Preview: null,
+                SceneRoot: null,
+                RigResources: [],
+                RegionMaps: [],
+                $"Skipped candidate {asset.DisplayName}: preview did not yield a usable scene.")
+        };
+    }
+
+    private static double InterpolatePreviewStep(double start, double end, int index, int total, double offset = 0d)
+    {
+        if (total <= 0)
+        {
+            return end;
+        }
+
+        var progress = Math.Clamp((index + offset) / total, 0d, 1d);
+        return start + ((end - start) * progress);
+    }
+
+    private async Task<SimBodyPreviewLayerProbeResult> ResolveSimBodyPreviewLayerAsync(
+        SimBodyCandidateFamilyPickerItem family,
+        double progressStart,
+        double progressEnd,
+        string progressVerb,
+        CancellationToken cancellationToken)
+    {
+        var diagnostics = new List<string>();
+        var options = GetPreferredSimBodyPreviewOptions(family);
+        if (options.Count == 0)
+        {
+            diagnostics.Add($"No candidate options are currently available for active layer family {family.Label}.");
+            return new SimBodyPreviewLayerProbeResult(null, diagnostics);
+        }
+
+        var seenAssetIds = new HashSet<Guid>();
+        for (var batchStart = 0; batchStart < options.Count; batchStart += SimBodyCandidateProbeBatchSize)
+        {
+            var batch = options
+                .Skip(batchStart)
+                .Take(SimBodyCandidateProbeBatchSize)
+                .ToArray();
+            var batchEnd = batchStart + batch.Length;
+            var progressMessage = options.Count == 1
+                ? $"{progressVerb} {family.Label} layer asset..."
+                : $"{progressVerb} {family.Label} candidate(s) {batchStart + 1}-{batchEnd} of {options.Count}...";
+            await AdvancePreviewLoadAsync(
+                InterpolatePreviewStep(progressStart, progressEnd, batchStart, options.Count),
+                progressMessage);
+
+            var resolvedAssets = (await Task.WhenAll(batch.Select(option => ResolveSimBodyCandidateAssetAsync(option, cancellationToken))))
+                .Where(static asset => asset is not null)
+                .Cast<AssetSummary>()
+                .Where(asset => seenAssetIds.Add(asset.Id))
+                .ToArray();
+            if (resolvedAssets.Length == 0)
             {
-                results.Add(asset);
+                continue;
+            }
+
+            var previewCandidates = await Task.WhenAll(
+                resolvedAssets.Select(asset => BuildSimBodyCandidatePreviewAsync(asset, cancellationToken)));
+            for (var candidateIndex = 0; candidateIndex < resolvedAssets.Length; candidateIndex++)
+            {
+                var asset = resolvedAssets[candidateIndex];
+                var previewCandidate = previewCandidates[candidateIndex];
+                if (previewCandidate is null)
+                {
+                    diagnostics.Add($"Skipped candidate {asset.DisplayName}: preview build produced no result.");
+                    continue;
+                }
+
+                if (previewCandidate.IsUsable &&
+                    previewCandidate.Preview is not null &&
+                    previewCandidate.SceneRoot is not null)
+                {
+                    return new SimBodyPreviewLayerProbeResult(
+                        new SimBodyPreviewLayerResolutionResult(
+                            asset,
+                            previewCandidate.Preview,
+                            previewCandidate.SceneRoot,
+                            previewCandidate.RigResources,
+                            previewCandidate.RegionMaps,
+                            diagnostics),
+                        diagnostics);
+                }
+
+                diagnostics.Add(previewCandidate.Diagnostics);
             }
         }
 
-        return results;
+        diagnostics.Add($"No usable {family.Label} preview candidate was built from {options.Count:N0} option(s).");
+        return new SimBodyPreviewLayerProbeResult(null, diagnostics);
     }
 
     private static string BuildSimBodyProxySourceSummary(IReadOnlyList<AssetSummary> assets)
@@ -1392,6 +1605,44 @@ public sealed partial class MainViewModel : ObservableObject
                 .Where(static text => !string.IsNullOrWhiteSpace(text))
                 .SelectMany(static text => text!.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 .Distinct(StringComparer.Ordinal));
+
+    private void RecordCurrentAssetSessionDiagnostics(string trigger)
+    {
+        if (selectedAsset is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var selectedTemplate = selectedAsset.AssetKind == AssetKind.Sim
+                ? SelectedSimTemplateOption?.DisplayLabel
+                : null;
+            assetSessionLogService.RecordAssetDiagnostics(new AssetSessionLogEntry(
+                DateTimeOffset.Now,
+                trigger,
+                GetAppBuildLabel(),
+                selectedAsset.AssetKind.ToString(),
+                selectedAsset.DisplayName,
+                selectedAsset.PackagePath,
+                selectedAsset.RootKey.FullTgi,
+                selectedAsset.Category,
+                selectedResource?.Key.FullTgi,
+                selectedResource?.Key.TypeName,
+                selectedResource?.PackagePath,
+                selectedAssetSceneRoot?.Key.FullTgi,
+                PreviewSurfaceMode.ToString(),
+                PreviewSurfaceTitle,
+                StatusMessage,
+                selectedTemplate,
+                PreviewText,
+                DetailsText));
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Asset session log write failed: {ex.Message}");
+        }
+    }
 
     public async Task ExportSelectedRawAsync(string outputDirectory)
     {
@@ -1491,9 +1742,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ReloadSourcesAsync()
     {
+        ClearSimPreviewCaches();
         var sources = await indexStore.GetDataSourcesAsync(CancellationToken.None);
         ReplaceCollection(DataSources, sources);
         UpdateBrowsePresentation();
+    }
+
+    private void ClearSimPreviewCaches()
+    {
+        simBodyCandidateAssetCache.Clear();
+        simBodyPackageInstanceResourceCache.Clear();
+        simBodyCandidatePreviewCache.Clear();
     }
 
     private async Task ReloadAssetFacetOptionsAsync()
@@ -1650,6 +1909,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         NotifyPreviewStateChanged();
+        RecordCurrentAssetSessionDiagnostics("ApplyPreviewAsync");
     }
 
     private void MarkAllQueriesDirty()
@@ -1668,6 +1928,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         try
         {
+            ClearSimPreviewCaches();
             MarkAllQueriesDirty();
             await ReloadAssetFacetOptionsAsync();
             await RefreshActiveBrowserAsync(resetWindow: true);
@@ -2646,6 +2907,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             SimBodyAssemblyMode.FullBodyShell => "Assembly mode: full-body shell",
             SimBodyAssemblyMode.BodyShell => "Assembly mode: primary body shell",
+            SimBodyAssemblyMode.BodyUnderlayWithSplitLayers => "Assembly mode: shell underlay + split body layers",
             SimBodyAssemblyMode.SplitBodyLayers => "Assembly mode: split body layers",
             SimBodyAssemblyMode.FallbackSingleLayer => "Assembly mode: fallback single layer",
             _ => "Assembly mode: unresolved"
@@ -2813,6 +3075,9 @@ public sealed partial class MainViewModel : ObservableObject
 
         return state switch
         {
+            SimBodyAssemblyLayerState.Active when mode == SimBodyAssemblyMode.BodyUnderlayWithSplitLayers &&
+                                              SimBodyAssemblyPolicy.IsShellFamilyLabel(family.Label) =>
+                $"Selected as the body underlay beneath active split layers. {family.Notes}",
             SimBodyAssemblyLayerState.Active => family.Notes,
             SimBodyAssemblyLayerState.Blocked when mode == SimBodyAssemblyMode.FullBodyShell =>
                 $"Currently suppressed by the selected full-body shell. {family.Notes}",
@@ -3044,45 +3309,7 @@ public sealed partial class MainViewModel : ObservableObject
         CancellationToken cancellationToken,
         IProgress<PreviewBuildProgress>? progress = null)
     {
-        var geometryRoots = casGraph.GeometryResources
-            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
-            .Select(static group => group.First())
-            .ToArray();
-        if (geometryRoots.Length == 0)
-        {
-            return new PreviewResult(
-                PreviewKind.Unsupported,
-                new UnsupportedPreviewContent(casGraph.CasPartResource, "No CAS geometry roots were resolved."));
-        }
-
-        if (geometryRoots.Length == 1)
-        {
-            return await previewService.CreatePreviewAsync(geometryRoots[0], cancellationToken, progress);
-        }
-
-        var previews = new List<ScenePreviewContent>(geometryRoots.Length);
-        for (var index = 0; index < geometryRoots.Length; index++)
-        {
-            var geometry = geometryRoots[index];
-            progress?.Report(new PreviewBuildProgress($"Building CAS geometry {index + 1}/{geometryRoots.Length}...", 0.02 + ((index / (double)Math.Max(geometryRoots.Length, 1)) * 0.94)));
-            var preview = await previewService.CreatePreviewAsync(geometry, cancellationToken, progress);
-            if (preview.Content is ScenePreviewContent scenePreview)
-            {
-                previews.Add(scenePreview);
-            }
-        }
-
-        if (previews.Count == 0)
-        {
-            return new PreviewResult(
-                PreviewKind.Unsupported,
-                new UnsupportedPreviewContent(geometryRoots[0], "No CAS geometry roots yielded a usable scene."));
-        }
-
-        var name = casGraph.CasPartResource.Name
-            ?? casGraph.CasPartResource.Key.FullTgi;
-        var composed = CanonicalSceneComposer.Compose(name, previews);
-        return new PreviewResult(PreviewKind.Scene, composed);
+        return await previewService.CreatePreviewAsync(casGraph, cancellationToken, progress);
     }
 
     private static string DescribeBuildBuyLod(uint group) => group switch

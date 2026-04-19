@@ -122,6 +122,19 @@ if (args.Length > 0 && string.Equals(args[0], "--profile-index", StringCompariso
     return await RunIndexProfileAsync(searchRoot, maxPackages, workerCount, packageOrder);
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--rebuild-live-sim-archetypes", StringComparison.OrdinalIgnoreCase))
+{
+    var workerCount = args.Length > 1 && int.TryParse(args[1], out var parsedWorkerCount) ? parsedWorkerCount : (int?)null;
+    return await RebuildLiveCacheAndRunSimArchetypeSurveyAsync(workerCount);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--survey-sim-archetypes", StringComparison.OrdinalIgnoreCase))
+{
+    var outputPath = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "sim_archetype_body_shell_audit.json");
+    var maxEntries = args.Length > 2 && int.TryParse(args[2], out var parsedMaxEntries) ? parsedMaxEntries : 0;
+    return await RunSimArchetypeBodyShellSurveyAsync(outputPath, maxEntries);
+}
+
 var packagePath = args.Length > 0 ? args[0] : @"C:\GAMES\The Sims 4\EP10\ClientFullBuild0.package";
 var rootTgi = args.Length > 1 ? args[1] : "01661233:00000000:00F643B0FDD2F1F7";
 
@@ -3282,6 +3295,275 @@ static void DumpUnknownChunk(ReadOnlySpan<byte> bytes)
     }
 }
 
+static async Task<int> RunSimArchetypeBodyShellSurveyAsync(string outputPath, int maxEntries)
+{
+    var cache = new FileSystemCacheService();
+    Directory.CreateDirectory(cache.CacheRoot);
+
+    var store = new SqliteIndexStore(cache);
+    await store.InitializeAsync(CancellationToken.None);
+
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog, store);
+    var assets = await LoadAllSimArchetypeAssetsAsync(store, maxEntries, CancellationToken.None);
+    var rows = new List<SimArchetypeBodyShellSurveyRow>(assets.Count);
+    var stopwatch = Stopwatch.StartNew();
+
+    Console.WriteLine($"Surveying {assets.Count:N0} Sim Archetype asset(s) from live index...");
+
+    foreach (var (asset, index) in assets.Select(static (asset, index) => (asset, index)))
+    {
+        Console.WriteLine($"[{index + 1:N0}/{assets.Count:N0}] {asset.DisplayName}");
+
+        try
+        {
+            var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+            var graph = await graphBuilder.BuildPreviewGraphAsync(asset, packageResources, CancellationToken.None);
+            rows.Add(BuildSimArchetypeBodyShellSurveyRow(asset, graph));
+        }
+        catch (Exception ex)
+        {
+            rows.Add(new SimArchetypeBodyShellSurveyRow(
+                asset.DisplayName,
+                asset.RootKey.FullTgi,
+                asset.PackagePath,
+                string.Empty,
+                string.Empty,
+                "Error",
+                SimBodyAssemblyMode.None.ToString(),
+                [],
+                [],
+                0,
+                false,
+                string.Empty,
+                [$"Exception: {ex.GetType().Name}: {ex.Message}"]));
+        }
+    }
+
+    stopwatch.Stop();
+
+    var report = new SimArchetypeBodyShellSurveyReport(
+        outputPath,
+        assets.Count,
+        stopwatch.Elapsed,
+        rows.GroupBy(static row => row.ContractStatus, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase),
+        rows.GroupBy(static row => row.AssemblyMode, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase),
+        rows);
+
+    var outputDirectory = Path.GetDirectoryName(outputPath);
+    if (!string.IsNullOrWhiteSpace(outputDirectory))
+    {
+        Directory.CreateDirectory(outputDirectory);
+    }
+
+    await File.WriteAllTextAsync(
+        outputPath,
+        JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }),
+        CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine($"Wrote Sim Archetype body-shell survey to {outputPath}");
+    foreach (var pair in report.StatusCounts)
+    {
+        Console.WriteLine($"  {pair.Key}: {pair.Value:N0}");
+    }
+
+    return 0;
+}
+
+static async Task<int> RebuildLiveCacheAndRunSimArchetypeSurveyAsync(int? requestedWorkerCount)
+{
+    var cache = new FileSystemCacheService();
+    cache.EnsureCreated();
+
+    var store = new SqliteIndexStore(cache);
+    await store.InitializeAsync(CancellationToken.None);
+
+    var configuredSources = await store.GetDataSourcesAsync(CancellationToken.None);
+    if (configuredSources.Count == 0)
+    {
+        Console.Error.WriteLine($"No configured data sources were found in the live index at {cache.DatabasePath}.");
+        return 2;
+    }
+
+    var activeSources = configuredSources.Where(static source => source.IsEnabled).ToArray();
+    if (activeSources.Length == 0)
+    {
+        Console.Error.WriteLine("Configured data sources exist, but all of them are disabled.");
+        return 3;
+    }
+
+    Console.WriteLine($"Live cache root: {cache.CacheRoot}");
+    Console.WriteLine($"Live index database: {cache.DatabasePath}");
+    Console.WriteLine($"Configured data sources: {configuredSources.Count} total, {activeSources.Length} enabled");
+    foreach (var source in configuredSources)
+    {
+        Console.WriteLine($"  - {source.DisplayName} | {source.Kind} | enabled={source.IsEnabled} | root={source.RootPath}");
+    }
+
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog, store);
+    var scanner = new FileSystemPackageScanner();
+    var coordinator = new PackageIndexCoordinator(scanner, catalog, graphBuilder, store, IndexingRunOptions.CreateDefault());
+
+    var progress = new Progress<IndexingProgress>(snapshot =>
+    {
+        Console.WriteLine(
+            $"[{snapshot.Stage}] {snapshot.Message} | processed={snapshot.PackagesProcessed:N0}/{snapshot.PackagesTotal:N0} " +
+            $"completed={snapshot.PackagesCompleted:N0} skipped={snapshot.PackagesSkipped:N0} failed={snapshot.PackagesFailed:N0} " +
+            $"resources={snapshot.ResourcesProcessed:N0} workers={snapshot.ActiveWorkerCount}/{snapshot.ConfiguredWorkerCount} " +
+            $"pending={snapshot.PendingPackageCount:N0} persist={snapshot.PendingPersistCount:N0} writerBusy={snapshot.WriterBusy}");
+        if (snapshot.Summary is null)
+        {
+            return;
+        }
+
+        Console.WriteLine(
+            $"  summary elapsed={snapshot.Summary.TotalElapsed:hh\\:mm\\:ss} packages={snapshot.Summary.PackagesProcessed:N0} " +
+            $"failed={snapshot.Summary.PackagesFailed:N0} throughput={snapshot.Summary.AverageThroughput:N0} res/s");
+    });
+
+    Console.WriteLine();
+    Console.WriteLine("== Live Cache Rebuild ==");
+    var rebuildStopwatch = Stopwatch.StartNew();
+    await coordinator.RunAsync(configuredSources, progress, CancellationToken.None, requestedWorkerCount);
+    rebuildStopwatch.Stop();
+    Console.WriteLine($"Live cache rebuild complete in {rebuildStopwatch.Elapsed:hh\\:mm\\:ss}.");
+
+    Console.WriteLine();
+    Console.WriteLine("== Live Sim Archetype Survey ==");
+    var outputPath = Path.Combine(Environment.CurrentDirectory, "tmp", "sim_archetype_body_shell_audit.json");
+    return await RunSimArchetypeBodyShellSurveyAsync(outputPath, 0);
+}
+
+static async Task<IReadOnlyList<AssetSummary>> LoadAllSimArchetypeAssetsAsync(
+    IIndexStore store,
+    int maxEntries,
+    CancellationToken cancellationToken)
+{
+    const int pageSize = 128;
+    var results = new List<AssetSummary>();
+
+    for (var offset = 0; ; offset += pageSize)
+    {
+        var query = new AssetBrowserQuery(
+            new SourceScope(),
+            string.Empty,
+            AssetBrowserDomain.Sim,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            false,
+            false,
+            AssetBrowserSort.Name,
+            offset,
+            pageSize);
+        var page = await store.QueryAssetsAsync(query, cancellationToken);
+        if (page.Items.Count == 0)
+        {
+            break;
+        }
+
+        results.AddRange(page.Items);
+        if (maxEntries > 0 && results.Count >= maxEntries)
+        {
+            return results.Take(maxEntries).ToArray();
+        }
+
+        if (!page.HasMore)
+        {
+            break;
+        }
+    }
+
+    return results;
+}
+
+static SimArchetypeBodyShellSurveyRow BuildSimArchetypeBodyShellSurveyRow(AssetSummary asset, AssetGraph graph)
+{
+    var simGraph = graph.SimGraph;
+    if (simGraph is null)
+    {
+        return new SimArchetypeBodyShellSurveyRow(
+            asset.DisplayName,
+            asset.RootKey.FullTgi,
+            asset.PackagePath,
+            string.Empty,
+            string.Empty,
+            "GraphMissing",
+            SimBodyAssemblyMode.None.ToString(),
+            [],
+            [],
+            0,
+            false,
+            string.Empty,
+            ["Sim graph was not constructed."]);
+    }
+
+    var bodyDrivingSource = simGraph.BodySources.FirstOrDefault(static source => source.Label == "Body-driving outfit records");
+    var bodyDrivingCount = bodyDrivingSource?.Count ?? 0;
+    var activeLayers = simGraph.BodyAssembly.Layers
+        .Where(static layer => layer.State == SimBodyAssemblyLayerState.Active)
+        .Select(static layer => layer.Label)
+        .ToArray();
+    var candidateSources = simGraph.BodyCandidates
+        .Select(candidate => $"{candidate.Label}:{candidate.SourceKind}")
+        .ToArray();
+    var usesIndexedDefaultRecipe = simGraph.BodyCandidates.Any(static candidate => candidate.SourceKind == SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe);
+    var hasResolvedBodyShell = simGraph.BodyAssembly.Mode != SimBodyAssemblyMode.None;
+    var contractStatus =
+        usesIndexedDefaultRecipe
+            ? "IndexedDefaultBodyRecipe"
+            : bodyDrivingCount > 0 && hasResolvedBodyShell
+                ? "ExplicitBodyDriving"
+                : hasResolvedBodyShell
+                    ? "OtherBodyRecipe"
+                    : "Unresolved";
+    var issues = new List<string>();
+    if (candidateSources.Any(static source =>
+            source.Contains(nameof(SimBodyCandidateSourceKind.ArchetypeCompatibilityFallback), StringComparison.Ordinal) ||
+            source.Contains(nameof(SimBodyCandidateSourceKind.BodyTypeFallback), StringComparison.Ordinal) ||
+            source.Contains(nameof(SimBodyCandidateSourceKind.CanonicalFoundation), StringComparison.Ordinal)))
+    {
+        issues.Add("Broad fallback candidate source surfaced in preview graph.");
+    }
+
+    if (bodyDrivingCount > 0 && !usesIndexedDefaultRecipe && !hasResolvedBodyShell)
+    {
+        issues.Add("Explicit body-driving outfit records existed, but no renderable body-shell layer was resolved.");
+    }
+
+    if (bodyDrivingCount == 0 && !usesIndexedDefaultRecipe && !hasResolvedBodyShell)
+    {
+        issues.Add("No explicit body-driving recipe and no indexed default/naked body recipe were resolved.");
+    }
+
+    if (activeLayers.Length == 0 && hasResolvedBodyShell)
+    {
+        issues.Add("Assembly mode is non-empty but no active body layers were resolved.");
+    }
+
+    var timingLine = graph.Diagnostics.FirstOrDefault(static line => line.StartsWith("Sim graph timings:", StringComparison.Ordinal));
+    return new SimArchetypeBodyShellSurveyRow(
+        asset.DisplayName,
+        asset.RootKey.FullTgi,
+        asset.PackagePath,
+        simGraph.SimInfoResource.Name ?? string.Empty,
+        simGraph.SimInfoResource.PackagePath,
+        contractStatus,
+        simGraph.BodyAssembly.Mode.ToString(),
+        activeLayers,
+        candidateSources,
+        bodyDrivingCount,
+        usesIndexedDefaultRecipe,
+        timingLine ?? string.Empty,
+        issues);
+}
+
 file sealed class ProbeCacheService(string root) : ICacheService
 {
     public string AppRoot { get; } = root;
@@ -3370,6 +3652,29 @@ file sealed record BuildBuyCandidateResolutionReport(
     IReadOnlyList<BuildBuyCandidateResolution> Candidates,
     int ResolvedCandidateCount,
     int UnresolvedCandidateCount);
+
+file sealed record SimArchetypeBodyShellSurveyRow(
+    string AssetDisplayName,
+    string RootTgi,
+    string AssetPackagePath,
+    string SelectedTemplateDisplayName,
+    string SelectedTemplatePackagePath,
+    string ContractStatus,
+    string AssemblyMode,
+    IReadOnlyList<string> ActiveLayers,
+    IReadOnlyList<string> CandidateSources,
+    int BodyDrivingOutfitCount,
+    bool UsesIndexedDefaultBodyRecipe,
+    string TimingLine,
+    IReadOnlyList<string> Issues);
+
+file sealed record SimArchetypeBodyShellSurveyReport(
+    string OutputPath,
+    int TotalAssets,
+    TimeSpan Elapsed,
+    IReadOnlyDictionary<string, int> StatusCounts,
+    IReadOnlyDictionary<string, int> AssemblyModeCounts,
+    IReadOnlyList<SimArchetypeBodyShellSurveyRow> Rows);
 
 file sealed record ThreeDimensionalSurveyReport(
     string SearchRoot,

@@ -56,6 +56,7 @@ public sealed class SimBodyAssemblyRecipeItem
     private static string BuildSourceLabel(SimBodyCandidateSourceKind sourceKind) => sourceKind switch
     {
         SimBodyCandidateSourceKind.ExactPartLink => "Authoritative SimInfo outfit/body-part selection",
+        SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe => "Indexed default/naked body recipe",
         SimBodyCandidateSourceKind.CanonicalFoundation => "Canonical default foundation",
         SimBodyCandidateSourceKind.BodyTypeFallback => "Template body-type fallback",
         SimBodyCandidateSourceKind.ArchetypeCompatibilityFallback => "Archetype compatibility fallback",

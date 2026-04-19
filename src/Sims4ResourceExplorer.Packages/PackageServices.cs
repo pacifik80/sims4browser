@@ -34,10 +34,11 @@ public sealed class FileSystemPackageScanner : IPackageScanner
     }
 }
 
-public sealed class LlamaResourceCatalogService : IResourceCatalogService
+public sealed class LlamaResourceCatalogService : IResourceCatalogService, IAsyncDisposable
 {
     private const int ParallelEnumerationThreshold = 20000;
     private const int EnumerationRangeSize = 4096;
+    private readonly ConcurrentDictionary<string, CachedPackageHandle> packageCache = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<PackageScanResult> ScanPackageAsync(DataSourceDefinition source, string packagePath, IProgress<PackageScanProgress>? progress, CancellationToken cancellationToken)
     {
@@ -195,160 +196,190 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
 
     public async Task<ResourceMetadata> EnrichResourceAsync(ResourceMetadata resource, CancellationToken cancellationToken)
     {
-        await using var package = await OpenPackageAsync(resource.PackagePath, cancellationToken).ConfigureAwait(false);
-        var key = ToLlamaKey(resource.Key);
+        return await UseCachedPackageAsync(
+            resource.PackagePath,
+            cancellationToken,
+            async package =>
+            {
+                var key = ToLlamaKey(resource.Key);
 
-        string? name = resource.Name;
-        string? description = resource.Description;
-        long? uncompressedSize = resource.UncompressedSize;
-        long? compressedSize = resource.CompressedSize;
-        bool? isCompressed = resource.IsCompressed;
-        var diagnostics = resource.Diagnostics;
+                string? name = resource.Name;
+                string? description = resource.Description;
+                long? uncompressedSize = resource.UncompressedSize;
+                long? compressedSize = resource.CompressedSize;
+                bool? isCompressed = resource.IsCompressed;
+                var diagnostics = resource.Diagnostics;
 
-        if (name is null)
-        {
-            try
-            {
-                name = await package.GetNameByKeyAsync(key, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                diagnostics = AppendDiagnostic(diagnostics, $"Name lookup failed: {ex.Message}");
-            }
-        }
-
-        if (uncompressedSize is null)
-        {
-            try
-            {
-                uncompressedSize = await package.GetSizeAsync(key, cancellationToken).ConfigureAwait(false);
-                compressedSize ??= uncompressedSize;
-                isCompressed ??= false;
-            }
-            catch (Exception ex)
-            {
-                diagnostics = AppendDiagnostic(diagnostics, $"Size lookup failed: {ex.Message}");
-            }
-        }
-
-        if (Ts4StructuredResourceMetadataExtractor.RequiresStructuredDescription(resource.Key.TypeName) &&
-            string.IsNullOrWhiteSpace(description))
-        {
-            try
-            {
-                var bytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(key, force, cancellationToken), cancellationToken).ConfigureAwait(false);
-                var structuredMetadata = Ts4StructuredResourceMetadataExtractor.Describe(resource.Key.TypeName, bytes.ToArray());
-                if (!string.IsNullOrWhiteSpace(structuredMetadata.SuggestedName) && string.IsNullOrWhiteSpace(name))
+                if (name is null)
                 {
-                    name = structuredMetadata.SuggestedName;
+                    try
+                    {
+                        name = await package.GetNameByKeyAsync(key, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics = AppendDiagnostic(diagnostics, $"Name lookup failed: {ex.Message}");
+                    }
                 }
 
-                if (!string.IsNullOrWhiteSpace(structuredMetadata.Description))
+                if (uncompressedSize is null)
                 {
-                    description = structuredMetadata.Description;
+                    try
+                    {
+                        uncompressedSize = await package.GetSizeAsync(key, cancellationToken).ConfigureAwait(false);
+                        compressedSize ??= uncompressedSize;
+                        isCompressed ??= false;
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics = AppendDiagnostic(diagnostics, $"Size lookup failed: {ex.Message}");
+                    }
                 }
 
-                if (!string.IsNullOrWhiteSpace(structuredMetadata.Diagnostic))
+                if (Ts4StructuredResourceMetadataExtractor.RequiresStructuredDescription(resource.Key.TypeName) &&
+                    string.IsNullOrWhiteSpace(description))
                 {
-                    diagnostics = AppendDiagnostic(diagnostics, $"{resource.Key.TypeName} parse: {structuredMetadata.Diagnostic}");
-                }
-            }
-            catch (Exception ex)
-            {
-                diagnostics = AppendDiagnostic(diagnostics, $"{resource.Key.TypeName} metadata parse failed: {ex.Message}");
-            }
-        }
+                    try
+                    {
+                        var bytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(key, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+                        var structuredMetadata = Ts4StructuredResourceMetadataExtractor.Describe(resource.Key.TypeName, bytes.ToArray());
+                        if (!string.IsNullOrWhiteSpace(structuredMetadata.SuggestedName) && string.IsNullOrWhiteSpace(name))
+                        {
+                            name = structuredMetadata.SuggestedName;
+                        }
 
-        return resource with
-        {
-            Name = name,
-            Description = description,
-            CompressedSize = compressedSize,
-            UncompressedSize = uncompressedSize,
-            IsCompressed = isCompressed,
-            Diagnostics = diagnostics
-        };
+                        if (!string.IsNullOrWhiteSpace(structuredMetadata.Description))
+                        {
+                            description = structuredMetadata.Description;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(structuredMetadata.Diagnostic))
+                        {
+                            diagnostics = AppendDiagnostic(diagnostics, $"{resource.Key.TypeName} parse: {structuredMetadata.Diagnostic}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics = AppendDiagnostic(diagnostics, $"{resource.Key.TypeName} metadata parse failed: {ex.Message}");
+                    }
+                }
+
+                return resource with
+                {
+                    Name = name,
+                    Description = description,
+                    CompressedSize = compressedSize,
+                    UncompressedSize = uncompressedSize,
+                    IsCompressed = isCompressed,
+                    Diagnostics = diagnostics
+                };
+            }).ConfigureAwait(false);
     }
 
     public async Task<byte[]> GetResourceBytesAsync(string packagePath, ResourceKeyRecord key, bool raw, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null)
     {
         progress?.Report(new ResourceReadProgress("Opening package...", 0.08));
-        await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
-        var llamaKey = ToLlamaKey(key);
-        progress?.Report(new ResourceReadProgress(raw ? "Reading raw resource bytes..." : "Reading resource bytes...", 0.35));
-        byte[] bytes = raw
-            ? await ReadWithDeletedFallbackAsync(force => package.GetRawAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false)
-            : await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
-        progress?.Report(new ResourceReadProgress("Resource bytes ready.", 1.0));
-        return bytes;
+        return await UseCachedPackageAsync(
+            packagePath,
+            cancellationToken,
+            async package =>
+            {
+                var llamaKey = ToLlamaKey(key);
+                progress?.Report(new ResourceReadProgress(raw ? "Reading raw resource bytes..." : "Reading resource bytes...", 0.35));
+                byte[] bytes = raw
+                    ? await ReadWithDeletedFallbackAsync(force => package.GetRawAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false)
+                    : await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                progress?.Report(new ResourceReadProgress("Resource bytes ready.", 1.0));
+                return bytes;
+            }).ConfigureAwait(false);
     }
 
     public async Task<string?> GetTextAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken)
     {
-        await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
-        var llamaKey = ToLlamaKey(key);
+        return await UseCachedPackageAsync(
+            packagePath,
+            cancellationToken,
+            async package =>
+            {
+                var llamaKey = ToLlamaKey(key);
 
-        try
-        {
-            var xml = await ReadWithDeletedFallbackAsync(force => package.GetXmlAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
-            return xml.ToString();
-        }
-        catch
-        {
-            try
-            {
-                return await ReadWithDeletedFallbackAsync(force => package.GetTextAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                return null;
-            }
-        }
+                try
+                {
+                    var xml = await ReadWithDeletedFallbackAsync(force => package.GetXmlAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+                    return xml.ToString();
+                }
+                catch
+                {
+                    try
+                    {
+                        return await ReadWithDeletedFallbackAsync(force => package.GetTextAsync(llamaKey, force, cancellationToken), cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                }
+            }).ConfigureAwait(false);
     }
 
     public async Task<byte[]?> GetTexturePngAsync(string packagePath, ResourceKeyRecord key, CancellationToken cancellationToken, IProgress<ResourceReadProgress>? progress = null)
     {
         progress?.Report(new ResourceReadProgress("Opening package...", 0.08));
-        await using var package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
-        var llamaKey = ToLlamaKey(key);
-
-        if (key.TypeName is nameof(ResourceType.PNGImage) or nameof(ResourceType.PNGImage2))
-        {
-            progress?.Report(new ResourceReadProgress("Reading PNG image bytes...", 0.35));
-            var bytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
-            progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
-            return bytes;
-        }
-
-        if (key.TypeName is nameof(ResourceType.BuyBuildThumbnail) or nameof(ResourceType.BodyPartThumbnail) or nameof(ResourceType.CASPartThumbnail))
-        {
-            progress?.Report(new ResourceReadProgress("Reading thumbnail bytes...", 0.35));
-            var bytes = await ReadWithDeletedFallbackAsync(force => package.GetTranslucentJpegAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
-            progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
-            return bytes;
-        }
-
-        if (ResourceTypeHints.IsDdsFamily(key.TypeName))
-        {
-            progress?.Report(new ResourceReadProgress("Reading DDS texture bytes...", 0.35));
-            try
+        return await UseCachedPackageAsync(
+            packagePath,
+            cancellationToken,
+            async package =>
             {
-                var bytes = await ReadWithDeletedFallbackAsync(force => package.GetDdsAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
-                progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
-                return bytes;
-            }
-            catch (Exception) when (key.TypeName is nameof(ResourceType.RLE2Image) or nameof(ResourceType.RLESImage))
-            {
-                progress?.Report(new ResourceReadProgress("Falling back to custom RLE texture decode...", 0.62));
-                var rawBytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
-                var pngBytes = Ts4RleTextureDecoder.DecodeToPng(rawBytes.ToArray());
-                progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
-                return pngBytes;
-            }
+                var llamaKey = ToLlamaKey(key);
+
+                if (key.TypeName is nameof(ResourceType.PNGImage) or nameof(ResourceType.PNGImage2))
+                {
+                    progress?.Report(new ResourceReadProgress("Reading PNG image bytes...", 0.35));
+                    var bytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                    progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+                    return bytes;
+                }
+
+                if (key.TypeName is nameof(ResourceType.BuyBuildThumbnail) or nameof(ResourceType.BodyPartThumbnail) or nameof(ResourceType.CASPartThumbnail))
+                {
+                    progress?.Report(new ResourceReadProgress("Reading thumbnail bytes...", 0.35));
+                    var bytes = await ReadWithDeletedFallbackAsync(force => package.GetTranslucentJpegAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                    progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+                    return bytes;
+                }
+
+                if (ResourceTypeHints.IsDdsFamily(key.TypeName))
+                {
+                    progress?.Report(new ResourceReadProgress("Reading DDS texture bytes...", 0.35));
+                    try
+                    {
+                        var bytes = await ReadWithDeletedFallbackAsync(force => package.GetDdsAsPngAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                        progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+                        return bytes;
+                    }
+                    catch (Exception) when (key.TypeName is nameof(ResourceType.RLE2Image) or nameof(ResourceType.RLESImage))
+                    {
+                        progress?.Report(new ResourceReadProgress("Falling back to custom RLE texture decode...", 0.62));
+                        var rawBytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                        var pngBytes = Ts4RleTextureDecoder.DecodeToPng(rawBytes.ToArray());
+                        progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+                        return pngBytes;
+                    }
+                }
+
+                progress?.Report(new ResourceReadProgress("Texture type is not previewable as PNG.", 1.0));
+                return null;
+            }).ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var handle in packageCache.Values)
+        {
+            await handle.DisposeAsync().ConfigureAwait(false);
         }
 
-        progress?.Report(new ResourceReadProgress("Texture type is not previewable as PNG.", 1.0));
-        return null;
+        packageCache.Clear();
     }
 
     private static async Task<byte[]> ReadWithDeletedFallbackAsync(
@@ -397,6 +428,30 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
     private static bool LooksLikeDeletedResource(Exception ex) =>
         ex.Message.Contains("marked as deleted", StringComparison.OrdinalIgnoreCase);
 
+    private async Task<T> UseCachedPackageAsync<T>(
+        string packagePath,
+        CancellationToken cancellationToken,
+        Func<DataBasePackedFile, Task<T>> action)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packagePath);
+        ArgumentNullException.ThrowIfNull(action);
+
+        var handle = packageCache.GetOrAdd(
+            packagePath,
+            static path => new CachedPackageHandle(path));
+
+        await handle.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await handle.EnsureOpenAsync(cancellationToken).ConfigureAwait(false);
+            return await action(handle.Package!).ConfigureAwait(false);
+        }
+        finally
+        {
+            handle.Gate.Release();
+        }
+    }
+
     private static async Task<DataBasePackedFile> OpenPackageAsync(string packagePath, CancellationToken cancellationToken)
     {
         try
@@ -416,6 +471,51 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService
             throw new IOException(
                 $"Failed to open package '{packagePath}'. If The Sims 4 is running, close it and try again. Original error: {ex.Message}",
                 ex);
+        }
+    }
+
+    private sealed class CachedPackageHandle(string packagePath) : IAsyncDisposable
+    {
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+        public DataBasePackedFile? Package { get; private set; }
+        private DateTime lastWriteTimeUtc;
+
+        public async Task EnsureOpenAsync(CancellationToken cancellationToken)
+        {
+            var currentWriteTimeUtc = File.Exists(packagePath)
+                ? File.GetLastWriteTimeUtc(packagePath)
+                : DateTime.MinValue;
+            if (Package is not null && currentWriteTimeUtc == lastWriteTimeUtc)
+            {
+                return;
+            }
+
+            if (Package is not null)
+            {
+                await Package.DisposeAsync().ConfigureAwait(false);
+                Package = null;
+            }
+
+            Package = await OpenPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
+            lastWriteTimeUtc = currentWriteTimeUtc;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (Package is not null)
+                {
+                    await Package.DisposeAsync().ConfigureAwait(false);
+                    Package = null;
+                }
+            }
+            finally
+            {
+                Gate.Release();
+                Gate.Dispose();
+            }
         }
     }
 }

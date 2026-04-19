@@ -1,13 +1,171 @@
 using System.Globalization;
+using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.Packages;
 
 public sealed record StructuredResourceMetadata(string? Description, string? SuggestedName = null, string? Diagnostic = null);
 
+public sealed record Ts4RegionMapEntry(
+    uint RegionValue,
+    string RegionLabel,
+    float LayerValue,
+    bool IsReplacement,
+    IReadOnlyList<ResourceKeyRecord> LinkedKeys);
+
+public sealed record Ts4RegionMap(
+    uint ContextVersion,
+    uint Version,
+    int PublicKeyCount,
+    int ExternalKeyCount,
+    int DelayLoadKeyCount,
+    IReadOnlyList<Ts4RegionMapEntry> Entries);
+
+public sealed record Ts4SkintoneOverlay(
+    uint TypeValue,
+    ulong TextureInstance);
+
+public sealed record Ts4Skintone(
+    uint Version,
+    ulong BaseTextureInstance,
+    IReadOnlyList<Ts4SkintoneOverlay> OverlayTextures,
+    uint Colorize,
+    uint OverlayOpacity,
+    int TagCount,
+    float MakeupOpacity,
+    IReadOnlyList<uint> SwatchColors,
+    float DisplayIndex,
+    float? MakeupOpacity2);
+
 public static class Ts4StructuredResourceMetadataExtractor
 {
     public static bool RequiresStructuredDescription(string typeName) =>
         typeName is "CASPreset" or "RegionMap" or "Skintone";
+
+    public static Ts4RegionMap ParseRegionMap(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var reader = new BinaryReader(stream);
+
+        var contextVersion = reader.ReadUInt32();
+        if (contextVersion != 3)
+        {
+            throw new InvalidDataException($"Unsupported RegionMap context version {contextVersion}.");
+        }
+
+        var publicKeyCount = reader.ReadUInt32();
+        var externalKeyCount = reader.ReadUInt32();
+        var delayLoadKeyCount = reader.ReadUInt32();
+        var objectCount = reader.ReadUInt32();
+        if (objectCount < publicKeyCount)
+        {
+            throw new InvalidDataException("RegionMap object count is smaller than the public key count.");
+        }
+
+        SkipBytes(stream, publicKeyCount * 16L, "RegionMap public key table");
+        SkipBytes(stream, (objectCount - publicKeyCount) * 16L, "RegionMap private key table");
+        SkipBytes(stream, externalKeyCount * 16L, "RegionMap external key table");
+        SkipBytes(stream, delayLoadKeyCount * 16L, "RegionMap delay-load key table");
+        SkipBytes(stream, objectCount * 8L, "RegionMap object-data table");
+
+        var version = reader.ReadUInt32();
+        if (version != 1)
+        {
+            throw new InvalidDataException($"Unsupported RegionMap version {version}.");
+        }
+
+        var entryCount = reader.ReadUInt32();
+        var entries = new List<Ts4RegionMapEntry>(checked((int)entryCount));
+        for (var index = 0; index < entryCount; index++)
+        {
+            var regionValue = reader.ReadUInt32();
+            var layerValue = reader.ReadSingle();
+            var isReplacement = reader.ReadByte() != 0;
+            var keyCount = reader.ReadUInt32();
+            var linkedKeys = new List<ResourceKeyRecord>(checked((int)keyCount));
+            for (var keyIndex = 0; keyIndex < keyCount; keyIndex++)
+            {
+                var type = reader.ReadUInt32();
+                var group = reader.ReadUInt32();
+                var instance = reader.ReadUInt64();
+                linkedKeys.Add(new ResourceKeyRecord(type, group, instance, $"0x{type:X8}"));
+            }
+
+            entries.Add(new Ts4RegionMapEntry(
+                regionValue,
+                FormatCasPartRegion(regionValue),
+                layerValue,
+                isReplacement,
+                linkedKeys));
+        }
+
+        return new Ts4RegionMap(
+            contextVersion,
+            version,
+            checked((int)publicKeyCount),
+            checked((int)externalKeyCount),
+            checked((int)delayLoadKeyCount),
+            entries);
+    }
+
+    public static Ts4Skintone ParseSkintone(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var reader = new BinaryReader(stream);
+
+        var version = reader.ReadUInt32();
+        if (version != 6)
+        {
+            throw new InvalidDataException($"Unsupported Skintone version {version}.");
+        }
+
+        var textureInstance = reader.ReadUInt64();
+        var overlayTextureCount = reader.ReadUInt32();
+        var overlays = new List<Ts4SkintoneOverlay>(checked((int)overlayTextureCount));
+        for (var index = 0; index < overlayTextureCount; index++)
+        {
+            overlays.Add(new Ts4SkintoneOverlay(
+                reader.ReadUInt32(),
+                reader.ReadUInt64()));
+        }
+
+        var colorize = reader.ReadUInt32();
+        var overlayOpacity = reader.ReadUInt32();
+        var tagCount = reader.ReadUInt32();
+        for (var index = 0; index < tagCount; index++)
+        {
+            _ = reader.ReadUInt16();
+            _ = reader.ReadUInt16();
+        }
+
+        var makeupOpacity = reader.ReadSingle();
+        var swatchColorCount = reader.ReadByte();
+        var swatchColors = new uint[swatchColorCount];
+        for (var index = 0; index < swatchColorCount; index++)
+        {
+            swatchColors[index] = reader.ReadUInt32();
+        }
+
+        var displayIndex = reader.ReadSingle();
+        var makeupOpacity2 = stream.Position + 4 <= stream.Length
+            ? reader.ReadSingle()
+            : (float?)null;
+
+        return new Ts4Skintone(
+            version,
+            textureInstance,
+            overlays,
+            colorize,
+            overlayOpacity,
+            checked((int)tagCount),
+            makeupOpacity,
+            swatchColors,
+            displayIndex,
+            makeupOpacity2);
+    }
 
     public static StructuredResourceMetadata Describe(string typeName, byte[] bytes)
     {
@@ -154,71 +312,24 @@ public static class Ts4StructuredResourceMetadataExtractor
 
     private static StructuredResourceMetadata DescribeRegionMap(byte[] bytes)
     {
-        using var stream = new MemoryStream(bytes, writable: false);
-        using var reader = new BinaryReader(stream);
-
-        var contextVersion = reader.ReadUInt32();
-        if (contextVersion != 3)
-        {
-            throw new InvalidDataException($"Unsupported RegionMap context version {contextVersion}.");
-        }
-
-        var publicKeyCount = reader.ReadUInt32();
-        var externalKeyCount = reader.ReadUInt32();
-        var delayLoadKeyCount = reader.ReadUInt32();
-        var objectCount = reader.ReadUInt32();
-        if (objectCount < publicKeyCount)
-        {
-            throw new InvalidDataException("RegionMap object count is smaller than the public key count.");
-        }
-
-        SkipBytes(stream, publicKeyCount * 16L, "RegionMap public key table");
-        SkipBytes(stream, (objectCount - publicKeyCount) * 16L, "RegionMap private key table");
-        SkipBytes(stream, externalKeyCount * 16L, "RegionMap external key table");
-        SkipBytes(stream, delayLoadKeyCount * 16L, "RegionMap delay-load key table");
-        SkipBytes(stream, objectCount * 8L, "RegionMap object-data table");
-
-        var version = reader.ReadUInt32();
-        if (version != 1)
-        {
-            throw new InvalidDataException($"Unsupported RegionMap version {version}.");
-        }
-
-        var entryCount = reader.ReadUInt32();
-        var replacementEntries = 0;
-        var totalLinkedKeys = 0;
-        var regionNames = new List<string>();
-        for (var index = 0; index < entryCount; index++)
-        {
-            var region = reader.ReadUInt32();
-            _ = reader.ReadSingle();
-            var isReplacement = reader.ReadByte() != 0;
-            var keyCount = reader.ReadUInt32();
-            SkipBytes(stream, keyCount * 16L, "RegionMap entry key list");
-
-            if (isReplacement)
-            {
-                replacementEntries++;
-            }
-
-            totalLinkedKeys += checked((int)keyCount);
-            regionNames.Add(FormatCasPartRegion(region));
-        }
-
-        var distinctRegions = regionNames
+        var regionMap = ParseRegionMap(bytes);
+        var replacementEntries = regionMap.Entries.Count(static entry => entry.IsReplacement);
+        var totalLinkedKeys = regionMap.Entries.Sum(static entry => entry.LinkedKeys.Count);
+        var distinctRegions = regionMap.Entries
+            .Select(static entry => entry.RegionLabel)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(static value => value, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         var parts = new List<string>
         {
-            $"Region map v{version}",
-            $"entries={entryCount}",
+            $"Region map v{regionMap.Version}",
+            $"entries={regionMap.Entries.Count}",
             $"replacementEntries={replacementEntries}",
             $"linkedKeys={totalLinkedKeys}",
-            $"publicKeys={publicKeyCount}",
-            $"externalKeys={externalKeyCount}",
-            $"delayLoadKeys={delayLoadKeyCount}",
+            $"publicKeys={regionMap.PublicKeyCount}",
+            $"externalKeys={regionMap.ExternalKeyCount}",
+            $"delayLoadKeys={regionMap.DelayLoadKeyCount}",
             $"regions={FormatList(distinctRegions, 6)}"
         };
 
@@ -227,66 +338,29 @@ public static class Ts4StructuredResourceMetadataExtractor
 
     private static StructuredResourceMetadata DescribeSkintone(byte[] bytes)
     {
-        using var stream = new MemoryStream(bytes, writable: false);
-        using var reader = new BinaryReader(stream);
-
-        var version = reader.ReadUInt32();
-        if (version != 6)
-        {
-            throw new InvalidDataException($"Unsupported Skintone version {version}.");
-        }
-
-        var textureInstance = reader.ReadUInt64();
-        var overlayTextureCount = reader.ReadUInt32();
-        for (var index = 0; index < overlayTextureCount; index++)
-        {
-            _ = reader.ReadUInt32();
-            _ = reader.ReadUInt64();
-        }
-
-        var colorize = reader.ReadUInt32();
-        var overlayOpacity = reader.ReadUInt32();
-        var tagCount = reader.ReadUInt32();
-        for (var index = 0; index < tagCount; index++)
-        {
-            _ = reader.ReadUInt16();
-            _ = reader.ReadUInt16();
-        }
-
-        var makeupOpacity = reader.ReadSingle();
-        var swatchColorCount = reader.ReadByte();
-        var swatchColors = new uint[swatchColorCount];
-        for (var index = 0; index < swatchColorCount; index++)
-        {
-            swatchColors[index] = reader.ReadUInt32();
-        }
-
-        var displayIndex = reader.ReadSingle();
-        var makeupOpacity2 = stream.Position + 4 <= stream.Length
-            ? reader.ReadSingle()
-            : (float?)null;
+        var skintone = ParseSkintone(bytes);
 
         var parts = new List<string>
         {
-            $"Skintone v{version}",
-            $"baseTexture=0x{textureInstance:X16}",
-            $"overlays={overlayTextureCount}",
-            $"tags={tagCount}",
-            $"swatches={swatchColorCount}",
-            $"displayIndex={displayIndex.ToString("0.###", CultureInfo.InvariantCulture)}",
-            $"makeupOpacity={makeupOpacity.ToString("0.###", CultureInfo.InvariantCulture)}",
-            $"overlayOpacity={overlayOpacity}",
-            $"colorize=0x{colorize:X8}"
+            $"Skintone v{skintone.Version}",
+            $"baseTexture=0x{skintone.BaseTextureInstance:X16}",
+            $"overlays={skintone.OverlayTextures.Count}",
+            $"tags={skintone.TagCount}",
+            $"swatches={skintone.SwatchColors.Count}",
+            $"displayIndex={skintone.DisplayIndex.ToString("0.###", CultureInfo.InvariantCulture)}",
+            $"makeupOpacity={skintone.MakeupOpacity.ToString("0.###", CultureInfo.InvariantCulture)}",
+            $"overlayOpacity={skintone.OverlayOpacity}",
+            $"colorize=0x{skintone.Colorize:X8}"
         };
 
-        if (makeupOpacity2.HasValue)
+        if (skintone.MakeupOpacity2.HasValue)
         {
-            parts.Add($"makeupOpacity2={makeupOpacity2.Value.ToString("0.###", CultureInfo.InvariantCulture)}");
+            parts.Add($"makeupOpacity2={skintone.MakeupOpacity2.Value.ToString("0.###", CultureInfo.InvariantCulture)}");
         }
 
-        if (swatchColors.Length > 0)
+        if (skintone.SwatchColors.Count > 0)
         {
-            parts.Add($"swatchColors={FormatList(swatchColors.Select(static color => $"#{color:X8}"), 4)}");
+            parts.Add($"swatchColors={FormatList(skintone.SwatchColors.Select(static color => $"#{color:X8}"), 4)}");
         }
 
         return new StructuredResourceMetadata(string.Join(" | ", parts));

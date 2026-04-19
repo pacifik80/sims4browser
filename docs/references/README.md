@@ -29,3 +29,5 @@ These external snapshots are local working material. They may be ignored by Git 
 ## Placement Rule
 
 If a research artifact is still useful beyond one session, move it here or distill it into a normal doc under `docs/`. Do not leave durable reference material in root, `.tmp_*`, or `tmp/`.
+
+For the shared Sims 4 material/texture/shader/UV contract, the normative repo guide now lives in [../shared-ts4-material-texture-pipeline.md](../shared-ts4-material-texture-pipeline.md). Use `references/` as supporting evidence and detailed backup material, not as the first entry point.

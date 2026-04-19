@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.Preview;
@@ -76,31 +77,40 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     public async Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var stopwatch = Stopwatch.StartNew();
         ReportProgress(progress, "Resolving scene root...", 0.02);
 
+        SceneBuildResult result;
         if (resource.Key.TypeName is not ("Model" or "ModelLOD" or "Geometry"))
         {
-            return new SceneBuildResult(
+            result = new SceneBuildResult(
                 false,
                 null,
                 [$"Scene reconstruction is currently supported for Model, ModelLOD, and skinned Geometry roots only. Selected type: {resource.Key.TypeName}."],
                 SceneBuildStatus.Unsupported);
         }
-
-        try
+        else
         {
-            return resource.Key.TypeName switch
+            try
             {
-                "Model" => await BuildModelSceneAsync(resource, cancellationToken, progress),
-                "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken, progress),
-                "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken, progress),
-                _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."], SceneBuildStatus.Unsupported)
-            };
+                result = resource.Key.TypeName switch
+                {
+                    "Model" => await BuildModelSceneAsync(resource, cancellationToken, progress),
+                    "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken, progress),
+                    "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken, progress),
+                    _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."], SceneBuildStatus.Unsupported)
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new SceneBuildResult(false, null, [$"Scene reconstruction failed for {resource.Key.FullTgi}: {ex.Message}"], SceneBuildStatus.Unsupported);
+            }
         }
-        catch (Exception ex)
+
+        return result with
         {
-            return new SceneBuildResult(false, null, [$"Scene reconstruction failed for {resource.Key.FullTgi}: {ex.Message}"], SceneBuildStatus.Unsupported);
-        }
+            Diagnostics = [.. result.Diagnostics, $"Scene build timings: total {stopwatch.Elapsed.TotalMilliseconds:0} ms."]
+        };
     }
 
     private async Task<SceneBuildResult> BuildModelSceneAsync(ResourceMetadata modelResource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress)
@@ -1655,8 +1665,71 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata ownerResource,
         Dictionary<string, CanonicalTexture?> textureCache,
         CancellationToken cancellationToken,
-        List<string>? diagnostics = null)
+        List<string>? diagnostics = null,
+        IReadOnlyList<ResourceMetadata>? preferredTextureResources = null)
     {
+        var explicitTextureCandidates = preferredTextureResources?
+            .Where(static resource => IsTextureType(resource.Key.TypeName))
+            .GroupBy(static resource => $"{resource.PackagePath}|{resource.Key.FullTgi}", StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .OrderBy(static resource => resource.Key.TypeName == "BuyBuildThumbnail" ? 1 : 0)
+            .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
+            .ToList()
+            ?? [];
+        if (explicitTextureCandidates.Count > 0)
+        {
+            var explicitTextures = new List<CanonicalTexture>(explicitTextureCandidates.Count);
+            foreach (var candidate in explicitTextureCandidates)
+            {
+                var cacheKey = $"{candidate.PackagePath}|{candidate.Key.FullTgi}";
+                if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
+                {
+                    try
+                    {
+                        var pngBytes = await resourceCatalogService.GetTexturePngAsync(candidate.PackagePath, candidate.Key, cancellationToken).ConfigureAwait(false);
+                        cachedTexture = pngBytes is null
+                            ? null
+                            : new CanonicalTexture(
+                                explicitTextures.Count == 0 ? "diffuse" : $"extra_{explicitTextures.Count}",
+                                BuildTextureFileName(explicitTextures.Count == 0 ? "diffuse" : $"extra_{explicitTextures.Count}", new Ts4ResourceKey(candidate.Key.Type, candidate.Key.Group, candidate.Key.FullInstance)),
+                                pngBytes,
+                                candidate.Key,
+                                candidate.PackagePath,
+                                explicitTextures.Count == 0 ? CanonicalTextureSemantic.BaseColor : CanonicalTextureSemantic.Unknown,
+                                candidate.PackagePath.Equals(ownerResource.PackagePath, StringComparison.OrdinalIgnoreCase)
+                                    ? CanonicalTextureSourceKind.ExplicitLocal
+                                    : CanonicalTextureSourceKind.ExplicitIndexed);
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics?.Add($"Skipped CAS-linked texture {candidate.Key.FullTgi} from {Path.GetFileName(candidate.PackagePath)}: {ex.Message}");
+                        cachedTexture = null;
+                    }
+
+                    textureCache[cacheKey] = cachedTexture;
+                }
+
+                if (cachedTexture is not null)
+                {
+                    var slot = explicitTextures.Count == 0 ? "diffuse" : $"extra_{explicitTextures.Count}";
+                    explicitTextures.Add(cachedTexture with
+                    {
+                        Slot = slot,
+                        Semantic = explicitTextures.Count == 0 ? CanonicalTextureSemantic.BaseColor : CanonicalTextureSemantic.Unknown,
+                        SourceKind = candidate.PackagePath.Equals(ownerResource.PackagePath, StringComparison.OrdinalIgnoreCase)
+                            ? CanonicalTextureSourceKind.ExplicitLocal
+                            : CanonicalTextureSourceKind.ExplicitIndexed
+                    });
+                }
+            }
+
+            if (explicitTextures.Count > 0)
+            {
+                diagnostics?.Add($"Resolved {explicitTextures.Count:N0} CAS-linked texture candidate(s) before same-instance fallback.");
+                return explicitTextures;
+            }
+        }
+
         var packageResources = await GetPackageInstanceResourcesAsync(ownerResource.PackagePath, ownerResource.Key.FullInstance, cancellationToken).ConfigureAwait(false);
         var textureCandidates = packageResources
             .Where(resource => resource.Key.FullInstance == ownerResource.Key.FullInstance && IsTextureType(resource.Key.TypeName))
@@ -1703,7 +1776,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         var results = new List<CanonicalTexture>(textureCandidates.Count);
         foreach (var candidate in textureCandidates)
         {
-            var cacheKey = candidate.Key.FullTgi;
+            var cacheKey = $"{candidate.PackagePath}|{candidate.Key.FullTgi}";
             if (!textureCache.TryGetValue(cacheKey, out var cachedTexture))
             {
                 try
@@ -1898,6 +1971,77 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         ReportProgress(progress, $"Building {label}: no portable {textureLabel} found.", LerpProgress(start, end, 0.96));
         return null;
+    }
+
+    private async Task<CanonicalTexture?> TryResolveManifestTextureAsync(
+        MaterialTextureEntry manifestTexture,
+        IReadOnlyList<ResourceMetadata>? preferredTextureResources,
+        Dictionary<string, CanonicalTexture?> textureCache,
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress = null,
+        double start = 0d,
+        double end = 0d,
+        string label = "material")
+    {
+        if (manifestTexture.SourceKey is null)
+        {
+            return null;
+        }
+
+        var cacheKey = $"manifest|{manifestTexture.SourcePackagePath}|{manifestTexture.SourceKey.FullTgi}|{manifestTexture.Slot}";
+        if (textureCache.TryGetValue(cacheKey, out var cachedTexture))
+        {
+            return cachedTexture;
+        }
+
+        ResourceMetadata? resource = preferredTextureResources?.FirstOrDefault(candidate =>
+            candidate.Key.FullTgi.Equals(manifestTexture.SourceKey.FullTgi, StringComparison.OrdinalIgnoreCase) &&
+            (manifestTexture.SourcePackagePath is null ||
+             candidate.PackagePath.Equals(manifestTexture.SourcePackagePath, StringComparison.OrdinalIgnoreCase)));
+
+        if (resource is null && !string.IsNullOrWhiteSpace(manifestTexture.SourcePackagePath))
+        {
+            resource = await indexStore.GetResourceByTgiAsync(
+                manifestTexture.SourcePackagePath,
+                manifestTexture.SourceKey.FullTgi,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        resource ??= (await indexStore.GetResourcesByTgiAsync(manifestTexture.SourceKey.FullTgi, cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(candidate => manifestTexture.SourcePackagePath is null ||
+                                         candidate.PackagePath.Equals(manifestTexture.SourcePackagePath, StringComparison.OrdinalIgnoreCase));
+
+        if (resource is null)
+        {
+            textureCache[cacheKey] = null;
+            return null;
+        }
+
+        var resolvedTexture = await TryDecodeTextureAsync(
+            resource.PackagePath,
+            resource.Key,
+            manifestTexture.Slot,
+            manifestTexture.Semantic,
+            manifestTexture.SourceKind,
+            cancellationToken,
+            progress,
+            start,
+            end,
+            $"{label}: manifest {manifestTexture.Slot}").ConfigureAwait(false);
+        if (resolvedTexture is not null)
+        {
+            resolvedTexture = resolvedTexture with
+            {
+                Slot = manifestTexture.Slot,
+                Semantic = manifestTexture.Semantic,
+                SourceKey = manifestTexture.SourceKey,
+                SourcePackagePath = resource.PackagePath,
+                SourceKind = manifestTexture.SourceKind
+            };
+        }
+
+        textureCache[cacheKey] = resolvedTexture;
+        return resolvedTexture;
     }
 
     private static IEnumerable<string> EnumerateCompanionPackagePaths(string packagePath)

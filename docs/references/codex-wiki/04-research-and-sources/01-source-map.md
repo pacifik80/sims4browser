@@ -16,6 +16,10 @@
 
    Это лучший общий reference hub для формата и high-level ролей ресурсов.
 
+   Особенно полезно для текущей общей material/texture задачи:
+   - Resource Type Index
+   - File Types
+
 2. **LlamaLogic.Packages**
    - современный .NET API docs
    - хорошие remarks про lazy loading, names, thread safety, decompression
@@ -54,12 +58,321 @@
    - не нужен как primary source для raw package browsing
    - очень важен для full character/export задач
 
+### Level D.5 — community creator knowledge
+Использовать как practical guidance, но не как binary spec.
+
+8. **Sims 4 Studio forum / release notes**
+   - полезно для CAS atlas practice, `uv_1`, `ColorShiftMask`, creator-visible overlap failures
+   - хорошо показывает реальные invariants и failure modes
+   - не должен подменять format spec
+
+9. **Creator forum posts on Mod The Sims**
+   - полезны как bridge между file formats и observed in-game behavior
+   - лучше использовать вместе с spec/reference pages, а не отдельно
+
 ### Level E — official EA material
 Полезен, но по другой теме.
 
-8. **Official EA / EA Forums modding posts**
+10. **Official EA / EA Forums modding posts**
    - в найденных материалах в основном про Python script mods и code changes for modders
    - не являются полным официальным DBPF/package spec
+
+## Material / render pipeline source pack
+
+Companion docs created from this source pack:
+
+- [Shared TS4 Material, Texture, And UV Pipeline](../../../shared-ts4-material-texture-pipeline.md)
+- [CAS/Sim Material Authority Matrix](../../../workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+
+Для общей темы `BuildBuy/CAS/Sim` render pipeline полезно заранее разделять источники не только по trust level, но и по тому, какой кусок пайплайна они реально подтверждают.
+
+### A. Resource identity and high-level roles
+
+Использовать для ответа на вопрос "какой ресурс за что отвечает":
+
+- `The Sims 4 Modders Reference / Resource Type Index`
+- `The Sims 4 Modders Reference / File Types`
+
+Что они хорошо подтверждают:
+
+- type ids
+- high-level роли `CAS Part`, `Skintone`, `Region Map`, `Geometry`, `Model`, `Model LOD`, `Material Definition`, `Material Set`
+- разделение `Build Mode` и `Create-A-Sim` как разных discovery domains
+- `Object Definition` как swatch-level Build/Buy linkage record
+- `Light` как отдельную resource family, а не просто material slot
+
+Чего они не дают полностью:
+
+- полный shader-family registry
+- полный порядок runtime compositing
+- точную authority order между `CASP`, `GEOM/MTNF`, `MATD`, `MTST`, `Skintone`, `RegionMap`
+
+### B. Chunk-level mesh and material linkage
+
+Использовать для ответа на вопрос "как именно mesh group связан с material/vertex data":
+
+- `MTS / Sims_4:RCOL`
+- `MTS / Sims_4:0x01D10F34` (`MLOD`)
+- `MTS / Sims_4:0x015A1849` (`GEOM`)
+- `MTS / Sims_4:0xC0DB5AE7` (`Object Definition`)
+- `MTS / Sims_4:0x03B4C61D` (`LITE`)
+- `EA forum thread` on `Object Definition` vs object definition cross-references
+
+Что они хорошо подтверждают:
+
+- `MLOD -> VRTF/VBUF/IBUF/SKIN/MATD or MTST`
+- `GEOM` как body geometry container
+- embedded `MTNF`
+- multi-UV and vertex-layout reality
+- базовый Build/Buy authority order: `Object Definition -> Model/Model LOD -> Material Set -> Material Definition`
+- `LITE` как отдельную light/emitter ветку рядом с surface-material chain
+
+Чего они не дают полностью:
+
+- все современные TS4 shader families
+- все CAS and Sim compositing rules
+- полный TS4-specific `VPXY` writeup
+
+### C. CAS field-level routing and modern character material inputs
+
+Использовать для ответа на вопрос "какие реальные material-relevant поля есть у `CASP` и `Skintone`":
+
+- local `Binary-Templates`
+- local `TS4SimRipper`
+- `Sims 4 Studio` release notes and creator guidance
+
+Что они хорошо подтверждают:
+
+- `CASP` diffuse/shadow/region/normal/specular/emission/mask fields
+- `SharedUVMapSpace` как code-backed field name
+- `ColorShiftMask`
+- `Skintone` base + overlay + opacity/colorize fields
+- creator-visible shared CAS atlas behavior
+- body-type slot semantics: one active part per body-type slot, with `Full Body` versus `Upper/Lower Body` incompatibility documented in creator-facing references
+- `SimModifier` / `DeformerMap` / `HotSpotControl` resource families and their relevance to the full CAS editing/morph branch
+- code-backed DMap application to `GEOM` with `UV1`
+- a first bounded `CAS/Sim` material-input graph:
+  - selected `CASP` + linked `GEOM`
+  - embedded `MTNF` when present
+  - `MATD/MTST` material-definition path when present
+  - `CASP` field-routing path
+  - `RegionMap` / `SharedUVMapSpace` / `CompositionMethod` / `SortLayer`
+  - Sim-only `Skintone` routing/compositing layer
+- a first bounded `CAS/Sim` family split:
+  - torso/body shell families
+  - separate head shell family
+  - footwear overlay family
+  - separate hair/accessory slot families
+  - compositor-driven overlay/detail families
+- stronger worn-slot authority boundaries in current repo code:
+  - `Hair` and `Accessory` use exact-part-link slot resolution before compatibility fallback
+  - `Shoes` remain overlay/body-assembly content, not shell identity
+  - resolved `GEOM` can bring cross-package companion `Rig` / `MaterialDefinition` / texture resources
+  - scene build prefers explicit material-definition decoding before manifest approximation when those resources exist
+- stronger shell-family authority boundaries in current repo code:
+  - shell filtering is applied only to shell labels
+  - default/nude shell preference uses `nakedLink` / `defaultBodyType` facts rather than only name heuristics
+  - exact human shell candidates can be withheld until a real default/nude shell is found
+  - head shell stays a separate contribution on top of the body shell anchor
+  - skintone targeting is currently scoped to body/head shell batches
+  - parsed `CASP` texture refs and `region_map` are eagerly resolved before scene build, so shell families already have a field-routed material floor even when no explicit `MaterialDefinition` is present
+  - explicit companion `MaterialDefinition` resources can still upgrade shell materials when geometry companions expose them
+  - explicit shell `MaterialDefinition` evidence is currently asymmetric: strong for generic CAS and worn-slot scene-build fixtures, partial for shell-specific end-to-end graph/scene fixtures, but already proven at the composer-level shell merge seam
+  - current shell fixtures still frequently materialize as shell-scoped `ApproximateCas`, so explicit `MATD` is a supported upgrade path, not yet a proven universal shell prerequisite
+  - `MTNF` is strongly confirmed as a real embedded `GEOM` material carrier by external references, but current repo GEOM parsing still skips the embedded payload and current shell fixtures barely exercise it
+  - the bundled local `TS4SimRipper` body/head/waist sample corpus gives a first prevalence hint: `9/9` sampled shell-like `.simgeom` resources in that snapshot contain `MTNF`
+  - that first local sample hint is now also split into a small matrix: `Body 4/4`, `Head 4/4`, `Waist 1/1`
+  - modern TS4 creator-tooling evidence also supports `MTNF` as behaviorally relevant payload: incorrect MTNF shader-size handling is documented as causing save/game issues for `GEOM`s
+  - TS4 creator-facing shader practice also supports preserving `GEOM`-side shader identity in the authority model: `SimGlass`, `SimSkin`, `SimEyes`, and `SimAlphaBlended` are all treated as practical mesh/shader choices with visible behavior differences
+  - local external `TS4SimRipper` code strengthens that further: `SimGlass` meshes are tracked/exported as a separate glass path, while unknown mesh shaders fall back to `SimSkin`
+  - local precompiled shader corpus adds a first relative-weight hint: `simskin` / `SimSkinMask` look core in the current snapshot, while `SimGlass` looks real but narrow
+  - this is now strong enough for a first implementation-priority split in the docs: `SimSkin`/`SimSkinMask` as core-family work first, `SimGlass` as edge-but-real, and `SimEyes`/`SimAlphaBlended` as preserved special provenance
+  - this priority split is still explicitly inference-backed for planning, not a claim that local corpus prevalence equals full in-game frequency
+  - the current guide now also narrows the `P1` packet internally: `SimSkin` is the safe baseline `GEOM`-side skin family seam, while `SimSkinMask` is better treated as an adjacent auxiliary skin-family signal until stronger live-asset proof shows a standalone authority branch
+  - that narrower split is supported by a mixed evidence packet: repeated parameter-level `SimSkinMask` entries in the local precompiled snapshot, `SimSkinMask` co-presence with skin-adjacent params in the local inventory snapshot, and the absence of an equally explicit external code branch comparable to `SimGlass`
+  - local repo code now also supports the same bounded reading indirectly: current CAS graphs still resolve explicit `CASP` texture refs and geometry companions into `ApproximateCasMaterial`, skintone routing stays region-map-aware `ApproximateCas` application data, and viewport code treats `mask` as generic slot vocabulary rather than a dedicated `SimSkinMask` authority root
+  - bundled local sample geometries now add the first direct sample-asset anchor for `SimSkin`: the `TS4SimRipper` body/head/waist `.simgeom` resources currently check `9/9` for shader hash `0x548394B9`
+  - that same local sample packet currently still does not provide a peer asset-level `SimSkinMask` branch, which strengthens the reading that `SimSkinMask` is not yet proven as a standalone geometry family
+  - external creator/tooling guidance around skin masks also points in the same direction: current TS4 mask usage is better described as overlay/skin-detail or skintone-adjacent semantics than as a separate `GEOM` shader branch
+  - the current local negative finding is now tighter too: an exact code sweep across the current repo render/composition paths plus bundled external tool code checked in-repo still does not surface a named `SimSkinMask` authority/export branch, while `SimSkin` and `SimGlass` are explicitly named
+  - creator tooling now corroborates that reading from the other side as well: `TS4 Skininator`, `TS4 Skin Converter`, and recent `Sims 4 Studio` notes all keep mask-bearing skin content inside skintone/overlay/image workflows rather than surfacing a peer `SimSkinMask` geometry family
+  - a wider workspace sweep still does not surface a broader local live/sample corpus for `SimSkinMask`: outside the mirrored `TS4SimRipper` resources, no extra `.simgeom` packet in the current repo snapshot exposes a peer branch
+  - the broader mainstream toolchain packet checked for this pass still points the same way: `TS4CASTools`, `TS4SimRipper`, `Skininator`, and `Sims 4 Studio` expose `SimSkin`, `SimGlass`, `ColorShiftMask`, overlays, and burn-mask semantics, but not a peer named `SimSkinMask` geometry/export/import branch
+  - that dense `CAS/Sim` authority packet is now also split out into its own workflow doc so further family-by-family passes can stay local instead of bloating the main cross-domain guide
+
+Чего они не дают полностью:
+
+- не всегда formal binary spec
+- часть сведений остаётся tool-centric или community-centric
+- полная in-game shader stack для Sim skin всё ещё собрана не до конца
+
+### D. Community behavior proofs
+
+Использовать для ответа на вопрос "что реально ломается в живом creator workflow, если rule нарушена":
+
+- `Sims 4 Studio` forum threads about CAS UV map placement
+- release notes about `ColorShiftMask`, skin specularity, and newer CAS texture support
+- creator troubleshooting threads on `Mod The Sims`
+- `CAS Designer Toolkit` release notes:
+  - https://modthesims.info/d/694549
+
+Что они хорошо подтверждают:
+
+- общая CAS UV atlas space
+- bleed and overlap failure modes
+- значимость `uv_1`
+- значимость `ColorShiftMask` и похожих полей как реальной vocabulary, а не repo-local invention
+- практический смысл `CompositionMethod` и `SortLayer`
+- то, что более высокий `SortLayer` рисуется поверх меньшего
+- то, что `SharedUVMapSpace` влияет на normal/atlas behavior при смене body-part category
+- practical `CASHotSpotAtlas -> HotSpotControl -> SimModifier` behavior in creator-facing morph workflows
+- creator-facing body-type semantics for `Hair`, `Head`, `Full Body`, `Top`, `Bottom`, `Shoes`, and accessory-like slots
+- practical `CASP -> GEOM -> RegionMapKey` linkage expectations in mesh-edit workflows
+- creator-facing expectation that CAS body types are true slot identities rather than interchangeable material families
+- creator-facing expectation that default/nude CASP flags materially affect whether a part behaves like underwear/default body content
+- creator-facing expectation that `CASP` remains the part-level root when additional `GEOM` resources are attached through the `CASP` TGI list
+- creator-facing evidence that importing/exporting `MTNF` can materially affect CAS mesh behavior even outside formal format docs
+- TS4 creator-tooling changelogs now also support that malformed `MTNF` shader payloads are not benign metadata errors; they can affect saved/game-visible `GEOM` behavior
+- creator-facing evidence that family-specific GEOM shader choices like `SimGlass` and `SimEyes` change visible TS4 behavior and therefore should not be flattened away in documentation or IR design
+- local external code-backed evidence that some GEOM shader families are already treated as separate export/render branches, not just named flags
+- local corpus-backed evidence that shader-family prevalence is uneven and should influence prioritization: `SimSkin`-adjacent families appear much more heavily than `SimGlass` in the current precompiled snapshot
+
+Чего они не дают полностью:
+
+- точный engine-side runtime implementation
+- строгую spec authority
+
+### E. Local decoder-backed corpus evidence
+
+Использовать для ответа на вопрос "что именно уже видит и поддерживает текущий repo decoder":
+
+- local `tmp/precomp_shader_profiles.json`
+- local [ShaderProfileRegistry.cs](../../../../src/Sims4ResourceExplorer.Preview/ShaderProfileRegistry.cs)
+- local [MaterialDecoding.cs](../../../../src/Sims4ResourceExplorer.Preview/MaterialDecoding.cs)
+- local [MaterialCoverageMetrics.cs](../../../../src/Sims4ResourceExplorer.Preview/MaterialCoverageMetrics.cs)
+
+Что они хорошо подтверждают:
+
+- фактический local shader-profile corpus
+- normalized family buckets, которые уже использует repo decoder
+- текущие strategy buckets: `StandardSurface`, `ColorMap`, `AlphaCutout`, `SeasonalFoliage`, `Projective`, `SpecularEnvMap`, `StairRailings`, `Unknown/default`
+- текущие support tiers `StaticReady`, `Approximate`, `RuntimeDependent`
+- какие UV/compositor cases текущий preview already treats as static-ready vs approximation vs runtime-dependent
+- текущие slot-name normalization и UV-interpretation heuristics, которые уже живут в decoder code
+- current decoder family-specific fallback behavior, including `ShaderDayNightParameters` mapping `texture_1 -> emissive`, `texture_* -> overlay`, `SourceTexture -> diffuse`, and `routingMap -> alpha`
+- representative per-family slot/parameter tables for the current implementation baseline
+- first taxonomy split between family-local unresolved params and broad cross-family runtime/helper params
+- first edge-case family matrix and semantic priority queue for unresolved family-local params
+- first narrow `P1 target sheets` for `RefractionMap/tex1`, `ShaderDayNightParameters`, `NextFloorLightMapXform`, and `CASHotSpotAtlas`
+- stronger per-profile concentration evidence from local `precomp_sblk_inventory.json`, not only simple presence/absence in `precomp_shader_profiles.json`
+- first branch-oriented narrowing of the unresolved space:
+  - `samplerRevealMap` as a cross-family visible-pass reveal/helper input
+  - `LightsAnimLookupMap` as a much narrower day/night or terrain-light lookup helper
+  - `NextFloorLightMapXform` as a lightmap-transform/helper signal with `GenerateSpotLightmap` as the stronger semantic home
+  - `RefractionMap/tex1` as a projective/refraction-family-local unresolved input rather than a generic surface slot
+
+Чего они не дают полностью:
+
+- authoritative EA semantics
+- полный per-family slot/parameter contract
+- гарантию, что current support tier == in-game parity
+
+### F. Narrow external corroboration for lightmap-adjacent names
+
+Использовать только как supporting evidence, не как full shader spec:
+
+- `Mod The Sims` thread on TS4 lighting/lightmaps:
+  - [Sims 4 lighting in Sims 3?](https://modthesims.info/showthread.php?t=646135)
+
+Что это хорошо подтверждает:
+
+- `NextFloorLightMapXform` и `GenerateSpotLightmap` действительно живут в одном lightmap-oriented vocabulary
+- TS4 lightmap surface is materially richer than a single baked-light slot
+- lightmap-generation and lightmap-transform names не стоит насильно трактовать как ordinary material slots
+
+Чего это не даёт полностью:
+
+- exact shader math
+- exact matrix semantics for `NextFloorLightMapXform`
+- per-family authoritative slot contracts
+
+### G. Narrow external corroboration for `CASHotSpotAtlas`
+
+Использовать как strong role evidence for hotspot/morph editing, not as a general surface-material spec:
+
+- `Mod The Sims` TS4 MorphMaker / DMap tutorial:
+  - [Making a CAS slider with TS4MorphMaker using a Deformer Map](https://modthesims.info/t/613057)
+- `Mod The Sims` pointed-ear slider thread:
+  - [Pointed Ears as CAS Sliders](https://db.modthesims.info/showthread.php?t=596028)
+
+Что это хорошо подтверждает:
+
+- `CASHotSpotAtlas` — реальный EA atlas resource
+- atlas is mapped to `UV1` of Sim meshes
+- atlas participates in CAS edit hotspot / slider / morph routing rather than behaving like a normal surface-material slot
+- atlas colors feed `HotSpotControl`, which then selects `SimModifier` resources linked to `DMap` / `BGEO` / `BOND` style morph mechanisms
+
+Чего это не даёт полностью:
+
+- почему `CASHotSpotAtlas` carry-through still appears in some non-obvious rendering-profile corpora
+- exact runtime/render-path behavior when this atlas metadata survives outside explicit CAS editing workflows
+
+### H. Engine-lineage corroboration for reveal/refraction naming
+
+Использовать только как lineage/inference support, not as an authoritative TS4 spec:
+
+- `Mod The Sims` Sims 3 shader parameter index:
+  - [Sims_3:Shaders\Params](https://modthesims.info/wiki.php?title=Sims_3%3AShaders%5CParams)
+- `Mod The Sims` Sims 3 shader family index:
+  - [Sims_3:Shaders](https://modthesims.info/wiki.php?title=Sims_3%3AShaders)
+
+Что это хорошо подтверждает:
+
+- `RevealMap` historically exists as a dedicated shader texture param in the same engine lineage rather than as a synonym for `DiffuseMap`
+- `RevealMap` is shown in a concrete shader family (`Painting`), which supports the safer interpretation of `samplerRevealMap` as reveal/mask/helper provenance instead of a normal canonical surface slot
+- refraction-oriented families in the same lineage (`simglass`, water families) already use dedicated refraction semantics such as `index_of_refraction` and `RefractionDistortionScale`
+- this makes it safer to keep `RefractionMap` and `tex1` in the projection/refraction branch until stronger TS4-specific proof appears
+
+Чего это не даёт полностью:
+
+- exact TS4 shader bytecode contracts
+- exact visible-pass math for `samplerRevealMap`
+- exact semantic identity of `tex1` in `RefractionMap`
+
+### I. Narrow corroboration for `VPXY`
+
+Использовать как bounded scenegraph/linkage evidence, not as a fully authoritative TS4 traversal spec:
+
+- `Mod The Sims` TS4 RCOL page:
+  - [Sims_4:RCOL](https://modthesims.info/wiki.php?title=Sims_4%3ARCOL)
+- `Mod The Sims` older engine-lineage VPXY page:
+  - [Sims_3:0x736884F1](https://modthesims.info/wiki.php?title=Sims_3%3A0x736884F1)
+
+Что это хорошо подтверждает:
+
+- `VPXY` definitely exists in the TS4 scenegraph chunk ecosystem and is still categorized as `Model Links`
+- lineage material for the same type id strongly supports a linkage/proxy role that can point at `GEOM`, `MODL`, `MLOD`, `LITE`, `RSLT`, and `FTPT`
+- this is enough to keep `VPXY` in the object/scene linkage branch and out of the base surface-material authority chain unless stronger TS4-specific proof appears
+
+Чего это не даёт полностью:
+
+- exact TS4 `VPXY` structure
+- exact TS4 traversal order
+- proof that current repo scene reconstruction should actively depend on `VPXY` outside specific linked-object ecosystems
+
+## Material-pipeline contradictions to keep explicit
+
+Эти противоречия нельзя замалчивать в документации; их лучше держать как явные gaps:
+
+1. `Material Definition` в современных справочниках описывается как wall/floor surface data, но более старые `RCOL/MLOD`-страницы явно помещают `MATD` в object mesh pipeline.
+2. `CAS` shared UV space хорошо подтверждён community guidance и поддержан `CASP` fields, но точный enforcement model внутри runtime всё ещё не описан одной authoritative spec.
+3. `Sim` skin pipeline подтверждён через `Skintone`, `RegionMap`, `CASP`, creator tooling и reference implementations, но полного официального end-to-end shader/compositor description всё ещё нет.
+4. `VPXY` уверенно существует в TS4 ecosystem как `Model Links`, но его точная роль в current object render/link graph пока документирована заметно слабее, чем `Object Definition`, `MLOD` или `GEOM`.
+5. Для `0xAC16FBEC` есть naming mismatch между источниками: часть code-backed материалов называет его `GEOMListResource`, а local binary templates и `TS4SimRipper` фактически описывают region/layer/replacement geometry map. Для render-domain работы безопаснее считать доказанным именно region-map behavior, а alias naming держать как reference mismatch.
+6. `NormalUVBodyType` как имя поля сейчас слабее, чем `SharedUVMapSpace`: практический смысл совпадает, но code-backed upstream naming пока подтверждает именно `SharedUVMapSpace`.
+7. local decoder buckets уже достаточно сильны для `support-oriented` shader registry, но этого всё ещё недостаточно для полного authoritative game-faithful shader contract.
+8. для exact names вроде `tex1`, `samplerRevealMap`, `LightsAnimLookupMap`, `NextFloorLightMapXform`, `CASHotSpotAtlas` public TS4 writeups крайне редки; поэтому безопасная опора сейчас — это local code/corpus evidence плюс узкие community corroboration points, а местами ещё и clearly-labeled engine-lineage inference, а не выдуманная уверенность.
+9. `CASHotSpotAtlas` уже нельзя считать completely unknown helper: его identity как `UV1`-mapped CAS hotspot atlas теперь подтверждена отдельно от render-profile archaeology.
 
 ## Рекомендуемый приоритет чтения
 
@@ -130,7 +443,43 @@
   https://modthesims.info/wiki.php?title=Sims_4%3A0x01661233
 - GEOM  
   https://modthesims.info/wiki.php?title=Sims_4%3A0x015A1849
+- Object Definition  
+  https://modthesims.info/wiki.php?title=Sims_4%3A0xC0DB5AE7
+- LITE  
+  https://modthesims.info/wiki.php?title=Sims_4%3A0x03B4C61D
+- Sims 4 Packed File Types  
+  https://modthesims.info/wiki.php?title=Sims_4%3APackedFileTypes
+- MLOD  
+  https://modthesims.info/wiki.php?title=Sims_4%3A0x01D10F34
+- VRTF  
+  https://modthesims.info/wiki.php?title=Sims_4%3A0x01D0E723
+- EA forum material-variant thread  
+  https://forums.ea.com/discussions/the-sims-4-mods-and-custom-content-en/simgurumodsquad-looking-for-cross-reference-between-catalogobject-or-object-defi/1213694/replies/1213695
 - TS4 SimRipper GitHub  
   https://github.com/CmarNYC-Tools/TS4SimRipper
 - TS4 SimRipper MTS page  
   https://modthesims.info/d/635720/ts4-simripper-classic-rip-sims-from-savegames-v3-14-2-0-updated-4-19-2023.html
+- Sims 4 Studio: Mesh glitches and gets color from other CC  
+  https://sims4studio.com/thread/18038/solved-mesh-glitches-gets-color
+- Sims 4 Studio: Texture Bake  
+  https://sims4studio.com/thread/27008/texture-bake
+- Sims 4 Studio 3.2.4.7 release notes  
+  https://sims4studio.com/thread/29786/sims-studio-windows-star-open
+- Manually editing the BodyPart thread  
+  https://modthesims.info/showthread.php?t=542283
+- pyxiidis: skins and makeup info  
+  https://pyxiidis.tumblr.com/post/123291105281/skins-makeup-info-post
+- Maxis Match CC World: Composition Method 0  
+  https://maxismatchccworld.tumblr.com/post/622238734033797120/composition-method-0
+- softerhaze sortLayer override note  
+  https://www.tumblr.com/softerhaze/712246258728894464/growing-together-scar-freckle-and-mole
+- Sims 4 Studio: bake texture problem with Blender when creating cc  
+  https://sims4studio.com/thread/26090/bake-texture-problem-blender-creating
+- Modding tutorial: Modifying Sim Appearances  
+  https://thesims4moddersreference.org/tutorials/modifying-sim-appearances/
+- Mod The Sims: Several CASP questions  
+  https://modthesims.info/t/589486
+- Mod The Sims: Adding new GEOMs to a CAS part with s4pe & S4CASTools  
+  https://modthesims.info/t/536671
+- DeepWiki / Sims4Tools CAS resources overview  
+  https://deepwiki.com/s4ptacle/Sims4Tools/4.1-cas-%28create-a-sim%29-resources

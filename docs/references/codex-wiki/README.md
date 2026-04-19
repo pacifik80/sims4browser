@@ -24,6 +24,8 @@
 5. **Для индексации использовать cheap metadata first.**
    Имена, размеры, тяжёлые парсинги и scene validation должны быть ленивыми или оконно-ограниченными.
 
+Для общей темы `BuildBuy/CAS/Sim` material, texture, shader и UV pipeline нормативный repo-level guide теперь находится в [../../shared-ts4-material-texture-pipeline.md](../../shared-ts4-material-texture-pipeline.md). Эта wiki остаётся детальной supporting-базой и research-архивом.
+
 ---
 
 ## Структура wiki

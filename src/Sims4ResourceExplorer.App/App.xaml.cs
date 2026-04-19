@@ -31,6 +31,7 @@ public partial class App : Application
                 services.AddSingleton<IAppPreferencesService, JsonAppPreferencesService>();
                 services.AddSingleton<ISystemMemoryService, Win32SystemMemoryService>();
                 services.AddSingleton<IIndexingTelemetryRecorderService, IndexingTelemetryRecorderService>();
+                services.AddSingleton<IAssetSessionLogService, AssetSessionLogService>();
                 services.AddSingleton<IIndexStore, SqliteIndexStore>();
                 services.AddSingleton<IPackageScanner, FileSystemPackageScanner>();
                 services.AddSingleton<IResourceCatalogService, LlamaResourceCatalogService>();
@@ -83,12 +84,20 @@ public partial class App : Application
         {
             try
             {
-                host.Dispose();
+                if (host is IAsyncDisposable asyncDisposableHost)
+                {
+                    await asyncDisposableHost.DisposeAsync();
+                }
+                else
+                {
+                    host.Dispose();
+                }
             }
             catch
             {
             }
 
+            window = null;
             Exit();
         }
     }

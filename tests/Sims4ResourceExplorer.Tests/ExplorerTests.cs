@@ -125,6 +125,31 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void StructuredResourceMetadataExtractor_ParsesRegionMap()
+    {
+        var parsed = Ts4StructuredResourceMetadataExtractor.ParseRegionMap(CreateSyntheticRegionMapBytes());
+
+        Assert.Equal(3u, parsed.ContextVersion);
+        Assert.Equal(1u, parsed.Version);
+        Assert.Equal(2, parsed.Entries.Count);
+        Assert.Contains(parsed.Entries, entry => entry.RegionLabel == "Chest" && entry.IsReplacement);
+        Assert.Contains(parsed.Entries, entry => entry.RegionLabel == "Neck" && entry.LinkedKeys.Count == 1);
+    }
+
+    [Fact]
+    public void StructuredResourceMetadataExtractor_ParsesSkintone()
+    {
+        var parsed = Ts4StructuredResourceMetadataExtractor.ParseSkintone(CreateSyntheticSkintoneBytes());
+
+        Assert.Equal(6u, parsed.Version);
+        Assert.Equal(0x1020304050607080ul, parsed.BaseTextureInstance);
+        Assert.Equal(2, parsed.OverlayTextures.Count);
+        Assert.Equal(3, parsed.SwatchColors.Count);
+        Assert.Equal(0xFFBBAA99u, parsed.SwatchColors[0]);
+        Assert.Equal(0x00FF8040u, parsed.Colorize);
+    }
+
+    [Fact]
     public async Task ResourceMetadataEnrichmentService_ReEnrichesStructuredResourcesWhenDescriptionIsMissing()
     {
         var resource = CreateResource(Guid.NewGuid(), Path.Combine(tempRoot, "structured.package"), SourceKind.Game, "Skintone", 1, "StructuredSkintone") with
@@ -137,7 +162,7 @@ public sealed class ExplorerTests : IDisposable
 
         var expectedDescription = "Skintone v6 | overlays=2";
         var catalog = new TrackingEnrichmentCatalogService(resource with { Description = expectedDescription });
-        var service = new ResourceMetadataEnrichmentService(catalog, new FakeGraphIndexStore([]));
+        var service = new ResourceMetadataEnrichmentService(catalog);
 
         var enriched = await service.EnrichAsync(resource, CancellationToken.None);
 
@@ -161,6 +186,19 @@ public sealed class ExplorerTests : IDisposable
         Assert.Contains("species=Human", metadata.Description, StringComparison.Ordinal);
         Assert.Contains("traits=4", metadata.Description, StringComparison.Ordinal);
         Assert.Contains("outfits=2 categories / 3 entries / 6 parts", metadata.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_DoesNotTreatSingleNonNudeOutfitAsAuthoritativeBodyDriving()
+    {
+        var packagePath = Path.Combine(tempRoot, "single-non-nude.package");
+        var resource = CreateResource(Guid.NewGuid(), packagePath, SourceKind.Game, "SimInfo", 1);
+        var metadata = Ts4SeedMetadataExtractor.TryExtractSimTemplateSeedMetadata(resource, CreateSyntheticSimInfoBytesWithSingleNonNudeOutfit());
+
+        Assert.NotNull(metadata);
+        Assert.Equal(0, metadata!.Fact.AuthoritativeBodyDrivingOutfitCount);
+        Assert.Equal(0, metadata.Fact.AuthoritativeBodyDrivingOutfitPartCount);
+        Assert.Empty(metadata.BodyPartFacts);
     }
 
     [Fact]
@@ -232,6 +270,50 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void SimTemplateSelectionPolicy_PrefersLeanTemplateWhenNoExplicitBodyDrivingRecipeExists()
+    {
+        var richerStyled = new SimTemplateOptionSummary(
+            Guid.NewGuid(),
+            "SimInfo template: Human | Child | Male | outfits 12/591/256 [00000010]",
+            @"C:\game\ClientFullBuild0.package",
+            "ClientFullBuild0.package",
+            "025ED6F4:00000000:0000000000000010",
+            false,
+            "SimInfo v21 | species=Human | age=Child | gender=Male | outfits=12 categories / 591 entries / 256 parts",
+            12,
+            591,
+            256,
+            1,
+            63,
+            35,
+            true,
+            0,
+            0);
+        var leanerTemplate = new SimTemplateOptionSummary(
+            Guid.NewGuid(),
+            "SimInfo template: Human | Child | Male | outfits 8/8/82 [00000011]",
+            @"C:\game\SimulationFullBuild0.package",
+            "SimulationFullBuild0.package",
+            "025ED6F4:00000000:0000000000000011",
+            false,
+            "SimInfo v21 | species=Human | age=Child | gender=Male | outfits=8 categories / 8 entries / 82 parts",
+            8,
+            8,
+            82,
+            1,
+            63,
+            35,
+            true,
+            0,
+            0);
+
+        var selected = SimTemplateSelectionPolicy.SelectPreferredTemplate([richerStyled, leanerTemplate]);
+
+        Assert.NotNull(selected);
+        Assert.Equal(leanerTemplate.RootTgi, selected!.RootTgi);
+    }
+
+    [Fact]
     public void AssetGraphBuilder_CreatesSimSummariesFromSeedEnrichedSimInfo()
     {
         var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
@@ -291,6 +373,52 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void AssetGraphBuilder_IgnoresLegacyOpaqueSpeciesSimSummaryRows()
+    {
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var packagePath = Path.Combine(tempRoot, "gp01-legacy-sim-summary.package");
+        var sourceId = Guid.NewGuid();
+        var suspiciousLegacy = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "Character template: Species 0x0000AFC5 | Elder | Female | outfits 275/0/0 [00000001]",
+            Description = "SimInfo v20 | species=Species 0x0000AFC5 | age=Elder | gender=Female | outfits=275 categories / 0 entries / 0 parts | traits=0 | sculpts=204 | faceMods=245 | bodyMods=189 | geneticSculpts=0 | geneticFaceMods=0 | geneticBodyMods=0 | geneticParts=0 | growthParts=0 | peltLayers=6 | skintone=4605040302010006"
+        };
+        var trustworthy = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 2) with
+        {
+            Name = "SimInfo template: Human | Elder | Female [00000002]",
+            Description = "SimInfo v38 | species=Human | age=Elder | gender=Female | outfits=0 categories / 0 entries / 0 parts | traits=0 | sculpts=6 | faceMods=70 | bodyMods=9 | geneticSculpts=0 | geneticFaceMods=0 | geneticBodyMods=0 | geneticParts=0 | growthParts=0 | peltLayers=0 | pronouns=5 | skintone=000000000000AFC5 | skintoneShift=0"
+        };
+
+        var summaries = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [suspiciousLegacy, trustworthy], []))
+            .Where(asset => asset.AssetKind == AssetKind.Sim)
+            .ToArray();
+
+        var summary = Assert.Single(summaries);
+        Assert.Equal("Sim archetype: Human | Elder | Female", summary.DisplayName);
+        Assert.DoesNotContain("Species 0x", summary.DisplayName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AssetGraphBuilder_KeepsLegacyHumanSimSummaryRows()
+    {
+        var builder = new ExplicitAssetGraphBuilder(new FakeResourceCatalogService(new Dictionary<string, byte[]>(), new Dictionary<string, string?>()));
+        var packagePath = Path.Combine(tempRoot, "legacy-human-sim-summary.package");
+        var sourceId = Guid.NewGuid();
+        var legacyHuman = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Child | Male | outfits 12/591/256 [00000001]",
+            Description = "SimInfo v21 | species=Human | age=Child | gender=Male | outfits=12 categories / 591 entries / 256 parts | traits=0"
+        };
+
+        var summaries = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [legacyHuman], []))
+            .Where(asset => asset.AssetKind == AssetKind.Sim)
+            .ToArray();
+
+        var summary = Assert.Single(summaries);
+        Assert.Equal("Sim archetype: Human | Child | Male", summary.DisplayName);
+    }
+
+    [Fact]
     public async Task AssetGraphBuilder_BuildsSimMetadataGraphFromSimInfoResource()
     {
         var packagePath = Path.Combine(tempRoot, "sim-graph.package");
@@ -333,6 +461,53 @@ public sealed class ExplorerTests : IDisposable
         Assert.Contains(graph.SimGraph.MorphGroups, group => group.Label == "Body modifiers" && group.Count == 1);
         Assert.Contains(graph.SimGraph.MorphGroups, group => group.Label == "Genetic body modifiers" && group.Count == 2);
         Assert.True(graph.SimGraph.IsSupported);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsSimMetadataGraph_WithResolvedSkintoneRenderInput()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-graph-skintone.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 2/3/6 | traits 4 [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=2 categories / 3 entries / 6 parts | traits=4"
+        };
+        var skintone = CreateResource(sourceId, Path.Combine(tempRoot, "sim-skintone.package"), SourceKind.Game, "Skintone", 0, "ToneResource") with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("Skintone"), 0, 0x1020304050607080ul, "Skintone")
+        };
+        var baseTexture = CreateResource(sourceId, Path.Combine(tempRoot, "sim-skintone.package"), SourceKind.Game, "PNGImage", 0, "ToneTexture") with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("PNGImage"), 0, 0x1020304050607080ul, "PNGImage")
+        };
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = CreateSyntheticSimInfoBytes(),
+                    [skintone.Key.FullTgi] = CreateSyntheticSkintoneBytes(),
+                    [baseTexture.Key.FullTgi] = TestAssets.OnePixelPng
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([skintone, baseTexture]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.NotNull(graph.SimGraph!.SkintoneRender);
+        Assert.Equal(skintone.Key.FullTgi, graph.SimGraph.SkintoneRender!.SkintoneResourceTgi);
+        Assert.Equal(skintone.PackagePath, graph.SimGraph.SkintoneRender.SkintonePackagePath);
+        Assert.Equal(baseTexture.Key.FullTgi, graph.SimGraph.SkintoneRender.BaseTextureResourceTgi);
+        Assert.Equal(baseTexture.PackagePath, graph.SimGraph.SkintoneRender.BaseTexturePackagePath);
+        Assert.Equal(2, graph.SimGraph.SkintoneRender.OverlayTextureCount);
+        Assert.Equal(3, graph.SimGraph.SkintoneRender.SwatchColorCount);
+        Assert.NotNull(graph.SimGraph.SkintoneRender.ViewportTintColor);
+        Assert.Equal(0xBB / 255f, graph.SimGraph.SkintoneRender.ViewportTintColor!.R, 3);
+        Assert.Equal(0xAA / 255f, graph.SimGraph.SkintoneRender.ViewportTintColor.G, 3);
+        Assert.Equal(0x99 / 255f, graph.SimGraph.SkintoneRender.ViewportTintColor.B, 3);
     }
 
     [Fact]
@@ -493,6 +668,92 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task AssetGraphBuilder_BuildPreviewGraphAsync_DefersBroadCasCandidateDiscovery()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-preview-fast-graph.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 1/1/1 | traits 0 [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=1 categories / 1 entries / 1 parts | traits=0"
+        };
+        var bytes = CreateSyntheticSimInfoBytesWithBodyAndHeadPartLinks();
+        var exactBody = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6000000000000020ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female");
+        var broadHair = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfHair_Long", "Hair", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6000000000000900ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "hair", Description: "slot=Hair | species=Human | age=Young Adult | gender=Female");
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = bytes,
+                    [exactBody.RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfBody_Nude", bodyType: 5, partFlags2: 0x04)
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([], [exactBody, broadHair]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildPreviewGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Contains(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body" && candidate.Count == 1);
+        Assert.Empty(graph.SimGraph.CasSlotCandidates);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildPreviewGraphAsync_UsesOnlyAuthoritativeSplitBodyParts()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-preview-authoritative-split-body.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 1/1/3 | traits 0 [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=1 categories / 1 entries / 3 parts | traits=0"
+        };
+        var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeSplitNudeOutfits();
+        var top = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfTop_Nude", "Top", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "top", Description: "slot=Top | species=Human | age=Young Adult | gender=Female");
+        var bottom = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBottom_Nude", "Bottom", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "bottom", Description: "slot=Bottom | species=Human | age=Young Adult | gender=Female");
+        var shoes = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfShoes_Nude", "Shoes", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000002ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "shoes", Description: "slot=Shoes | species=Human | age=Young Adult | gender=Female");
+        var strayCanonicalBody = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "acBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000003ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Cat | age=Adult | gender=Female");
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = bytes,
+                    [top.RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfTop_Nude", bodyType: 6, partFlags2: 0x04),
+                    [bottom.RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfBottom_Nude", bodyType: 7, partFlags2: 0x04),
+                    [shoes.RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfShoes_Nude", bodyType: 8),
+                    [strayCanonicalBody.RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "acBody_Nude", bodyType: 5, partFlags2: 0x04, speciesValue: 1u)
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([], [top, bottom, shoes, strayCanonicalBody]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildPreviewGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.DoesNotContain(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body" && candidate.Count > 0);
+        Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Top" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Bottom" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Shoes" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        Assert.Equal(SimBodyAssemblyMode.SplitBodyLayers, graph.SimGraph.BodyAssembly.Mode);
+        Assert.DoesNotContain(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Full Body" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Top" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Bottom" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Shoes" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(
+            graph.SimGraph.BodyAssembly.GraphNodes,
+            node => node.Label == "Geometry shell" &&
+                    node.Notes.Contains("Split body shell composed from 2 active layer(s), including authoritative SimInfo selections.", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AssetGraphBuilder_DoesNotUseFlattenedOutfitUnion_WhenNoAuthoritativeBodyDrivingOutfitExists()
     {
         var packagePath = Path.Combine(tempRoot, "sim-body-no-authoritative-outfit.package");
@@ -524,6 +785,241 @@ public sealed class ExplorerTests : IDisposable
         Assert.DoesNotContain(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body");
         Assert.Contains(graph.SimGraph.BodySources, source => source.Label == "Body-driving outfit records" && source.Count == 0);
         Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Geometry shell" && node.State == SimBodyGraphNodeState.Unavailable);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_UsesIndexedTemplateFacts_WhenTemplateSearchFallbackIsUnavailable()
+    {
+        var sourceId = Guid.NewGuid();
+        var representativePackage = Path.Combine(tempRoot, "sim-template-representative.package");
+        var preferredPackage = Path.Combine(tempRoot, "sim-template-preferred.package");
+        var representative = CreateResource(sourceId, representativePackage, SourceKind.Game, "SimInfo", 1) with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("SimInfo"), 0, 0xFDCCF77200000001ul, "SimInfo"),
+            Name = "SimInfo template: Human | Young Adult | Female [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=0 categories / 0 entries / 0 parts | traits=0"
+        };
+        var preferred = CreateResource(sourceId, preferredPackage, SourceKind.Game, "SimInfo", 1) with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("SimInfo"), 0, 0xFDCCF77200000002ul, "SimInfo"),
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 2/3/6 [00000002]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=2 categories / 3 entries / 6 parts | traits=0"
+        };
+        SimTemplateFactSummary[] indexedFacts =
+        [
+            new SimTemplateFactSummary(
+                representative.Id,
+                sourceId,
+                SourceKind.Game,
+                representativePackage,
+                representative.Key.FullTgi,
+                "sim-archetype:human|young-adult|female",
+                "Human",
+                "Young Adult",
+                "Female",
+                representative.Name!,
+                representative.Description!,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                false,
+                0,
+                0),
+            new SimTemplateFactSummary(
+                preferred.Id,
+                sourceId,
+                SourceKind.Game,
+                preferredPackage,
+                preferred.Key.FullTgi,
+                "sim-archetype:human|young-adult|female",
+                "Human",
+                "Young Adult",
+                "Female",
+                preferred.Name!,
+                preferred.Description!,
+                2,
+                3,
+                6,
+                4,
+                12,
+                1,
+                true,
+                1,
+                6)
+        ];
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [representative.Key.FullTgi] = CreateSyntheticSimInfoBytes(),
+                    [preferred.Key.FullTgi] = CreateSyntheticSimInfoBytes()
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore(
+                [representative, preferred],
+                queryResources: [],
+                simTemplateFacts: indexedFacts));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, representativePackage, 0, DateTimeOffset.UtcNow, [representative], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [representative], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Equal(preferred.Id, graph.SimGraph!.SimInfoResource.Id);
+        Assert.Equal(preferred.PackagePath, graph.SimGraph.SimInfoResource.PackagePath);
+        Assert.Contains(graph.Diagnostics, diagnostic => diagnostic.Contains("Automatically selected SimInfo template for body-shell inspection", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_LabelsUnresolvedExplicitTemplateAsBodyShellInspection()
+    {
+        var sourceId = Guid.NewGuid();
+        var representativePackage = Path.Combine(tempRoot, "sim-template-inspection-representative.package");
+        var preferredPackage = Path.Combine(tempRoot, "sim-template-inspection-preferred.package");
+        var representative = CreateResource(sourceId, representativePackage, SourceKind.Game, "SimInfo", 1) with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("SimInfo"), 0, 0xFDCCF77200000011ul, "SimInfo"),
+            Name = "SimInfo template: Human | Young Adult | Female [00000011]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=0 categories / 0 entries / 0 parts | traits=0"
+        };
+        var preferred = CreateResource(sourceId, preferredPackage, SourceKind.Game, "SimInfo", 1) with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("SimInfo"), 0, 0xFDCCF77200000012ul, "SimInfo"),
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 1/1/2 | traits 0 [00000012]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=1 categories / 1 entries / 2 parts | traits=0"
+        };
+        SimTemplateFactSummary[] indexedFacts =
+        [
+            new SimTemplateFactSummary(
+                representative.Id,
+                sourceId,
+                SourceKind.Game,
+                representativePackage,
+                representative.Key.FullTgi,
+                "sim-archetype:human|young-adult|female",
+                "Human",
+                "Young Adult",
+                "Female",
+                representative.Name!,
+                representative.Description!,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                false,
+                0,
+                0),
+            new SimTemplateFactSummary(
+                preferred.Id,
+                sourceId,
+                SourceKind.Game,
+                preferredPackage,
+                preferred.Key.FullTgi,
+                "sim-archetype:human|young-adult|female",
+                "Human",
+                "Young Adult",
+                "Female",
+                preferred.Name!,
+                preferred.Description!,
+                1,
+                1,
+                2,
+                0,
+                0,
+                0,
+                false,
+                1,
+                2)
+        ];
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [representative.Key.FullTgi] = CreateSyntheticSimInfoHeaderOnlyBytes(0x00000010u, 0x00002000u, 1u),
+                    [preferred.Key.FullTgi] = CreateSyntheticSimInfoBytesWithHeadPartLinks()
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore(
+                [representative, preferred],
+                queryResources: [],
+                simTemplateFacts: indexedFacts));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, representativePackage, 0, DateTimeOffset.UtcNow, [representative], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [representative], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Equal(preferred.Id, graph.SimGraph!.SimInfoResource.Id);
+        Assert.Equal(SimBodyAssemblyMode.None, graph.SimGraph.BodyAssembly.Mode);
+        Assert.Contains(graph.Diagnostics, diagnostic => diagnostic.Contains("Automatically selected SimInfo template for body-shell inspection", StringComparison.Ordinal));
+        Assert.DoesNotContain(graph.Diagnostics, diagnostic => diagnostic.Contains("Automatically selected body-driving SimInfo template", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_UsesIndexedBodyPartFacts_WhenRawResourceLookupFallbackIsUnavailable()
+    {
+        var simPackagePath = Path.Combine(tempRoot, "sim-indexed-body-parts.package");
+        var bodyPackagePath = Path.Combine(tempRoot, "sim-indexed-body.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, simPackagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 1/1/2 | traits 0 [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=1 categories / 1 entries / 2 parts | traits=0"
+        };
+        var fullBodyResource = CreateResource(sourceId, bodyPackagePath, SourceKind.Game, "CASPart", 0, "yfBody_Base") with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("CASPart"), 0, 0x6000000000000020ul, "CASPart"),
+            Description = "slot=Full Body | species=Human | age=Young Adult | gender=Female"
+        };
+        var geometryResource = CreateResource(sourceId, bodyPackagePath, SourceKind.Game, "Geometry", 0) with
+        {
+            Key = new ResourceKeyRecord((uint)Enum.Parse<ResourceType>("Geometry"), 0, 0x6000000000000020ul, "Geometry")
+        };
+        SimTemplateBodyPartFact[] indexedBodyPartFacts =
+        [
+            new SimTemplateBodyPartFact(
+                simInfo.Id,
+                sourceId,
+                SourceKind.Game,
+                simPackagePath,
+                simInfo.Key.FullTgi,
+                5,
+                "Nude",
+                0,
+                0,
+                5,
+                "Full Body",
+                0x6000000000000020ul,
+                true)
+        ];
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = CreateSyntheticSimInfoBytesWithBodyAndHeadPartLinks(),
+                    [fullBodyResource.Key.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfBody_Base", bodyType: 5, partFlags2: 0x04)
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore(
+                [simInfo, fullBodyResource, geometryResource],
+                queryResources: [],
+                simTemplateBodyPartFacts: indexedBodyPartFacts));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, simPackagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Contains(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        Assert.Contains(graph.SimGraph.BodyCandidates.SelectMany(static candidate => candidate.Candidates), option => option.DisplayName == "yfBody_Base");
     }
 
     [Fact]
@@ -565,13 +1061,12 @@ public sealed class ExplorerTests : IDisposable
         Assert.NotNull(graph.SimGraph);
         Assert.Contains(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
         Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Top" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
-        Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Shoes" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.BodyTypeFallback);
         Assert.Contains(graph.SimGraph.BodyCandidates.SelectMany(static candidate => candidate.Candidates), option => option.DisplayName == "yfBody_Base");
         Assert.Contains(graph.SimGraph.BodyCandidates.SelectMany(static candidate => candidate.Candidates), option => option.DisplayName == "yfBody_Alt");
         Assert.Equal(SimBodyAssemblyMode.FullBodyShell, graph.SimGraph.BodyAssembly.Mode);
         Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Full Body" && layer.State == SimBodyAssemblyLayerState.Active);
         Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Top" && layer.State == SimBodyAssemblyLayerState.Blocked);
-        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Shoes" && layer.State == SimBodyAssemblyLayerState.Available);
+        Assert.DoesNotContain(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Shoes");
         Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Base frame" && node.State == SimBodyGraphNodeState.Resolved);
         Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Geometry shell" && node.State == SimBodyGraphNodeState.Approximate);
         Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Footwear overlay" && node.State == SimBodyGraphNodeState.Pending);
@@ -579,7 +1074,65 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
-    public async Task AssetGraphBuilder_PrefersCanonicalFoundationOverAuthoritativeClothingLikeFullBodySelection()
+    public async Task AssetGraphBuilder_BuildsSimMetadataGraph_WithOnlyAuthoritativeSplitBodyLayers()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-body-split-layers.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 1/1/3 | traits 4 [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=1 categories / 1 entries / 3 parts | traits=4"
+        };
+        var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeSplitNudeOutfits();
+        var casAssets = new[]
+        {
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfTop_Nude", "Top", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "top", Description: "slot=Top | species=Human | age=Young Adult | gender=Female"),
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBottom_Nude", "Bottom", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "bottom", Description: "slot=Bottom | species=Human | age=Young Adult | gender=Female"),
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfShoes_Nude", "Shoes", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000002ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "shoes", Description: "slot=Shoes | species=Human | age=Young Adult | gender=Female"),
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "acBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x6100000000000003ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female")
+        };
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = bytes,
+                    [casAssets[0].RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfTop_Nude", bodyType: 6, partFlags2: 0x04),
+                    [casAssets[1].RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfBottom_Nude", bodyType: 7, partFlags2: 0x04),
+                    [casAssets[2].RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfShoes_Nude", bodyType: 8),
+                    [casAssets[3].RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "acBody_Nude", bodyType: 5, partFlags2: 0x04)
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([], casAssets));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.DoesNotContain(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body" && candidate.Count > 0);
+        Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Top" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Bottom" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        Assert.Contains(graph.SimGraph.BodyCandidates, candidate => candidate.Label == "Shoes" && candidate.Count == 1 && candidate.SourceKind == SimBodyCandidateSourceKind.ExactPartLink);
+        Assert.Equal(SimBodyAssemblyMode.SplitBodyLayers, graph.SimGraph.BodyAssembly.Mode);
+        Assert.DoesNotContain(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Full Body" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Top" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Bottom" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Shoes" && layer.State == SimBodyAssemblyLayerState.Active);
+        Assert.Contains(
+            graph.SimGraph.BodyAssembly.GraphNodes,
+            node => node.Label == "Geometry shell" &&
+                    node.State == SimBodyGraphNodeState.Resolved &&
+                    node.Notes.Contains("Split body shell composed from 2 active layer(s), including authoritative SimInfo selections.", StringComparison.Ordinal));
+        Assert.Contains(
+            graph.SimGraph.BodyAssembly.GraphNodes,
+            node => node.Label == "Footwear overlay" && node.State == SimBodyGraphNodeState.Approximate);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_PrefersIndexedDefaultBodyRecipeOverAuthoritativeClothingLikeFullBodySelection()
     {
         var packagePath = Path.Combine(tempRoot, "sim-body-authoritative-clothing.package");
         var sourceId = Guid.NewGuid();
@@ -620,7 +1173,7 @@ public sealed class ExplorerTests : IDisposable
             string.Empty,
             new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true),
             CategoryNormalized: "full-body",
-            Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female");
+            Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true");
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
         var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
@@ -640,11 +1193,11 @@ public sealed class ExplorerTests : IDisposable
         var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
 
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
-        Assert.Equal(SimBodyCandidateSourceKind.CanonicalFoundation, fullBody.SourceKind);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
         Assert.Equal(1, fullBody.Count);
         Assert.Contains(fullBody.Candidates, candidate => candidate.DisplayName == "yfBody_Nude_Default");
         Assert.DoesNotContain(fullBody.Candidates, candidate => candidate.DisplayName == "yfBody_DetectiveDress");
-        Assert.Contains("canonical default human foundation CASParts", fullBody.Notes, StringComparison.Ordinal);
+        Assert.Contains("indexed default/naked body-recipe CASParts", fullBody.Notes, StringComparison.Ordinal);
         Assert.Equal(SimBodyAssemblyMode.FullBodyShell, graph.SimGraph.BodyAssembly.Mode);
         Assert.Contains(
             graph.SimGraph.BodyAssembly.GraphNodes,
@@ -772,6 +1325,69 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task AssetGraphBuilder_CollapsesDuplicateAuthoritativeBodyCandidates_ByPartInstance()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-body-candidate-dedup.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 2/3/6 | traits 4 [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=2 categories / 3 entries / 6 parts | traits=4"
+        };
+        var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
+        var lowQualityPackage = Path.Combine(tempRoot, "ClientDeltaBuild0.package");
+        var preferredPackage = Path.Combine(tempRoot, "ClientFullBuild0.package");
+        var partKey = new ResourceKeyRecord((uint)ResourceType.CASPart, 0, 0x6000000000000000ul, "CASPart");
+        var lowQualityCasPart = CreateResource(sourceId, lowQualityPackage, SourceKind.Game, "CASPart", 1) with
+        {
+            Key = partKey,
+            Name = "yfBody_Base",
+            Description = "slot=Full Body | species=Human | age=Young Adult | gender=Female"
+        };
+        var preferredCasPart = CreateResource(sourceId, preferredPackage, SourceKind.Game, "CASPart", 1) with
+        {
+            Key = partKey,
+            Name = "yfBody_Base",
+            Description = "slot=Full Body | species=Human | age=Young Adult | gender=Female"
+        };
+        var preferredGeometry = CreateResource(sourceId, preferredPackage, SourceKind.Game, "Geometry", 1) with
+        {
+            Key = new ResourceKeyRecord((uint)ResourceType.Geometry, 0, partKey.FullInstance, "Geometry")
+        };
+        var preferredThumbnail = CreateResource(sourceId, preferredPackage, SourceKind.Game, "CASPartThumbnail", 1) with
+        {
+            Key = new ResourceKeyRecord((uint)ResourceType.CASPartThumbnail, 0, partKey.FullInstance, "CASPartThumbnail")
+        };
+        var preferredRig = CreateResource(sourceId, preferredPackage, SourceKind.Game, "Rig", 1) with
+        {
+            Key = new ResourceKeyRecord((uint)ResourceType.Rig, 0, partKey.FullInstance, "Rig")
+        };
+        var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
+        var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
+        var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = bytes,
+                    [$"{lowQualityPackage}|{lowQualityCasPart.Key.FullTgi}"] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfBody_Base", bodyType: 5, partFlags2: 0x04),
+                    [$"{preferredPackage}|{preferredCasPart.Key.FullTgi}"] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfBody_Base", bodyType: 5, partFlags2: 0x04)
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([lowQualityCasPart, preferredCasPart, preferredGeometry, preferredThumbnail, preferredRig]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
+        Assert.Equal(1, fullBody.Count);
+        Assert.Single(fullBody.Candidates);
+        Assert.Equal(preferredPackage, fullBody.Candidates[0].PackagePath);
+        Assert.Contains("collapsed 1 package duplicate", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void SimBodyAssemblyPolicy_ClassifiesShellAndOverlayFamilies()
     {
         Assert.True(SimBodyAssemblyPolicy.IsShellFamilyLabel("Full Body"));
@@ -785,16 +1401,214 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
-    public void SimBodyAssemblyPolicy_WithholdsSplitClothingLayersUntilRealBodyShellExists()
+    public void SimBodyAssemblyPolicy_ActivatesSplitBodyLayersWhenNoShellExists()
     {
         var active = SimBodyAssemblyPolicy.ResolveActiveLabels(["Top", "Bottom", "Shoes"]);
 
-        Assert.Empty(active);
-        Assert.Equal(SimBodyAssemblyMode.None, SimBodyAssemblyPolicy.GetMode(active));
+        Assert.Equal(3, active.Count);
+        Assert.Contains("Top", active);
+        Assert.Contains("Bottom", active);
+        Assert.Contains("Shoes", active);
+        Assert.Equal(SimBodyAssemblyMode.SplitBodyLayers, SimBodyAssemblyPolicy.GetMode(active));
     }
 
     [Fact]
-    public async Task AssetGraphBuilder_BuildsSimMetadataGraph_WithFallbackBodyCandidatesFromBodyTypeTokens()
+    public void SimBodyAssemblyPolicy_ActivatesShellUnderlayAlongsideSplitBodyLayers()
+    {
+        var active = SimBodyAssemblyPolicy.ResolveActiveLabels(["Full Body", "Top", "Bottom", "Shoes"]);
+
+        Assert.Equal(4, active.Count);
+        Assert.Contains("Full Body", active);
+        Assert.Contains("Top", active);
+        Assert.Contains("Bottom", active);
+        Assert.Contains("Shoes", active);
+        Assert.Equal(SimBodyAssemblyMode.BodyUnderlayWithSplitLayers, SimBodyAssemblyPolicy.GetMode(active));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitCasGraph_ForInfantHumanSubset()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-infant-supported.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "imBody_Nude");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 1, "InfantGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 1, "InfantRig");
+        var texture = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(
+                    geometry.Key,
+                    thumbnail.Key,
+                    texture.Key,
+                    internalName: "imBody_Nude",
+                    bodyType: 5,
+                    ageGenderFlags: 0x00001080u),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+        var resources = new[] { casPart, geometry, rig, texture, thumbnail };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.Cas);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.NotNull(graph.CasGraph);
+        Assert.True(graph.CasGraph!.IsSupported, string.Join(Environment.NewLine, graph.Diagnostics));
+        Assert.Equal(geometry.Key.FullTgi, graph.CasGraph.GeometryResource?.Key.FullTgi);
+        Assert.DoesNotContain(graph.Diagnostics, message => message.Contains("outside the supported human skinned age subset", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildPreviewGraphAsync_UsesIndexedDefaultBodyRecipe_ForInfantWithoutOutfits()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-infant-indexed-default-body.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Infant | Male [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Infant | gender=Male | outfits=0 categories / 0 entries / 0 parts | traits=0"
+        };
+        var defaultBody = new AssetSummary(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            AssetKind.Cas,
+            "iuBody_Nude_Default",
+            "Full Body",
+            "body.package",
+            new ResourceKeyRecord(0x034AEECB, 0, 0x6600000000000000ul, "CASPart"),
+            null,
+            1,
+            1,
+            "slot=Full Body | bodyType=5 | internalName=iuBody_Nude_Default | species=Human | age=Infant | gender=Male | defaultBodyType=true | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0",
+            new AssetCapabilitySnapshot(true, true, false, false, HasIdentityMetadata: true),
+            CategoryNormalized: "full-body",
+            Description: "slot=Full Body | bodyType=5 | internalName=iuBody_Nude_Default | species=Human | age=Infant | gender=Male | defaultBodyType=true | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0");
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = CreateSyntheticSimInfoBytesWithoutOutfits(ageFlags: 0x00000080u, genderFlags: 0x00001000u, speciesValue: 1u)
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([], [defaultBody]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildPreviewGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
+        Assert.Equal("iuBody_Nude_Default", Assert.Single(fullBody.Candidates).DisplayName);
+        Assert.Equal(SimBodyAssemblyMode.FullBodyShell, graph.SimGraph.BodyAssembly.Mode);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildPreviewGraphAsync_UsesIndexedDefaultBodyRecipe_ForNonHumanWithoutOutfits()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-dog-indexed-default-body.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "Character template: Dog | Adult | Male [00000001]",
+            Description = "SimInfo v32 | species=Dog | age=Adult | gender=Male | outfits=0 categories / 0 entries / 0 parts | traits=0"
+        };
+        var defaultBody = new AssetSummary(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            AssetKind.Cas,
+            "adBody_Nude_Default",
+            "Full Body",
+            "dog-body.package",
+            new ResourceKeyRecord(0x034AEECB, 0, 0x6610000000000000ul, "CASPart"),
+            null,
+            1,
+            1,
+            "slot=Full Body | bodyType=5 | internalName=adBody_Nude_Default | species=Dog | age=Adult | gender=Male | defaultBodyType=true | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0",
+            new AssetCapabilitySnapshot(true, true, false, false, HasIdentityMetadata: true),
+            CategoryNormalized: "full-body",
+            Description: "slot=Full Body | bodyType=5 | internalName=adBody_Nude_Default | species=Dog | age=Adult | gender=Male | defaultBodyType=true | defaultBodyTypeFemale=false | defaultBodyTypeMale=false | nakedLink=false | restrictOppositeGender=false | restrictOppositeFrame=false | sortLayer=0");
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = CreateSyntheticSimInfoBytesWithoutOutfits(ageFlags: 0x00000020u, genderFlags: 0x00001000u, speciesValue: 2u)
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([], [defaultBody]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildPreviewGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
+        Assert.Equal("adBody_Nude_Default", Assert.Single(fullBody.Candidates).DisplayName);
+        Assert.Equal(SimBodyAssemblyMode.FullBodyShell, graph.SimGraph.BodyAssembly.Mode);
+    }
+
+    [Fact]
+    public void AssetGraphBuilder_AllowsDogSpeciesAlias_ForLittleDogChildIndexedBodyRecipe()
+    {
+        var method = typeof(ExplicitAssetGraphBuilder).GetMethod("MatchesCompatibleBodyRecipeSpecies", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var littleDogChild = new SimInfoSummary(32, "Little Dog", "Child", "Female", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var littleDogAdult = new SimInfoSummary(32, "Little Dog", "Adult", "Female", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        Assert.True(Assert.IsType<bool>(method!.Invoke(null, ["Dog", littleDogChild])));
+        Assert.False(Assert.IsType<bool>(method.Invoke(null, ["Dog", littleDogAdult])));
+    }
+
+    [Fact]
+    public void AssetGraphBuilder_UsesYoungAgeBodyShellPrefixes_ForInfantToddlerAndChild()
+    {
+        var expectedMethod = typeof(ExplicitAssetGraphBuilder).GetMethod("BuildExpectedBodyShellPrefixes", BindingFlags.Static | BindingFlags.NonPublic);
+        var genericMethod = typeof(ExplicitAssetGraphBuilder).GetMethod("BuildGenericHumanFoundationPrefixes", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(expectedMethod);
+        Assert.NotNull(genericMethod);
+
+        var infant = new SimInfoSummary(32, "Human", "Infant", "Male", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var toddler = new SimInfoSummary(32, "Human", "Toddler", "Female", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var child = new SimInfoSummary(32, "Human", "Child", "Male", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        var infantExpected = Assert.IsAssignableFrom<IReadOnlyList<string>>(expectedMethod!.Invoke(null, [infant]));
+        var toddlerExpected = Assert.IsAssignableFrom<IReadOnlyList<string>>(expectedMethod.Invoke(null, [toddler]));
+        var childExpected = Assert.IsAssignableFrom<IReadOnlyList<string>>(expectedMethod.Invoke(null, [child]));
+        var infantGeneric = Assert.IsAssignableFrom<IReadOnlyList<string>>(genericMethod!.Invoke(null, [infant]));
+        var toddlerGeneric = Assert.IsAssignableFrom<IReadOnlyList<string>>(genericMethod.Invoke(null, [toddler]));
+        var childGeneric = Assert.IsAssignableFrom<IReadOnlyList<string>>(genericMethod.Invoke(null, [child]));
+
+        Assert.Contains("iuBody_", infantExpected);
+        Assert.Contains("iuBody", infantExpected);
+        Assert.Contains("iuBody_", infantGeneric);
+        Assert.Contains("iuBody", infantGeneric);
+
+        Assert.Contains("pfBody_", toddlerExpected);
+        Assert.Contains("pfBody", toddlerExpected);
+        Assert.Contains("puBody_", toddlerGeneric);
+        Assert.Contains("puBody", toddlerGeneric);
+        Assert.Contains("pfBody_", toddlerGeneric);
+        Assert.Contains("pfBody", toddlerGeneric);
+
+        Assert.Contains("cmBody_", childExpected);
+        Assert.Contains("cmBody", childExpected);
+        Assert.Contains("cuBody_", childGeneric);
+        Assert.Contains("cuBody", childGeneric);
+        Assert.Contains("cmBody_", childGeneric);
+        Assert.Contains("cmBody", childGeneric);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_BuildsSimMetadataGraph_WithIndexedDefaultBodyRecipeCandidates()
     {
         var packagePath = Path.Combine(tempRoot, "sim-body-fallback.package");
         var sourceId = Guid.NewGuid();
@@ -806,7 +1620,7 @@ public sealed class ExplorerTests : IDisposable
         var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
         var casAssets = new[]
         {
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Fallback", "Full Body", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7000000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Fallback", "Full Body", "body.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7000000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true")
         };
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
@@ -828,8 +1642,8 @@ public sealed class ExplorerTests : IDisposable
         Assert.NotNull(graph.SimGraph);
         var fallback = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal(1, fallback.Count);
-        Assert.Equal(SimBodyCandidateSourceKind.CanonicalFoundation, fallback.SourceKind);
-        Assert.Contains("canonical default human foundation CASParts", fallback.Notes, StringComparison.Ordinal);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fallback.SourceKind);
+        Assert.Contains("indexed default/naked body-recipe CASParts", fallback.Notes, StringComparison.Ordinal);
         Assert.Contains(fallback.Candidates, candidate => candidate.DisplayName == "yfBody_Fallback");
     }
 
@@ -847,7 +1661,7 @@ public sealed class ExplorerTests : IDisposable
         var casAssets = new[]
         {
             new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_EP01AlienAlpha_BlackGreenTrim", "Full Body", "ep01alien.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7100000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female"),
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_NudeBase", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7100000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_NudeBase", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7100000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true")
         };
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
@@ -869,8 +1683,9 @@ public sealed class ExplorerTests : IDisposable
 
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal("yfBody_NudeBase", fullBody.Candidates[0].DisplayName);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
         Assert.DoesNotContain(fullBody.Candidates, candidate => candidate.DisplayName == "yfBody_EP01AlienAlpha_BlackGreenTrim");
-        Assert.Contains("default/nude", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("indexed default/naked", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -888,7 +1703,7 @@ public sealed class ExplorerTests : IDisposable
         {
             new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_EP01AlienAlpha_BlackGreenTrim", "Full Body", "ep01alien.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7200000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female"),
             new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_EP01Detective_SolidBlack", "Full Body", "ep01detective.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7200000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female"),
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "acBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7200000000000002ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Unisex")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "acBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7200000000000002ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Cat | age=Young Adult | gender=Unisex | defaultBodyType=true | nakedLink=true")
         };
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
@@ -909,14 +1724,13 @@ public sealed class ExplorerTests : IDisposable
 
         var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
 
-        var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
-        Assert.Equal(0, fullBody.Count);
-        Assert.Empty(fullBody.Candidates);
-        Assert.Contains("authoritative default human body shell", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body" && candidate.Count > 0);
+        Assert.Equal(SimBodyAssemblyMode.None, graph.SimGraph.BodyAssembly.Mode);
+        Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Geometry shell" && node.State == SimBodyGraphNodeState.Unavailable);
     }
 
     [Fact]
-    public async Task AssetGraphBuilder_AcceptsGenericHumanNudeShell_ForHumanArchetypeCanonicalFallback()
+    public async Task AssetGraphBuilder_AcceptsGenericHumanNudeShell_ForHumanArchetypeIndexedDefaultFallback()
     {
         var packagePath = Path.Combine(tempRoot, "sim-body-prefix-filter.package");
         var sourceId = Guid.NewGuid();
@@ -928,7 +1742,7 @@ public sealed class ExplorerTests : IDisposable
         var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
         var casAssets = new[]
         {
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "acBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7210000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "acBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7210000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true")
         };
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
@@ -949,13 +1763,13 @@ public sealed class ExplorerTests : IDisposable
 
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal(1, fullBody.Count);
-        Assert.Equal(SimBodyCandidateSourceKind.CanonicalFoundation, fullBody.SourceKind);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
         Assert.Contains(fullBody.Candidates, candidate => candidate.DisplayName == "acBody_Nude");
-        Assert.Contains("canonical default human foundation CASParts", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("indexed default/naked body-recipe CASParts", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task AssetGraphBuilder_AcceptsGenericHumanNudeShell_WhenCanonicalFactsAreUnavailable()
+    public async Task AssetGraphBuilder_AcceptsGenericHumanNudeShell_WhenIndexedRecipeUsesGenericUnisexAsset()
     {
         var packagePath = Path.Combine(tempRoot, "sim-body-prefix-no-facts.package");
         var sourceId = Guid.NewGuid();
@@ -967,7 +1781,7 @@ public sealed class ExplorerTests : IDisposable
         var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
         var casAssets = new[]
         {
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "ahBody_nude", "Full Body", "SimulationFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7211000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Teen / Young Adult / Adult / Elder | gender=Unisex")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "ahBody_nude", "Full Body", "SimulationFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7211000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Teen / Young Adult / Adult / Elder | gender=Unisex | defaultBodyType=true | nakedLink=true")
         };
         var builder = new ExplicitAssetGraphBuilder(
             new FakeResourceCatalogService(
@@ -984,8 +1798,9 @@ public sealed class ExplorerTests : IDisposable
 
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal(1, fullBody.Count);
-        Assert.Equal(SimBodyCandidateSourceKind.CanonicalFoundation, fullBody.SourceKind);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
         Assert.Contains(fullBody.Candidates, candidate => candidate.DisplayName == "ahBody_nude");
+        Assert.Contains("indexed default/naked body-recipe CASParts", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1002,7 +1817,7 @@ public sealed class ExplorerTests : IDisposable
         var casAssets = new[]
         {
             new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_DetectiveDress", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7220000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female"),
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfShoes_Base", "Shoes", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7220000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "shoes", Description: "slot=Shoes | species=Human | age=Young Adult | gender=Female")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfShoes_Base", "Shoes", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7220000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "shoes", Description: "slot=Shoes | species=Human | age=Young Adult | gender=Female | nakedLink=true")
         };
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
@@ -1023,7 +1838,7 @@ public sealed class ExplorerTests : IDisposable
         var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
 
         Assert.Equal(SimBodyAssemblyMode.None, graph.SimGraph!.BodyAssembly.Mode);
-        Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Full Body" && layer.CandidateCount == 0 && layer.State == SimBodyAssemblyLayerState.Available);
+        Assert.DoesNotContain(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Full Body");
         Assert.Contains(graph.SimGraph.BodyAssembly.Layers, layer => layer.Label == "Shoes" && layer.CandidateCount == 1 && layer.State == SimBodyAssemblyLayerState.Available);
         Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Geometry shell" && node.State == SimBodyGraphNodeState.Unavailable);
         Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Footwear overlay" && node.State == SimBodyGraphNodeState.Pending);
@@ -1043,7 +1858,7 @@ public sealed class ExplorerTests : IDisposable
         var casAssets = new[]
         {
             new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_DetectiveDress", "Full Body", "detective.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7300000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female"),
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7300000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7300000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true")
         };
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
@@ -1065,8 +1880,9 @@ public sealed class ExplorerTests : IDisposable
 
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal("yfBody_Nude", fullBody.Candidates[0].DisplayName);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
         Assert.DoesNotContain(fullBody.Candidates, candidate => candidate.DisplayName == "yfBody_DetectiveDress");
-        Assert.Contains("default/nude body shells", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("indexed default/naked body-recipe CASParts", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1081,7 +1897,7 @@ public sealed class ExplorerTests : IDisposable
         };
         var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
         var clothingShell = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfTop_EP01BlazerOversized_SolidBlack", "Full Body", "clothing.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7310000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female");
-        var defaultShell = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Base_Default", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7310000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female");
+        var defaultShell = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Base_Default", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7310000000000001ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyTypeFemale=true | nakedLink=true");
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
         var textureKey = new ResourceKeyRecord(0x00B2D882, 0, 3, "PNGImage");
@@ -1103,6 +1919,7 @@ public sealed class ExplorerTests : IDisposable
 
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal("yfBody_Base_Default", fullBody.Candidates[0].DisplayName);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
         Assert.Contains("restricted to CASPart default/nude body shells", fullBody.Notes, StringComparison.Ordinal);
         Assert.DoesNotContain(fullBody.Candidates, candidate => candidate.DisplayName == "yfTop_EP01BlazerOversized_SolidBlack");
     }
@@ -1178,6 +1995,10 @@ public sealed class ExplorerTests : IDisposable
             internalName: "yfBody_ZFoundation",
             bodyType: 5,
             partFlags2: 0x04);
+        casAssets[casAssets.Count - 1] = buriedDefaultShell with
+        {
+            Description = "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true"
+        };
 
         var builder = new ExplicitAssetGraphBuilder(
             new FakeResourceCatalogService(
@@ -1190,9 +2011,9 @@ public sealed class ExplorerTests : IDisposable
         var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
 
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
-        Assert.Equal(SimBodyCandidateSourceKind.CanonicalFoundation, fullBody.SourceKind);
+        Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
         Assert.Equal("yfBody_ZFoundation", fullBody.Candidates[0].DisplayName);
-        Assert.Contains("canonical default human foundation CASParts", fullBody.Notes, StringComparison.Ordinal);
+        Assert.Contains("indexed default/naked body-recipe CASParts", fullBody.Notes, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1225,10 +2046,9 @@ public sealed class ExplorerTests : IDisposable
 
         var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
 
-        var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
-        Assert.Equal(0, fullBody.Count);
-        Assert.Empty(fullBody.Candidates);
-        Assert.Contains("authoritative default human body shell", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(graph.SimGraph!.BodyCandidates, candidate => candidate.Label == "Full Body" && candidate.Count > 0);
+        Assert.Equal(SimBodyAssemblyMode.None, graph.SimGraph.BodyAssembly.Mode);
+        Assert.Contains(graph.SimGraph.BodyAssembly.GraphNodes, node => node.Label == "Geometry shell" && node.State == SimBodyGraphNodeState.Unavailable);
     }
 
     [Fact]
@@ -1308,6 +2128,39 @@ public sealed class ExplorerTests : IDisposable
         Assert.Contains(
             graph.SimGraph.BodyAssembly.GraphNodes,
             node => node.Label == "Geometry shell" && node.State == SimBodyGraphNodeState.Unavailable);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_DoesNotTreatSingleNonNudeOutfitAsBodyDriving()
+    {
+        var packagePath = Path.Combine(tempRoot, "sim-single-non-nude.package");
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, packagePath, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Child | Male | outfits 1/1/2 [00000001]",
+            Description = "SimInfo v32 | species=Human | age=Child | gender=Male | outfits=1 categories / 1 entries / 2 parts | traits=0"
+        };
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [simInfo.Key.FullTgi] = CreateSyntheticSimInfoBytesWithSingleNonNudeOutfit()
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, [simInfo], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [simInfo], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Contains(
+            graph.SimGraph!.BodySources,
+            source => source.Label == "Body-driving outfit records" &&
+                      source.Count == 0 &&
+                      source.Notes.Contains("No authoritative nude/body-driving outfit record", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(graph.SimGraph.BodyCandidates);
+        Assert.Equal(SimBodyAssemblyMode.None, graph.SimGraph.BodyAssembly.Mode);
     }
 
     [Fact]
@@ -1406,7 +2259,15 @@ public sealed class ExplorerTests : IDisposable
                     0,
                     [new VertexWeight(0, 1, 1f)])
             ],
-            [new CanonicalMaterial("BodyMaterial", [])],
+            [
+                new CanonicalMaterial(
+                    "BodyMaterial",
+                    [
+                        new CanonicalTexture("diffuse", "body_diffuse.png", TestAssets.OnePixelPng),
+                        new CanonicalTexture("color_shift_mask", "body_mask.png", TestAssets.OnePixelPng)
+                    ],
+                    SourceKind: CanonicalMaterialSourceKind.ExplicitMatd)
+            ],
             [
                 new CanonicalBone("ROOT", null),
                 new CanonicalBone("b__Head__", "ROOT")
@@ -1428,7 +2289,15 @@ public sealed class ExplorerTests : IDisposable
                     0,
                     [new VertexWeight(0, 1, 1f)])
             ],
-            [new CanonicalMaterial("HeadMaterial", [])],
+            [
+                new CanonicalMaterial(
+                    "HeadMaterial",
+                    [
+                        new CanonicalTexture("diffuse", "head_diffuse.png", TestAssets.OnePixelPng),
+                        new CanonicalTexture("color_shift_mask", "head_mask.png", TestAssets.OnePixelPng)
+                    ],
+                    SourceKind: CanonicalMaterialSourceKind.ExplicitMatd)
+            ],
             [
                 new CanonicalBone("ROOT", null),
                 new CanonicalBone("b__Head__", "ROOT"),
@@ -1466,7 +2335,20 @@ public sealed class ExplorerTests : IDisposable
             [
                 new SimMorphGroupSummary("Face modifiers", 2, "Direct face-shape morph channels"),
                 new SimMorphGroupSummary("Body modifiers", 1, "Direct body-shape morph channels")
-            ]);
+            ],
+            new SimSkintoneRenderSummary(
+                "1020304050607080",
+                0.25f,
+                "0354796A:00000000:1020304050607080",
+                "skintone.package",
+                "00B2D882:00000000:1020304050607080",
+                "skintone.package",
+                2,
+                3,
+                new CanonicalColor(0.733f, 0.667f, 0.6f, 1f),
+                "Resolved skintone resource and viewport tint."),
+            [new CasRegionMapSummary("region_map", "AC16FBEC:00000000:0000000000009001", bodyResource.PackagePath, 2, 4, false, ["Base", "Chest"], "Body region map resolved.")],
+            [new CasRegionMapSummary("region_map", "AC16FBEC:00000000:0000000000009002", headResource.PackagePath, 1, 2, false, ["Base"], "Head region map resolved.")]);
 
         Assert.True(assembled.IncludesHeadShell);
         Assert.NotNull(assembled.Preview.Scene);
@@ -1480,7 +2362,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Resolve body shell scene" && stage.State == SimAssemblyStageState.Resolved);
         Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Resolve head shell scene" && stage.State == SimAssemblyStageState.Resolved);
         Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Resolve assembly basis" && stage.State == SimAssemblyStageState.Approximate);
-        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Compose assembled scene" && stage.State == SimAssemblyStageState.Resolved);
+        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Materialize torso/head payload seam" && stage.State == SimAssemblyStageState.Resolved);
         Assert.Equal("Multi-part rig payload", assembled.Graph.Payload.StatusLabel);
         Assert.Equal(2, assembled.Graph.Payload.AnchorBoneCount);
         Assert.Equal(2, assembled.Graph.Payload.AcceptedContributionCount);
@@ -1489,18 +2371,21 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(2, assembled.Graph.Payload.MappedBoneReferenceCount);
         Assert.Equal(1, assembled.Graph.Payload.AddedBoneCount);
         Assert.Equal("Body shell anchor", assembled.Graph.PayloadAnchor.StatusLabel);
+        Assert.Equal("Body", assembled.Graph.PayloadAnchor.SourceLabel);
+        Assert.Equal(bodyResource.Key.FullTgi, assembled.Graph.PayloadAnchor.SourceResourceTgi);
+        Assert.Equal(bodyResource.PackagePath, assembled.Graph.PayloadAnchor.SourcePackagePath);
         Assert.Equal(2, assembled.Graph.PayloadAnchor.BoneCount);
         Assert.Contains("ROOT", assembled.Graph.PayloadAnchor.BoneNames);
         Assert.Contains("b__Head__", assembled.Graph.PayloadAnchor.BoneNames);
         Assert.Single(assembled.Graph.PayloadBoneMaps);
-        Assert.Contains(assembled.Graph.PayloadBoneMaps, boneMap => boneMap.Label == "Head shell bone map" && boneMap.SourceLabel == "Head" && boneMap.SourceBoneCount == 3 && boneMap.ReusedBoneReferenceCount == 2 && boneMap.AddedBoneCount == 1 && boneMap.RebasedWeightCount == 1);
+        Assert.Contains(assembled.Graph.PayloadBoneMaps, boneMap => boneMap.Label == "Head shell bone map" && boneMap.SourceLabel == "Head" && boneMap.SourceResourceTgi == headResource.Key.FullTgi && boneMap.SourcePackagePath == headResource.PackagePath && boneMap.SourceBoneCount == 3 && boneMap.ReusedBoneReferenceCount == 2 && boneMap.AddedBoneCount == 1 && boneMap.RebasedWeightCount == 1 && boneMap.Entries.Count == 3);
         Assert.Equal(2, assembled.Graph.PayloadMeshBatches.Count);
-        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.SourceLabel == "Body shell contribution" && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
-        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Head shell mesh batch" && batch.SourceLabel == "Head shell contribution" && batch.MeshCount == 1 && batch.MaterialStartIndex == 1 && batch.MaterialCount == 1);
+        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.SourceLabel == "Body shell contribution" && batch.SourceResourceTgi == bodyResource.Key.FullTgi && batch.SourcePackagePath == bodyResource.PackagePath && batch.MeshStartIndex == 0 && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
+        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Head shell mesh batch" && batch.SourceLabel == "Head shell contribution" && batch.SourceResourceTgi == headResource.Key.FullTgi && batch.SourcePackagePath == headResource.PackagePath && batch.MeshStartIndex == 1 && batch.MeshCount == 1 && batch.MaterialStartIndex == 1 && batch.MaterialCount == 1);
         Assert.Equal(4, assembled.Graph.PayloadNodes.Count);
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Current payload anchor" && node.Order == 0 && node.Kind == SimAssemblyPayloadNodeKind.AnchorSkeleton && node.StatusLabel == "Body shell anchor");
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Head shell bone map" && node.Kind == SimAssemblyPayloadNodeKind.BoneRemapTable && node.Summary.Contains("source 3", StringComparison.Ordinal));
-        Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Body shell mesh batch" && node.Kind == SimAssemblyPayloadNodeKind.MeshSet && node.Summary.Contains("meshes 1", StringComparison.Ordinal));
+        Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Body shell mesh batch" && node.Kind == SimAssemblyPayloadNodeKind.MeshSet && node.Summary.Contains("meshes 0..0", StringComparison.Ordinal));
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Head shell mesh batch" && node.Kind == SimAssemblyPayloadNodeKind.MeshSet && node.Summary.Contains("materials 1..1", StringComparison.Ordinal));
         Assert.Equal("Materialized internal outcomes", assembled.Graph.Application.StatusLabel);
         Assert.Equal(2, assembled.Graph.Application.PreparedPassCount);
@@ -1520,25 +2405,150 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(2, assembled.Graph.ApplicationOutcomes.Count);
         Assert.Contains(assembled.Graph.ApplicationOutcomes, outcome => outcome.Label == "Skintone routing outcome" && outcome.PassLabel == "Skintone application" && outcome.TargetCount == 2 && outcome.AppliedCount == 2);
         Assert.Contains(assembled.Graph.ApplicationOutcomes, outcome => outcome.Label == "Morph transform outcome" && outcome.PassLabel == "Morph application" && outcome.TargetCount == 2 && outcome.AppliedCount == 6);
-        Assert.Equal("Assembled body + head scene", assembled.Graph.Output.StatusLabel);
+        Assert.Equal("Resolved multi-part rig seam", assembled.Graph.Output.StatusLabel);
         Assert.Equal(2, assembled.Graph.Output.MeshCount);
         Assert.Equal(2, assembled.Graph.Output.MaterialCount);
         Assert.Equal(3, assembled.Graph.Output.BoneCount);
+        Assert.Equal(2, assembled.Graph.Output.AcceptedContributionCount);
+        Assert.Equal(2, assembled.Graph.Output.AcceptedInputs.Count);
+        Assert.Contains(assembled.Graph.Output.AcceptedInputs, input => input.Label == "Body shell seam input" && input.StatusLabel == "Anchor" && input.SourceResourceTgi == bodyResource.Key.FullTgi && input.MeshStartIndex == 0 && input.MeshCount == 1 && input.MaterialStartIndex == 0 && input.MaterialCount == 1);
+        Assert.Contains(assembled.Graph.Output.AcceptedInputs, input => input.Label == "Head shell seam input" && input.StatusLabel == "Merged" && input.SourceResourceTgi == headResource.Key.FullTgi && input.MeshStartIndex == 1 && input.MeshCount == 1 && input.MaterialStartIndex == 1 && input.MaterialCount == 1 && input.RebasedWeightCount == 1 && input.AddedBoneCount == 1);
         Assert.Contains(assembled.Graph.Contributions, contribution => contribution.Label == "Body shell contribution" && contribution.StatusLabel == "Anchor" && contribution.MeshCount == 1 && contribution.MaterialCount == 1 && contribution.BoneCount == 2);
         Assert.Contains(assembled.Graph.Contributions, contribution => contribution.Label == "Head shell contribution" && contribution.StatusLabel == "Merged" && contribution.MeshCount == 1 && contribution.MaterialCount == 1 && contribution.BoneCount == 3 && contribution.RebasedWeightCount == 1 && contribution.AddedBoneCount == 1);
         Assert.Contains("skeletal anchor", assembled.Preview.Diagnostics, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Body shell scene" && node.State == SimBodyGraphNodeState.Resolved);
         Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Head shell scene" && node.State == SimBodyGraphNodeState.Resolved);
         Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Assembly basis" && node.State == SimBodyGraphNodeState.Approximate);
-        Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Sim assembly result" && node.State == SimBodyGraphNodeState.Resolved);
+        Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Torso/head payload seam" && node.State == SimBodyGraphNodeState.Resolved);
         Assert.Equal(2, assembled.Preview.Scene.Meshes.Count);
         Assert.Equal(2, assembled.Preview.Scene.Materials.Count);
         Assert.Equal(3, assembled.Preview.Scene.Bones.Count);
+        Assert.Equal(CanonicalMaterialSourceKind.ApproximateCas, assembled.Preview.Scene.Materials[0].SourceKind);
+        Assert.Equal(CanonicalMaterialSourceKind.ApproximateCas, assembled.Preview.Scene.Materials[1].SourceKind);
+        Assert.NotNull(assembled.Preview.Scene.Materials[0].ViewportTintColor);
+        Assert.NotNull(assembled.Preview.Scene.Materials[1].ViewportTintColor);
         Assert.Contains("Sim skintone route 1020304050607080", assembled.Preview.Scene.Materials[0].Approximation, StringComparison.Ordinal);
+        Assert.Contains("region_map", assembled.Preview.Scene.Materials[0].Approximation, StringComparison.Ordinal);
         Assert.Contains("Sim skintone route 1020304050607080", assembled.Preview.Scene.Materials[1].Approximation, StringComparison.Ordinal);
-        Assert.Contains("Applied internal skintone routing outcome", assembled.Preview.Diagnostics, StringComparison.Ordinal);
+        Assert.Contains("Applied region-map-aware skintone routing outcome", assembled.Preview.Diagnostics, StringComparison.Ordinal);
         Assert.Contains("Applied internal morph transform outcome", assembled.Preview.Diagnostics, StringComparison.Ordinal);
         Assert.Contains("Assembled Sim body/head scene using 2 shared canonical bone(s)", assembled.Preview.Diagnostics, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SimSceneComposer_AppliesSkintoneRoutingToApproximateCasMaterialsWhenRegionMapsExist()
+    {
+        var bodyResource = CreateResource(Guid.NewGuid(), "body.package", SourceKind.Game, "Geometry", 12, "BodyGeom");
+        var headResource = CreateResource(bodyResource.DataSourceId, "head.package", SourceKind.Game, "Geometry", 13, "HeadGeom");
+
+        var bodyScene = new CanonicalScene(
+            "Body",
+            [
+                new CanonicalMesh(
+                    "BodyMesh",
+                    [0f, 0f, 0f, 0f, 1f, 0f, 1f, 0f, 0f],
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    0,
+                    [0, 1, 2],
+                    0,
+                    [new VertexWeight(0, 1, 1f)])
+            ],
+            [
+                new CanonicalMaterial(
+                    "ApproximateBody",
+                    [new CanonicalTexture("diffuse", "body_diffuse.png", TestAssets.OnePixelPng)],
+                    SourceKind: CanonicalMaterialSourceKind.ApproximateCas)
+            ],
+            [
+                new CanonicalBone("ROOT", null),
+                new CanonicalBone("b__Head__", "ROOT")
+            ],
+            new Bounds3D(0f, 0f, 0f, 1f, 1f, 0f));
+        var headScene = new CanonicalScene(
+            "Head",
+            [
+                new CanonicalMesh(
+                    "HeadMesh",
+                    [0f, 1f, 0f, 0f, 2f, 0f, 1f, 1f, 0f],
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    0,
+                    [0, 1, 2],
+                    0,
+                    [new VertexWeight(0, 1, 1f)])
+            ],
+            [
+                new CanonicalMaterial(
+                    "ApproximateHead",
+                    [new CanonicalTexture("diffuse", "head_diffuse.png", TestAssets.OnePixelPng)],
+                    SourceKind: CanonicalMaterialSourceKind.ApproximateCas)
+            ],
+            [
+                new CanonicalBone("ROOT", null),
+                new CanonicalBone("b__Head__", "ROOT"),
+                new CanonicalBone("b__Jaw__", "b__Head__")
+            ],
+            new Bounds3D(0f, 1f, 0f, 1f, 2f, 0f));
+
+        var assembled = SimSceneComposer.ComposeBodyAndHead(
+            "Assembled Sim",
+            new ScenePreviewContent(bodyResource, bodyScene, "body diagnostic", SceneBuildStatus.SceneReady),
+            [],
+            new ScenePreviewContent(headResource, headScene, "head diagnostic", SceneBuildStatus.SceneReady),
+            [],
+            new SimInfoSummary(
+                Version: 32,
+                SpeciesLabel: "Human",
+                AgeLabel: "Young Adult",
+                GenderLabel: "Male",
+                PronounCount: 0,
+                OutfitCategoryCount: 1,
+                OutfitEntryCount: 1,
+                OutfitPartCount: 2,
+                TraitCount: 0,
+                FaceModifierCount: 0,
+                BodyModifierCount: 0,
+                GeneticFaceModifierCount: 0,
+                GeneticBodyModifierCount: 0,
+                SculptCount: 0,
+                GeneticSculptCount: 0,
+                GeneticPartCount: 0,
+                GrowthPartCount: 0,
+                PeltLayerCount: 0,
+                SkintoneInstanceHex: "1020304050607080",
+                SkintoneShift: 0.15f),
+            [],
+            new SimSkintoneRenderSummary(
+                "1020304050607080",
+                0.15f,
+                "0354796A:00000000:1020304050607080",
+                "skintone.package",
+                "00B2D882:00000000:1020304050607080",
+                "skintone.package",
+                2,
+                3,
+                new CanonicalColor(0.72f, 0.63f, 0.55f, 1f),
+                "Resolved skintone resource and viewport tint."),
+            [new CasRegionMapSummary("region_map", "AC16FBEC:00000000:0000000000009001", bodyResource.PackagePath, 2, 4, false, ["Base", "Chest"], "Body region map resolved.")],
+            [new CasRegionMapSummary("region_map", "AC16FBEC:00000000:0000000000009002", headResource.PackagePath, 1, 2, false, ["Base"], "Head region map resolved.")]);
+
+        Assert.NotNull(assembled.Preview.Scene);
+        Assert.Equal(2, assembled.Preview.Scene!.Materials.Count);
+        Assert.All(assembled.Preview.Scene.Materials, material =>
+        {
+            Assert.Equal(CanonicalMaterialSourceKind.ApproximateCas, material.SourceKind);
+            Assert.NotNull(material.ViewportTintColor);
+            Assert.Contains("Sim skintone route 1020304050607080", material.Approximation, StringComparison.Ordinal);
+            Assert.Contains("region_map", material.Approximation, StringComparison.Ordinal);
+        });
+        Assert.Contains("Applied region-map-aware skintone routing outcome", assembled.Preview.Diagnostics, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1606,7 +2616,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.Contains(assembled.Graph.Inputs, input => input.Label == "Head shell input" && input.StatusLabel == "Withheld" && !input.IsAccepted);
         Assert.Contains(assembled.Graph.Inputs, input => input.Label == "Assembly basis input" && input.StatusLabel == "Body-only");
         Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Resolve assembly basis" && stage.State == SimAssemblyStageState.Pending);
-        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Compose assembled scene" && stage.State == SimAssemblyStageState.Approximate);
+        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Materialize torso/head payload seam" && stage.State == SimAssemblyStageState.Resolved);
         Assert.Equal("Anchor-only rig payload", assembled.Graph.Payload.StatusLabel);
         Assert.Equal(1, assembled.Graph.Payload.AnchorBoneCount);
         Assert.Equal(1, assembled.Graph.Payload.AcceptedContributionCount);
@@ -1615,11 +2625,14 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(0, assembled.Graph.Payload.MappedBoneReferenceCount);
         Assert.Equal(0, assembled.Graph.Payload.AddedBoneCount);
         Assert.Equal("Body shell anchor", assembled.Graph.PayloadAnchor.StatusLabel);
+        Assert.Equal("Body", assembled.Graph.PayloadAnchor.SourceLabel);
+        Assert.Equal(bodyResource.Key.FullTgi, assembled.Graph.PayloadAnchor.SourceResourceTgi);
+        Assert.Equal(bodyResource.PackagePath, assembled.Graph.PayloadAnchor.SourcePackagePath);
         Assert.Equal(1, assembled.Graph.PayloadAnchor.BoneCount);
         Assert.Contains("b__ROOT__", assembled.Graph.PayloadAnchor.BoneNames);
         Assert.Empty(assembled.Graph.PayloadBoneMaps);
         Assert.Single(assembled.Graph.PayloadMeshBatches);
-        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
+        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.SourceResourceTgi == bodyResource.Key.FullTgi && batch.MeshStartIndex == 0 && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
         Assert.Equal(2, assembled.Graph.PayloadNodes.Count);
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Current payload anchor" && node.Order == 0 && node.Kind == SimAssemblyPayloadNodeKind.AnchorSkeleton && node.StatusLabel == "Body shell anchor");
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Body shell mesh batch" && node.Order == 1 && node.Kind == SimAssemblyPayloadNodeKind.MeshSet);
@@ -1632,13 +2645,16 @@ public sealed class ExplorerTests : IDisposable
         Assert.Empty(assembled.Graph.ApplicationPlans);
         Assert.Empty(assembled.Graph.ApplicationTransforms);
         Assert.Empty(assembled.Graph.ApplicationOutcomes);
-        Assert.Equal("Body-only assembled scene", assembled.Graph.Output.StatusLabel);
+        Assert.Equal("Resolved anchor-only rig seam", assembled.Graph.Output.StatusLabel);
         Assert.Equal(1, assembled.Graph.Output.MeshCount);
+        Assert.Equal(1, assembled.Graph.Output.AcceptedContributionCount);
+        Assert.Single(assembled.Graph.Output.AcceptedInputs);
+        Assert.Contains(assembled.Graph.Output.AcceptedInputs, input => input.Label == "Body shell seam input" && input.StatusLabel == "Anchor" && input.SourceResourceTgi == bodyResource.Key.FullTgi && input.MeshStartIndex == 0 && input.MeshCount == 1 && input.MaterialStartIndex == 0 && input.MaterialCount == 1);
         Assert.Single(assembled.Graph.Contributions);
         Assert.Contains(assembled.Graph.Contributions, contribution => contribution.Label == "Body shell contribution" && contribution.StatusLabel == "Anchor" && contribution.MeshCount == 1 && contribution.MaterialCount == 1 && contribution.BoneCount == 1 && contribution.RebasedWeightCount == 0 && contribution.AddedBoneCount == 0);
         Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Head shell scene" && node.State == SimBodyGraphNodeState.Approximate);
         Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Assembly basis" && node.State == SimBodyGraphNodeState.Pending);
-        Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Sim assembly result" && node.State == SimBodyGraphNodeState.Approximate);
+        Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Torso/head payload seam" && node.State == SimBodyGraphNodeState.Resolved);
         Assert.Single(assembled.Preview.Scene.Meshes);
         Assert.Single(assembled.Preview.Scene.Materials);
         Assert.Single(assembled.Preview.Scene.Bones);
@@ -1711,7 +2727,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(SimAssemblyBasisKind.SharedRigResource, assembled.Plan.BasisKind);
         Assert.Contains(assembled.Graph.Inputs, input => input.Label == "Assembly basis input" && input.StatusLabel == "Authoritative" && input.IsAccepted);
         Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Resolve assembly basis" && stage.State == SimAssemblyStageState.Resolved);
-        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Compose assembled scene" && stage.State == SimAssemblyStageState.Resolved);
+        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Materialize torso/head payload seam" && stage.State == SimAssemblyStageState.Resolved);
         Assert.Equal("Multi-part rig payload", assembled.Graph.Payload.StatusLabel);
         Assert.Equal(1, assembled.Graph.Payload.AnchorBoneCount);
         Assert.Equal(2, assembled.Graph.Payload.AcceptedContributionCount);
@@ -1720,23 +2736,30 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(0, assembled.Graph.Payload.MappedBoneReferenceCount);
         Assert.Equal(1, assembled.Graph.Payload.AddedBoneCount);
         Assert.Equal("Body shell anchor", assembled.Graph.PayloadAnchor.StatusLabel);
+        Assert.Equal("Body", assembled.Graph.PayloadAnchor.SourceLabel);
+        Assert.Equal(bodyResource.Key.FullTgi, assembled.Graph.PayloadAnchor.SourceResourceTgi);
+        Assert.Equal(bodyResource.PackagePath, assembled.Graph.PayloadAnchor.SourcePackagePath);
         Assert.Equal(1, assembled.Graph.PayloadAnchor.BoneCount);
         Assert.Contains("b__ROOT__", assembled.Graph.PayloadAnchor.BoneNames);
         Assert.Single(assembled.Graph.PayloadBoneMaps);
-        Assert.Contains(assembled.Graph.PayloadBoneMaps, boneMap => boneMap.Label == "Head shell bone map" && boneMap.SourceLabel == "Head" && boneMap.SourceBoneCount == 1 && boneMap.ReusedBoneReferenceCount == 0 && boneMap.AddedBoneCount == 1 && boneMap.RebasedWeightCount == 1);
+        Assert.Contains(assembled.Graph.PayloadBoneMaps, boneMap => boneMap.Label == "Head shell bone map" && boneMap.SourceLabel == "Head" && boneMap.SourceResourceTgi == headResource.Key.FullTgi && boneMap.SourcePackagePath == headResource.PackagePath && boneMap.SourceBoneCount == 1 && boneMap.ReusedBoneReferenceCount == 0 && boneMap.AddedBoneCount == 1 && boneMap.RebasedWeightCount == 1 && boneMap.Entries.Count == 1);
         Assert.Equal(2, assembled.Graph.PayloadMeshBatches.Count);
-        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
-        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Head shell mesh batch" && batch.MeshCount == 1 && batch.MaterialStartIndex == 1 && batch.MaterialCount == 1);
+        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.SourceResourceTgi == bodyResource.Key.FullTgi && batch.MeshStartIndex == 0 && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
+        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Head shell mesh batch" && batch.SourceResourceTgi == headResource.Key.FullTgi && batch.MeshStartIndex == 1 && batch.MeshCount == 1 && batch.MaterialStartIndex == 1 && batch.MaterialCount == 1);
         Assert.Equal(4, assembled.Graph.PayloadNodes.Count);
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Current payload anchor" && node.Kind == SimAssemblyPayloadNodeKind.AnchorSkeleton && node.StatusLabel == "Body shell anchor");
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Head shell bone map" && node.Kind == SimAssemblyPayloadNodeKind.BoneRemapTable && node.Summary.Contains("added 1", StringComparison.Ordinal));
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Head shell mesh batch" && node.Kind == SimAssemblyPayloadNodeKind.MeshSet && node.Summary.Contains("materials 1..1", StringComparison.Ordinal));
-        Assert.Equal("Assembled body + head scene", assembled.Graph.Output.StatusLabel);
+        Assert.Equal("Resolved multi-part rig seam", assembled.Graph.Output.StatusLabel);
+        Assert.Equal(2, assembled.Graph.Output.AcceptedContributionCount);
+        Assert.Equal(2, assembled.Graph.Output.AcceptedInputs.Count);
+        Assert.Contains(assembled.Graph.Output.AcceptedInputs, input => input.Label == "Body shell seam input" && input.StatusLabel == "Anchor" && input.SourceResourceTgi == bodyResource.Key.FullTgi && input.MeshStartIndex == 0 && input.MeshCount == 1);
+        Assert.Contains(assembled.Graph.Output.AcceptedInputs, input => input.Label == "Head shell seam input" && input.StatusLabel == "Merged" && input.SourceResourceTgi == headResource.Key.FullTgi && input.MeshStartIndex == 1 && input.MeshCount == 1 && input.RebasedWeightCount == 1 && input.AddedBoneCount == 1);
         Assert.Contains("rig-centered", assembled.Graph.Output.Notes, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(assembled.Graph.Contributions, contribution => contribution.Label == "Body shell contribution" && contribution.StatusLabel == "Anchor" && contribution.BoneCount == 1);
         Assert.Contains(assembled.Graph.Contributions, contribution => contribution.Label == "Head shell contribution" && contribution.StatusLabel == "Merged" && contribution.MeshCount == 1 && contribution.RebasedWeightCount == 1 && contribution.AddedBoneCount == 1);
         Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Assembly basis" && node.State == SimBodyGraphNodeState.Resolved);
-        Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Sim assembly result" && node.State == SimBodyGraphNodeState.Resolved);
+        Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Torso/head payload seam" && node.State == SimBodyGraphNodeState.Resolved);
         Assert.Equal(2, assembled.Preview.Scene!.Meshes.Count);
         Assert.Contains("shared rig resource", assembled.Preview.Diagnostics, StringComparison.OrdinalIgnoreCase);
     }
@@ -1813,7 +2836,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(SimAssemblyBasisKind.BodyOnly, assembled.Plan.BasisKind);
         Assert.Contains(assembled.Graph.Inputs, input => input.Label == "Assembly basis input" && input.StatusLabel == "Body-only" && input.IsAccepted);
         Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Resolve assembly basis" && stage.State == SimAssemblyStageState.Pending);
-        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Compose assembled scene" && stage.State == SimAssemblyStageState.Approximate);
+        Assert.Contains(assembled.Graph.Stages, stage => stage.Label == "Materialize torso/head payload seam" && stage.State == SimAssemblyStageState.Resolved);
         Assert.Equal("Anchor-only rig payload", assembled.Graph.Payload.StatusLabel);
         Assert.Equal(2, assembled.Graph.Payload.AnchorBoneCount);
         Assert.Equal(1, assembled.Graph.Payload.AcceptedContributionCount);
@@ -1822,16 +2845,22 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(0, assembled.Graph.Payload.MappedBoneReferenceCount);
         Assert.Equal(0, assembled.Graph.Payload.AddedBoneCount);
         Assert.Equal("Body shell anchor", assembled.Graph.PayloadAnchor.StatusLabel);
+        Assert.Equal("Body", assembled.Graph.PayloadAnchor.SourceLabel);
+        Assert.Equal(bodyResource.Key.FullTgi, assembled.Graph.PayloadAnchor.SourceResourceTgi);
+        Assert.Equal(bodyResource.PackagePath, assembled.Graph.PayloadAnchor.SourcePackagePath);
         Assert.Equal(2, assembled.Graph.PayloadAnchor.BoneCount);
         Assert.Contains("ROOT", assembled.Graph.PayloadAnchor.BoneNames);
         Assert.Contains("b__Head__", assembled.Graph.PayloadAnchor.BoneNames);
         Assert.Empty(assembled.Graph.PayloadBoneMaps);
         Assert.Single(assembled.Graph.PayloadMeshBatches);
-        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
+        Assert.Contains(assembled.Graph.PayloadMeshBatches, batch => batch.Label == "Body shell mesh batch" && batch.SourceResourceTgi == bodyResource.Key.FullTgi && batch.MeshStartIndex == 0 && batch.MeshCount == 1 && batch.MaterialStartIndex == 0 && batch.MaterialCount == 1);
         Assert.Equal(2, assembled.Graph.PayloadNodes.Count);
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Current payload anchor" && node.Kind == SimAssemblyPayloadNodeKind.AnchorSkeleton && node.StatusLabel == "Body shell anchor");
         Assert.Contains(assembled.Graph.PayloadNodes, node => node.Label == "Body shell mesh batch" && node.Kind == SimAssemblyPayloadNodeKind.MeshSet);
-        Assert.Equal("Body-only assembled scene", assembled.Graph.Output.StatusLabel);
+        Assert.Equal("Resolved anchor-only rig seam", assembled.Graph.Output.StatusLabel);
+        Assert.Equal(1, assembled.Graph.Output.AcceptedContributionCount);
+        Assert.Single(assembled.Graph.Output.AcceptedInputs);
+        Assert.Contains(assembled.Graph.Output.AcceptedInputs, input => input.Label == "Body shell seam input" && input.StatusLabel == "Anchor" && input.SourceResourceTgi == bodyResource.Key.FullTgi && input.MeshStartIndex == 0 && input.MeshCount == 1);
         Assert.Single(assembled.Graph.Contributions);
         Assert.Contains(assembled.Graph.Contributions, contribution => contribution.Label == "Body shell contribution" && contribution.StatusLabel == "Anchor" && contribution.MeshCount == 1 && contribution.MaterialCount == 1 && contribution.BoneCount == 2);
         Assert.Contains(assembled.Graph.Nodes, node => node.Label == "Head shell scene" && node.State == SimBodyGraphNodeState.Approximate);
@@ -1970,8 +2999,185 @@ public sealed class ExplorerTests : IDisposable
         Assert.NotNull(graph.SimGraph);
         Assert.Equal(bodyDriving.Id, graph.SimGraph!.SimInfoResource.Id);
         Assert.Equal(bodyDrivingPackage, graph.SimGraph.SimInfoResource.PackagePath);
-        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected body-driving SimInfo template", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected", StringComparison.Ordinal));
         Assert.Equal(6, graph.SimGraph.Metadata.OutfitPartCount);
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_PrefersLeanIndexedDefaultBodyRecipeTemplateOverStyledVariant()
+    {
+        var sourceId = Guid.NewGuid();
+        var representativePackage = Path.Combine(tempRoot, "ClientDeltaBuild0.package");
+        var styledPackage = Path.Combine(tempRoot, "ClientFullBuild0.package");
+        var leanPackage = Path.Combine(tempRoot, "SimulationFullBuild0.package");
+        var representative = CreateResource(sourceId, representativePackage, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Child | Male [00000001]",
+            Description = "SimInfo v38 | species=Human | age=Child | gender=Male | outfits=0 categories / 0 entries / 0 parts | traits=0"
+        };
+        var styled = CreateResource(sourceId, styledPackage, SourceKind.Game, "SimInfo", 2) with
+        {
+            Name = "SimInfo template: Human | Child | Male | outfits 12/591/256 [00000002]",
+            Description = "SimInfo v21 | species=Human | age=Child | gender=Male | outfits=12 categories / 591 entries / 256 parts | traits=0"
+        };
+        var lean = CreateResource(sourceId, leanPackage, SourceKind.Game, "SimInfo", 3) with
+        {
+            Name = "SimInfo template: Human | Child | Male | outfits 8/8/82 [00000003]",
+            Description = "SimInfo v21 | species=Human | age=Child | gender=Male | outfits=8 categories / 8 entries / 82 parts | traits=2"
+        };
+        var casCandidate = new AssetSummary(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            AssetKind.Cas,
+            "cmBody_Nude_Default",
+            "Full Body",
+            Path.Combine(tempRoot, "body.package"),
+            new ResourceKeyRecord(0x034AEECB, 0, 0x7400000000000000ul, "CASPart"),
+            null,
+            1,
+            1,
+            string.Empty,
+            new AssetCapabilitySnapshot(
+                HasSceneRoot: true,
+                HasExactGeometryCandidate: true,
+                HasMaterialReferences: false,
+                HasTextureReferences: false,
+                HasThumbnail: false,
+                HasVariants: false,
+                HasIdentityMetadata: true),
+            CategoryNormalized: "full-body",
+            Description: "slot=Full Body | species=Human | age=Child | gender=Male | defaultBodyType=true | nakedLink=true");
+        var bytesByKey = new Dictionary<string, byte[]>
+        {
+            [representative.Key.FullTgi] = CreateSyntheticSimInfoBytesWithoutOutfits(ageFlags: 0x00000004u, genderFlags: 0x00001000u, speciesValue: 1u),
+            [$"{styledPackage}|{styled.Key.FullTgi}"] = CreateSyntheticSimInfoBytesWithoutOutfits(ageFlags: 0x00000004u, genderFlags: 0x00001000u, speciesValue: 1u),
+            [$"{leanPackage}|{lean.Key.FullTgi}"] = CreateSyntheticSimInfoBytesWithoutOutfits(ageFlags: 0x00000004u, genderFlags: 0x00001000u, speciesValue: 1u)
+        };
+        const string archetypeKey = "sim-archetype:human|child|male";
+        var simTemplateFacts = new[]
+        {
+            new SimTemplateFactSummary(representative.Id, representative.DataSourceId, representative.SourceKind, representative.PackagePath, representative.Key.FullTgi, archetypeKey, "Human", "Child", "Male", representative.Name!, representative.Description ?? string.Empty, 0, 0, 0, 0, 0, 0, false, 0, 0),
+            new SimTemplateFactSummary(styled.Id, styled.DataSourceId, styled.SourceKind, styled.PackagePath, styled.Key.FullTgi, archetypeKey, "Human", "Child", "Male", styled.Name!, styled.Description ?? string.Empty, 12, 591, 256, 1, 63, 35, true, 0, 0),
+            new SimTemplateFactSummary(lean.Id, lean.DataSourceId, lean.SourceKind, lean.PackagePath, lean.Key.FullTgi, archetypeKey, "Human", "Child", "Male", lean.Name!, lean.Description ?? string.Empty, 8, 8, 82, 1, 63, 35, true, 0, 0)
+        };
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(bytesByKey, new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([representative, styled, lean], [casCandidate], simTemplateFacts: simTemplateFacts));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, representativePackage, 0, DateTimeOffset.UtcNow, [representative], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildPreviewGraphAsync(summary, [representative], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Equal(lean.Id, graph.SimGraph!.SimInfoResource.Id);
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_PrefersTemplateWithAuthoritativeNudeOutfitOverRicherNonNudeVariant()
+    {
+        var sourceId = Guid.NewGuid();
+        var representativePackage = Path.Combine(tempRoot, "ClientDeltaBuild0.package");
+        var richerNonNudePackage = Path.Combine(tempRoot, "ClientFullBuild0.package");
+        var bodyDrivingPackage = Path.Combine(tempRoot, "SimulationFullBuild0.package");
+        var representative = CreateResource(sourceId, representativePackage, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Male [00000001]",
+            Description = "SimInfo v38 | species=Human | age=Young Adult | gender=Male | outfits=0 categories / 0 entries / 0 parts | traits=0"
+        };
+        var richerNonNude = CreateResource(sourceId, richerNonNudePackage, SourceKind.Game, "SimInfo", 2) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Male | outfits 8/257/3343 [00000002]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Male | outfits=8 categories / 257 entries / 3343 parts | traits=5"
+        };
+        var bodyDriving = CreateResource(sourceId, bodyDrivingPackage, SourceKind.Game, "SimInfo", 3) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Male | outfits 8/8/157 [00000003]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Male | outfits=8 categories / 8 entries / 157 parts | traits=5"
+        };
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(
+                new Dictionary<string, byte[]>
+                {
+                    [representative.Key.FullTgi] = CreateSyntheticSimInfoHeaderOnlyBytes(0x00000010u, 0x00001000u, 1u),
+                    [$"{richerNonNudePackage}|{richerNonNude.Key.FullTgi}"] = CreateSyntheticSimInfoBytes(),
+                    [$"{bodyDrivingPackage}|{bodyDriving.Key.FullTgi}"] = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits()
+                },
+                new Dictionary<string, string?>()),
+            new FakeGraphIndexStore([representative, richerNonNude, bodyDriving]));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, representativePackage, 0, DateTimeOffset.UtcNow, [representative], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [representative], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Equal(bodyDriving.Id, graph.SimGraph!.SimInfoResource.Id);
+        Assert.Equal(bodyDrivingPackage, graph.SimGraph.SimInfoResource.PackagePath);
+        Assert.Contains(
+            graph.SimGraph.BodySources,
+            source => source.Label == "Body-driving outfit records" && source.Count > 0);
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AssetGraphBuilder_InspectsLeanAuthoritativeTemplateBeyondRicherSummaryWindow()
+    {
+        var sourceId = Guid.NewGuid();
+        var representativePackage = Path.Combine(tempRoot, "ClientDeltaBuild0.package");
+        var richerNonNudePackage = Path.Combine(tempRoot, "ClientFullBuild0.package");
+        var bodyDrivingPackage = Path.Combine(tempRoot, "SimulationFullBuild0.package");
+        var representative = CreateResource(sourceId, representativePackage, SourceKind.Game, "SimInfo", 1) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female [00000001]",
+            Description = "SimInfo v38 | species=Human | age=Young Adult | gender=Female | outfits=0 categories / 0 entries / 0 parts | traits=5"
+        };
+
+        var resources = new List<ResourceMetadata> { representative };
+        var bytesByKey = new Dictionary<string, byte[]>
+        {
+            [representative.Key.FullTgi] = CreateSyntheticSimInfoHeaderOnlyBytes(0x00000010u, 0x00002000u, 1u)
+        };
+
+        for (var index = 0; index < 140; index++)
+        {
+            var richerNonNude = CreateResource(sourceId, richerNonNudePackage, SourceKind.Game, "SimInfo", (uint)(100 + index)) with
+            {
+                Name = $"SimInfo template: Human | Young Adult | Female | outfits 8/{240 + index}/{3200 + index} [{(100 + index):X8}]",
+                Description = $"SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=8 categories / {240 + index} entries / {3200 + index} parts | traits=5"
+            };
+            resources.Add(richerNonNude);
+            bytesByKey[$"{richerNonNudePackage}|{richerNonNude.Key.FullTgi}"] = CreateSyntheticSimInfoBytes();
+        }
+
+        var bodyDriving = CreateResource(sourceId, bodyDrivingPackage, SourceKind.Game, "SimInfo", 1000) with
+        {
+            Name = "SimInfo template: Human | Young Adult | Female | outfits 2/2/24 [000003E8]",
+            Description = "SimInfo v32 | species=Human | age=Young Adult | gender=Female | outfits=2 categories / 2 entries / 24 parts | traits=5"
+        };
+        resources.Add(bodyDriving);
+        bytesByKey[$"{bodyDrivingPackage}|{bodyDriving.Key.FullTgi}"] = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
+
+        var builder = new ExplicitAssetGraphBuilder(
+            new FakeResourceCatalogService(bytesByKey, new Dictionary<string, string?>()),
+            new FakeGraphIndexStore(resources));
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, representativePackage, 0, DateTimeOffset.UtcNow, [representative], []))
+            .Single(asset => asset.AssetKind == AssetKind.Sim);
+
+        var graph = await builder.BuildAssetGraphAsync(summary, [representative], CancellationToken.None);
+
+        Assert.NotNull(graph.SimGraph);
+        Assert.Equal(bodyDriving.Id, graph.SimGraph!.SimInfoResource.Id);
+        Assert.Equal(bodyDrivingPackage, graph.SimGraph.SimInfoResource.PackagePath);
+        Assert.Contains(
+            graph.SimGraph.BodySources,
+            source => source.Label == "Body-driving outfit records" && source.Count > 0);
+
+        var summaryOrderIndex = SimTemplateSelectionPolicy.OrderTemplates(graph.SimGraph.TemplateOptions)
+            .Select((option, index) => new { option.ResourceId, index })
+            .Single(option => option.ResourceId == bodyDriving.Id)
+            .index;
+        Assert.Equal(0, summaryOrderIndex);
     }
 
     [Fact]
@@ -2018,7 +3224,7 @@ public sealed class ExplorerTests : IDisposable
 
         Assert.NotNull(graph.SimGraph);
         Assert.Equal(fullPackage, graph.SimGraph!.SimInfoResource.PackagePath);
-        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected body-driving SimInfo template", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2067,7 +3273,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.NotNull(graph.SimGraph);
         Assert.Equal(fullPackage, graph.SimGraph!.SimInfoResource.PackagePath);
         Assert.True(graph.SimGraph.Metadata.OutfitPartCount > 0);
-        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected body-driving SimInfo template", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2118,7 +3324,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.NotNull(graph.SimGraph);
         Assert.Equal(fullPackage, graph.SimGraph!.SimInfoResource.PackagePath);
         Assert.True(graph.SimGraph.Metadata.OutfitPartCount > 0);
-        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected body-driving SimInfo template", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2176,7 +3382,7 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(bodyDriving.Id, graph.SimGraph!.SimInfoResource.Id);
         Assert.Equal(fullPackage, graph.SimGraph.SimInfoResource.PackagePath);
         Assert.True(graph.SimGraph.Metadata.OutfitPartCount > 0);
-        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected body-driving SimInfo template", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Automatically selected", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2795,6 +4001,45 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task AssetGraphBuilder_PreservesCasRegionMapSummary()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-regionmap.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "yfBody_Base");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 1, "BodyGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 1, "HumanRig");
+        var diffuse = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 1);
+        var thumbnail = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPartThumbnail", 1);
+        var regionMap = CreateResource(sourceId, packagePath, SourceKind.Game, "RegionMap", 1, "BodyRegionMap");
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [casPart.Key.FullTgi] = CreateSyntheticCasPartBytes(geometry.Key, thumbnail.Key, diffuse.Key, regionMapKey: regionMap.Key, bodyType: 5),
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [diffuse.Key.FullTgi] = TestAssets.OnePixelPng,
+                [thumbnail.Key.FullTgi] = TestAssets.OnePixelPng,
+                [regionMap.Key.FullTgi] = CreateSyntheticRegionMapBytes()
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+        var resources = new[] { casPart, geometry, rig, diffuse, thumbnail, regionMap };
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .Single(asset => asset.AssetKind == AssetKind.Cas);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.NotNull(graph.CasGraph);
+        var resolvedRegionMap = Assert.Single(graph.CasGraph!.RegionMaps);
+        Assert.Equal(regionMap.Key.FullTgi, resolvedRegionMap.ResourceTgi);
+        Assert.Equal(regionMap.PackagePath, resolvedRegionMap.PackagePath);
+        Assert.Equal(2, resolvedRegionMap.EntryCount);
+        Assert.True(resolvedRegionMap.LinkedKeyCount > 0);
+        Assert.Contains("Chest", resolvedRegionMap.RegionLabels);
+    }
+
+    [Fact]
     public async Task AssetGraphBuilder_BuildsExplicitCasGraph_FromIndexedCrossPackageGeometryForAccessory()
     {
         var packagePath = Path.Combine(tempRoot, "cas-cross-package.package");
@@ -3128,9 +4373,33 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal("Hair", seedMetadata!.SlotCategory);
         Assert.Equal("hair", seedMetadata.CategoryNormalized);
         Assert.Contains("slot=Hair", seedMetadata.Description, StringComparison.Ordinal);
+        Assert.Contains("bodyType=2", seedMetadata.Description, StringComparison.Ordinal);
+        Assert.Contains("internalName=ymHair_ModernSweep", seedMetadata.Description, StringComparison.Ordinal);
         Assert.Contains("species=Human", seedMetadata.Description, StringComparison.Ordinal);
         Assert.Contains("age=Young Adult", seedMetadata.Description, StringComparison.Ordinal);
         Assert.Contains("gender=Unisex", seedMetadata.Description, StringComparison.Ordinal);
+        Assert.Contains("sortLayer=", seedMetadata.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ts4SeedMetadataExtractor_ParsesIndexedCasPartSummaryMetadataFromExistingSeedFields()
+    {
+        const string description = "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true | restrictOppositeGender=true";
+
+        var summary = Ts4SeedMetadataExtractor.TryExtractCasPartSummaryMetadata(
+            description,
+            "yfBody_Nude",
+            "Full Body");
+
+        Assert.NotNull(summary);
+        Assert.Equal(5, summary!.BodyType);
+        Assert.Equal("yfBody_Nude", summary.InternalName);
+        Assert.True(summary.DefaultForBodyType);
+        Assert.True(summary.HasNakedLink);
+        Assert.True(summary.RestrictOppositeGender);
+        Assert.Equal("Human", summary.SpeciesLabel);
+        Assert.Equal("Young Adult", summary.AgeLabel);
+        Assert.Equal("Female", summary.GenderLabel);
     }
 
     [Fact]
@@ -6737,6 +8006,206 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task CasGraphScene_UsesCasLinkedRigAndTextureResources_WhenGeometryCompanionsAreMissing()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-linked-companions.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "Base Top");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 10, "TopGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 20, "HumanRig");
+        var texture = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 30, "TopTexture");
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [texture.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var sceneBuilder = new BuildBuySceneBuildService(
+            catalog,
+            new FakeGraphIndexStore([casPart, geometry, rig, texture]));
+        var casGraph = new CasAssetGraph(
+            casPart,
+            geometry,
+            rig,
+            [casPart],
+            [geometry],
+            [rig],
+            [],
+            [texture],
+            [],
+            [],
+            "Top",
+            null,
+            "LOD 0",
+            true,
+            "Synthetic CAS graph");
+
+        var scene = await sceneBuilder.BuildSceneAsync(casGraph, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+        Assert.NotEmpty(scene.Scene!.Materials.SelectMany(static material => material.Textures));
+        Assert.Contains(scene.Scene.Bones, bone => bone.BindPoseMatrix is not null);
+        Assert.Contains(scene.Diagnostics, message => message.Contains("Resolved 1 CAS-linked texture candidate", StringComparison.Ordinal));
+        Assert.Contains(scene.Diagnostics, message => message.Contains("Resolved rig:", StringComparison.Ordinal));
+        Assert.DoesNotContain(scene.Diagnostics, message => message.Contains("No exact-instance Rig resource", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CasGraphScene_PrefersManifestTextureRoutingBeforeSameInstanceFallback()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-manifest-primary.package");
+        var texturePackagePath = Path.Combine(tempRoot, "cas-manifest-textures.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "Base Top");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 10, "TopGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 20, "HumanRig");
+        var manifestTexture = CreateResource(sourceId, texturePackagePath, SourceKind.Game, "PNGImage", 30, "ManifestTexture");
+        var fallbackTexture = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 10, "FallbackTexture");
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [manifestTexture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [fallbackTexture.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var sceneBuilder = new BuildBuySceneBuildService(
+            catalog,
+            new FakeGraphIndexStore([casPart, geometry, rig, manifestTexture, fallbackTexture]));
+        var casGraph = new CasAssetGraph(
+            casPart,
+            geometry,
+            rig,
+            [casPart],
+            [geometry],
+            [rig],
+            [],
+            [manifestTexture],
+            [],
+            [
+                new MaterialManifestEntry(
+                    "ApproximateCasMaterial",
+                    null,
+                    false,
+                    "portable-approximation",
+                    null,
+                    [],
+                    "Manifest-driven CAS preview",
+                    [
+                        new MaterialTextureEntry(
+                            "diffuse",
+                            "manifest_diffuse.png",
+                            manifestTexture.Key,
+                            manifestTexture.PackagePath,
+                            CanonicalTextureSemantic.BaseColor,
+                            CanonicalTextureSourceKind.ExplicitIndexed)
+                    ],
+                    CanonicalMaterialSourceKind.ApproximateCas)
+            ],
+            "Top",
+            null,
+            "LOD 0",
+            true,
+            "Synthetic CAS graph with manifest texture");
+
+        var scene = await sceneBuilder.BuildSceneAsync(casGraph, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+        var material = Assert.Single(scene.Scene!.Materials);
+        var texture = Assert.Single(material.Textures);
+        Assert.Equal(manifestTexture.Key.FullTgi, texture.SourceKey?.FullTgi);
+        Assert.Equal(texturePackagePath, texture.SourcePackagePath);
+        Assert.Equal(CanonicalTextureSourceKind.ExplicitIndexed, texture.SourceKind);
+        Assert.Contains(scene.Diagnostics, message => message.Contains("Resolved 1 manifest-driven CAS material", StringComparison.Ordinal));
+        Assert.DoesNotContain(scene.Diagnostics, message => message.Contains("CAS preview fell back to exact-instance texture candidates", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CasGraphScene_PrefersMaterialDefinitionRoutingBeforeManifestApproximation()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-materialdefinition-primary.package");
+        var manifestTexturePackagePath = Path.Combine(tempRoot, "cas-manifest-textures.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "Base Top");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 10, "TopGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 20, "HumanRig");
+        var material = CreateResource(sourceId, packagePath, SourceKind.Game, "MaterialDefinition", 10, "TopMaterial");
+        var materialTexture = CreateResource(sourceId, packagePath, SourceKind.Game, "PNGImage", 40, "MaterialTexture");
+        var manifestTexture = CreateResource(sourceId, manifestTexturePackagePath, SourceKind.Game, "PNGImage", 30, "ManifestTexture");
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytes(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes(),
+                [material.Key.FullTgi] = WrapSingleChunkRcol(CreateMinimalMatd(
+                    0x11111111u,
+                    0xB9105A6Du,
+                    (0x1B9D3AC5u, 2u, 1u, CreateEmbeddedResourceKeyBytes(materialTexture.Key.Type, materialTexture.Key.Group, materialTexture.Key.FullInstance)))),
+                [materialTexture.Key.FullTgi] = TestAssets.OnePixelPng,
+                [manifestTexture.Key.FullTgi] = TestAssets.OnePixelPng
+            },
+            new Dictionary<string, string?>());
+        var sceneBuilder = new BuildBuySceneBuildService(
+            catalog,
+            new FakeGraphIndexStore([casPart, geometry, rig, material, materialTexture, manifestTexture]));
+        var casGraph = new CasAssetGraph(
+            casPart,
+            geometry,
+            rig,
+            [casPart],
+            [geometry],
+            [rig],
+            [material],
+            [manifestTexture],
+            [],
+            [
+                new MaterialManifestEntry(
+                    "ApproximateCasMaterial",
+                    null,
+                    false,
+                    "portable-approximation",
+                    null,
+                    [],
+                    "Manifest-driven CAS preview",
+                    [
+                        new MaterialTextureEntry(
+                            "diffuse",
+                            "manifest_diffuse.png",
+                            manifestTexture.Key,
+                            manifestTexture.PackagePath,
+                            CanonicalTextureSemantic.BaseColor,
+                            CanonicalTextureSourceKind.ExplicitIndexed)
+                    ],
+                    CanonicalMaterialSourceKind.ApproximateCas)
+            ],
+            "Top",
+            null,
+            "LOD 0",
+            true,
+            "Synthetic CAS graph with material definition");
+
+        var scene = await sceneBuilder.BuildSceneAsync(casGraph, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+        var resolvedMaterial = Assert.Single(scene.Scene!.Materials);
+        var texture = Assert.Single(resolvedMaterial.Textures);
+        Assert.Equal(materialTexture.Key.FullTgi, texture.SourceKey?.FullTgi);
+        Assert.Equal(packagePath, texture.SourcePackagePath);
+        Assert.Equal(CanonicalMaterialSourceKind.ExplicitMatd, resolvedMaterial.SourceKind);
+        Assert.Contains(scene.Diagnostics, message => message.Contains("Resolved 1 CAS material-definition candidate", StringComparison.Ordinal));
+        Assert.DoesNotContain(scene.Diagnostics, message => message.Contains("Resolved 1 manifest-driven CAS material", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task CasGeometryScene_SkipsUndecodableFallbackTextureCandidate()
     {
         var packagePath = Path.Combine(tempRoot, "cas-undecodable-texture.package");
@@ -6818,6 +8287,53 @@ public sealed class ExplorerTests : IDisposable
         Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
         Assert.NotNull(scene.Scene);
         Assert.NotEmpty(scene.Scene!.Meshes);
+    }
+
+    [Fact]
+    public async Task CasGraphScene_PreservesSecondaryUvSetInCanonicalMesh()
+    {
+        var packagePath = Path.Combine(tempRoot, "cas-secondary-uv.package");
+        var sourceId = Guid.NewGuid();
+        var casPart = CreateResource(sourceId, packagePath, SourceKind.Game, "CASPart", 1, "MappedTop");
+        var geometry = CreateResource(sourceId, packagePath, SourceKind.Game, "Geometry", 10, "MappedGeom");
+        var rig = CreateResource(sourceId, packagePath, SourceKind.Game, "Rig", 20, "HumanRig");
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [geometry.Key.FullTgi] = CreateSyntheticSkinnedGeometryBytesWithSecondaryUvSet(),
+                [rig.Key.FullTgi] = CreateSyntheticRigBytes()
+            },
+            new Dictionary<string, string?>());
+        var sceneBuilder = new BuildBuySceneBuildService(
+            catalog,
+            new FakeGraphIndexStore([casPart, geometry, rig]));
+        var casGraph = new CasAssetGraph(
+            casPart,
+            geometry,
+            rig,
+            [casPart],
+            [geometry],
+            [rig],
+            [],
+            [],
+            [],
+            [],
+            "Top",
+            null,
+            "LOD 0",
+            true,
+            "Synthetic CAS graph with secondary UV set");
+
+        var scene = await sceneBuilder.BuildSceneAsync(casGraph, CancellationToken.None);
+
+        Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
+        Assert.NotNull(scene.Scene);
+
+        var mesh = Assert.Single(scene.Scene!.Meshes);
+        Assert.Equal(new float[] { 0f, 0f, 0f, 1f, 1f, 0f }, mesh.Uvs);
+        Assert.Equal(new float[] { 0f, 0f, 0f, 1f, 1f, 0f }, Assert.IsType<float[]>(mesh.Uv0s));
+        Assert.Equal(new float[] { 0.25f, 0.25f, 0.25f, 0.75f, 0.75f, 0.25f }, Assert.IsType<float[]>(mesh.Uv1s));
     }
 
     [Fact]
@@ -7133,12 +8649,66 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void AssetDetailsFormatter_ReportsRenderedSimPreviewAsGeometryInsteadOfMetadataOnly()
+    {
+        var sourceId = Guid.NewGuid();
+        var simInfo = CreateResource(sourceId, "sim.package", SourceKind.Game, "SimInfo", 1);
+        var summary = new AssetSummary(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            AssetKind.Sim,
+            "Sim archetype: Human | Young Adult | Male",
+            "Human",
+            "sim.package",
+            simInfo.Key,
+            null,
+            1,
+            1,
+            string.Empty,
+            new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true),
+            RootTypeName: "SimArchetype",
+            IdentityType: "SimInfo");
+        var scene = new CanonicalScene(
+            "sim",
+            [],
+            [new CanonicalMaterial("skin", [new CanonicalTexture("diffuse", "skin.png", [0x01])])],
+            [],
+            new Bounds3D(0, 0, 0, 1, 1, 1));
+        var preview = new ScenePreviewContent(simInfo, scene, "Assembled body-first preview ready.", SceneBuildStatus.SceneReady);
+        var simGraph = new SimAssetGraph(
+            simInfo,
+            new SimInfoSummary(32, "Human", "Young Adult", "Male", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            null,
+            [],
+            [],
+            [],
+            [],
+            new SimBodyAssemblySummary(SimBodyAssemblyMode.None, "unresolved", [], []),
+            [],
+            [],
+            [],
+            [simInfo],
+            [],
+            true,
+            "subset");
+        var graph = new AssetGraph(summary, [simInfo], [], SimGraph: simGraph);
+
+        var details = AssetDetailsFormatter.BuildAssetDetails(summary, graph, null, preview);
+
+        Assert.Contains("Support Status: Geometry+Textures", details);
+        Assert.Contains("Scene Reconstruction: SceneReady", details);
+        Assert.DoesNotContain("metadata-only", details, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("rendered body-first Sim preview is available", details, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void AssetDetailsFormatter_ReportsSelectedVariantAndMarksIndexedRow()
     {
         var sourceId = Guid.NewGuid();
         var root = CreateResource(sourceId, "variants.package", SourceKind.Game, "CASPart", 1, "yfTop_Test");
         var summary = new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfTop_Test", "CAS", "variants.package", root.Key, null, 3, 1, string.Empty, new AssetCapabilitySnapshot(true, true, true, true, HasVariants: true));
-        var graph = new AssetGraph(summary, [], [], CasGraph: new CasAssetGraph(root, null, null, [root], [], [], [], [], [], "Top", "Swatch data available", null, false, "subset"));
+        var graph = new AssetGraph(summary, [], [], CasGraph: new CasAssetGraph(root, null, null, [root], [], [], [], [], [], [], "Top", "Swatch data available", null, false, "subset"));
         AssetVariantSummary[] variants =
         [
             new AssetVariantSummary(summary.Id, sourceId, SourceKind.Game, AssetKind.Cas, "variants.package", root.Key.FullTgi, 0, "Swatch", "Swatch 1 (#FF112233)", "#FF112233"),
@@ -7481,6 +9051,7 @@ public sealed class ExplorerTests : IDisposable
         ResourceKeyRecord textureKey,
         string internalName = "Short Hair",
         IReadOnlyList<uint>? swatchColors = null,
+        ResourceKeyRecord? regionMapKey = null,
         ResourceKeyRecord? colorShiftMaskKey = null,
         uint version = 0x0000002Eu,
         int bodyType = 2,
@@ -7488,13 +9059,17 @@ public sealed class ExplorerTests : IDisposable
         byte partFlags1 = 0,
         byte partFlags2 = 0,
         uint speciesValue = 1u,
+        uint ageGenderFlags = 0x00003010u,
         byte nakedKey = 0xFF)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.BigEndianUnicode, leaveOpen: true);
         var noneKey = new ResourceKeyRecord(0u, 0u, 0ul, "0x00000000");
-        var effectiveColorShiftMaskKey = colorShiftMaskKey ?? noneKey;
         swatchColors ??= [0xFFFFCCAAu];
+        var regionMapIndex = regionMapKey is null ? 0 : 4;
+        var colorShiftMaskIndex = colorShiftMaskKey is null
+            ? (byte)(regionMapKey is null ? 4 : 5)
+            : (byte)(regionMapKey is null ? 4 : 5);
 
         writer.Write(version);
         var tgiOffsetPosition = stream.Position;
@@ -7518,7 +9093,7 @@ public sealed class ExplorerTests : IDisposable
         writer.Write((byte)0);
         writer.Write(bodyType);
         writer.Write(0);
-        writer.Write(0x00003010u);
+        writer.Write(ageGenderFlags);
         writer.Write(speciesValue);
         writer.Write((short)0);
         writer.Write((byte)0);
@@ -7566,7 +9141,7 @@ public sealed class ExplorerTests : IDisposable
         writer.Write((byte)3);
         writer.Write((byte)3);
         writer.Write((byte)0);
-        writer.Write((byte)0);
+        writer.Write((byte)regionMapIndex);
         writer.Write((byte)0);
         writer.Write((byte)3);
         writer.Write((byte)3);
@@ -7575,7 +9150,7 @@ public sealed class ExplorerTests : IDisposable
         writer.Write((byte)0);
         if (version >= 0x00000031u)
         {
-            writer.Write((byte)4);
+            writer.Write(colorShiftMaskIndex);
         }
 
         var tgiOffset = (uint)(stream.Position - 8);
@@ -7584,14 +9159,18 @@ public sealed class ExplorerTests : IDisposable
         writer.Write(tgiOffset);
         stream.Position = current;
 
-        writer.Write((byte)(colorShiftMaskKey is null ? 4 : 5));
+        writer.Write((byte)(4 + (regionMapKey is null ? 0 : 1) + (colorShiftMaskKey is null ? 0 : 1)));
         WriteResourceKey(writer, noneKey);
         WriteResourceKey(writer, geometryKey);
         WriteResourceKey(writer, thumbnailKey);
         WriteResourceKey(writer, textureKey);
+        if (regionMapKey is not null)
+        {
+            WriteResourceKey(writer, regionMapKey);
+        }
         if (colorShiftMaskKey is not null)
         {
-            WriteResourceKey(writer, effectiveColorShiftMaskKey);
+            WriteResourceKey(writer, colorShiftMaskKey);
         }
         writer.Flush();
         return stream.ToArray();
@@ -8114,6 +9693,98 @@ public sealed class ExplorerTests : IDisposable
         return stream.ToArray();
     }
 
+    private static byte[] CreateSyntheticSimInfoBytesWithAuthoritativeSplitNudeOutfits()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        var linkTable = new[]
+        {
+            new ResourceKeyRecord(0x034AEECBu, 0u, 0x6100000000000000ul, "CASPart"),
+            new ResourceKeyRecord(0x034AEECBu, 0u, 0x6100000000000001ul, "CASPart"),
+            new ResourceKeyRecord(0x034AEECBu, 0u, 0x6100000000000002ul, "CASPart")
+        };
+
+        writer.Write(32u);
+        var offsetPosition = stream.Position;
+        writer.Write(0u);
+
+        for (var index = 0; index < 8; index++)
+        {
+            writer.Write(index / 10f);
+        }
+
+        writer.Write(0x00000010u);
+        writer.Write(0x00002000u);
+        writer.Write(1u);
+        writer.Write(1u);
+
+        writer.Write(0);
+        writer.Write(0x1020304050607080ul);
+        writer.Write(0.125f);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        writer.Write(7u);
+        writer.Write(0.55f);
+        writer.Write(0x0102030405060708ul);
+        writer.Write(0u);
+        writer.Write(0u);
+
+        writer.Write(1u);
+
+        writer.Write((byte)5);
+        writer.Write(0u);
+        writer.Write(1u);
+        writer.Write(0x3000000000000001ul);
+        writer.Write(0x4000000000000002ul);
+        writer.Write(0x5000000000000003ul);
+        writer.Write(false);
+        writer.Write(3u);
+        writer.Write((byte)0);
+        writer.Write(6u);
+        writer.Write(0x6100000000000000ul);
+        writer.Write((byte)1);
+        writer.Write(7u);
+        writer.Write(0x6100000000000001ul);
+        writer.Write((byte)2);
+        writer.Write(8u);
+        writer.Write(0x6100000000000002ul);
+
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        for (var index = 0; index < 16; index++)
+        {
+            writer.Write((byte)0);
+        }
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        for (var index = 0; index < 17; index++)
+        {
+            writer.Write((byte)0);
+        }
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        var tgiOffset = (uint)(stream.Position - offsetPosition - sizeof(uint));
+        var endPosition = stream.Position;
+        stream.Position = offsetPosition;
+        writer.Write(tgiOffset);
+        stream.Position = endPosition;
+        writer.Write((byte)linkTable.Length);
+        foreach (var key in linkTable)
+        {
+            WriteResourceKey(writer, key);
+        }
+
+        writer.Flush();
+        return stream.ToArray();
+    }
+
     private static byte[] CreateSyntheticSimInfoBytesWithHeadPartLinks()
     {
         using var stream = new MemoryStream();
@@ -8182,6 +9853,157 @@ public sealed class ExplorerTests : IDisposable
             writer.Write((byte)0);
         }
         writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        var tgiOffset = (uint)(stream.Position - offsetPosition - sizeof(uint));
+        var endPosition = stream.Position;
+        stream.Position = offsetPosition;
+        writer.Write(tgiOffset);
+        stream.Position = endPosition;
+        writer.Write((byte)linkTable.Length);
+        foreach (var key in linkTable)
+        {
+            WriteResourceKey(writer, key);
+        }
+
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticSimInfoBytesWithoutOutfits(uint ageFlags, uint genderFlags, uint speciesValue)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+
+        writer.Write(32u);
+        var offsetPosition = stream.Position;
+        writer.Write(0u);
+
+        for (var index = 0; index < 8; index++)
+        {
+            writer.Write(0f);
+        }
+
+        writer.Write(ageFlags);
+        writer.Write(genderFlags);
+        writer.Write(speciesValue);
+        writer.Write(1u);
+
+        writer.Write(0);
+        writer.Write(0ul);
+        writer.Write(0f);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        writer.Write(0u);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        writer.Write(0u);
+
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        for (var index = 0; index < 16; index++)
+        {
+            writer.Write((byte)0);
+        }
+
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        for (var index = 0; index < 17; index++)
+        {
+            writer.Write((byte)0);
+        }
+
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        var tgiOffset = (uint)(stream.Position - offsetPosition - sizeof(uint));
+        var endPosition = stream.Position;
+        stream.Position = offsetPosition;
+        writer.Write(tgiOffset);
+        stream.Position = endPosition;
+        writer.Write((byte)0);
+
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticSimInfoBytesWithSingleNonNudeOutfit()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        var linkTable = new[]
+        {
+            new ResourceKeyRecord(0x034AEECBu, 0u, 0x6000000000000020ul, "CASPart"),
+            new ResourceKeyRecord(0x034AEECBu, 0u, 0x6000000000000021ul, "CASPart")
+        };
+
+        writer.Write(32u);
+        var offsetPosition = stream.Position;
+        writer.Write(0u);
+
+        for (var index = 0; index < 8; index++)
+        {
+            writer.Write(0f);
+        }
+
+        writer.Write(0x00000004u); // Child
+        writer.Write(0x00001000u); // Male
+        writer.Write(1u); // Human
+        writer.Write(1u);
+
+        writer.Write(0);
+        writer.Write(0x1020304050607080ul);
+        writer.Write(0f);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        writer.Write(0u);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        writer.Write(1u);
+        writer.Write((byte)1);
+        writer.Write(0u);
+        writer.Write(1u);
+        writer.Write(0x3000000000000001ul);
+        writer.Write(0x4000000000000002ul);
+        writer.Write(0x5000000000000003ul);
+        writer.Write(false);
+        writer.Write(2u);
+        writer.Write((byte)0);
+        writer.Write(5u);
+        writer.Write(0x6000000000000020ul);
+        writer.Write((byte)1);
+        writer.Write(3u);
+        writer.Write(0x6000000000000021ul);
+
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        for (var index = 0; index < 16; index++)
+        {
+            writer.Write((byte)0);
+        }
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        for (var index = 0; index < 17; index++)
+        {
+            writer.Write((byte)0);
+        }
         writer.Write((byte)0);
         writer.Write((byte)0);
         writer.Write((byte)0);
@@ -8580,6 +10402,46 @@ public sealed class ExplorerTests : IDisposable
         return stream.ToArray();
     }
 
+    private static byte[] CreateSyntheticSkinnedGeometryBytesWithSecondaryUvSet()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+
+        writer.Write("GEOM"u8.ToArray());
+        writer.Write(0x0000000Cu);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(3);
+        writer.Write(6);
+        WriteGeomFormat(writer, 0x01);
+        WriteGeomFormat(writer, 0x02);
+        WriteGeomFormat(writer, 0x03);
+        WriteGeomFormat(writer, 0x03);
+        WriteGeomFormat(writer, 0x04);
+        WriteGeomFormat(writer, 0x05);
+
+        WriteGeomVertex(writer, [0f, 0f, 0f], [0f, 0f, 1f], [0f, 0f], [0.25f, 0.25f], [0, 1, 0, 0], [255, 0, 0, 0]);
+        WriteGeomVertex(writer, [0f, 1f, 0f], [0f, 0f, 1f], [0f, 1f], [0.25f, 0.75f], [0, 1, 0, 0], [128, 127, 0, 0]);
+        WriteGeomVertex(writer, [1f, 0f, 0f], [0f, 0f, 1f], [1f, 0f], [0.75f, 0.25f], [1, 0, 0, 0], [255, 0, 0, 0]);
+
+        writer.Write(1);
+        writer.Write((byte)2);
+        writer.Write(3);
+        writer.Write((ushort)0);
+        writer.Write((ushort)1);
+        writer.Write((ushort)2);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(2);
+        writer.Write(0x11111111u);
+        writer.Write(0x22222222u);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
     private static byte[] WrapSingleChunkRcol(byte[] chunkBytes)
     {
         using var stream = new MemoryStream();
@@ -8657,6 +10519,32 @@ public sealed class ExplorerTests : IDisposable
         }
 
         foreach (var value in uv)
+        {
+            writer.Write(value);
+        }
+
+        writer.Write(blendIndices);
+        writer.Write(blendWeights);
+    }
+
+    private static void WriteGeomVertex(BinaryWriter writer, float[] position, float[] normal, float[] uv0, float[] uv1, byte[] blendIndices, byte[] blendWeights)
+    {
+        foreach (var value in position)
+        {
+            writer.Write(value);
+        }
+
+        foreach (var value in normal)
+        {
+            writer.Write(value);
+        }
+
+        foreach (var value in uv0)
+        {
+            writer.Write(value);
+        }
+
+        foreach (var value in uv1)
         {
             writer.Write(value);
         }
@@ -8801,6 +10689,9 @@ public sealed class ExplorerTests : IDisposable
     {
         public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null) =>
             Task.FromResult(result);
+
+        public Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null) =>
+            Task.FromResult(result);
     }
 
     private sealed class FakeGraphIndexStore : IIndexStore
@@ -8808,15 +10699,24 @@ public sealed class ExplorerTests : IDisposable
         private readonly IReadOnlyList<ResourceMetadata> resources;
         private readonly IReadOnlyList<ResourceMetadata> queryResources;
         private readonly IReadOnlyList<AssetSummary> assets;
+        private readonly IReadOnlyList<SimTemplateFactSummary> simTemplateFacts;
+        private readonly IReadOnlyList<SimTemplateBodyPartFact> simTemplateBodyPartFacts;
+        private readonly bool throwOnQueryResources;
 
         public FakeGraphIndexStore(
             IReadOnlyList<ResourceMetadata> resources,
             IReadOnlyList<AssetSummary>? assets = null,
-            IReadOnlyList<ResourceMetadata>? queryResources = null)
+            IReadOnlyList<ResourceMetadata>? queryResources = null,
+            IReadOnlyList<SimTemplateFactSummary>? simTemplateFacts = null,
+            IReadOnlyList<SimTemplateBodyPartFact>? simTemplateBodyPartFacts = null,
+            bool throwOnQueryResources = false)
         {
             this.resources = resources;
             this.queryResources = queryResources ?? resources;
             this.assets = assets ?? [];
+            this.simTemplateFacts = simTemplateFacts ?? [];
+            this.simTemplateBodyPartFacts = simTemplateBodyPartFacts ?? [];
+            this.throwOnQueryResources = throwOnQueryResources;
         }
 
         public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -8826,9 +10726,13 @@ public sealed class ExplorerTests : IDisposable
         public Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<IIndexWriteSession> OpenRebuildSessionAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken) => Task.FromResult(resource);
         public Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken)
         {
+            if (throwOnQueryResources)
+            {
+                throw new NotSupportedException();
+            }
+
             var filtered = queryResources
                 .Where(resource => query.SourceScope.ToSourceKinds().Contains(resource.SourceKind))
                 .Where(resource => string.IsNullOrWhiteSpace(query.TypeNameText) || resource.Key.TypeName.Contains(query.TypeNameText, StringComparison.OrdinalIgnoreCase))
@@ -8875,13 +10779,89 @@ public sealed class ExplorerTests : IDisposable
         public Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<IndexedPackageRecord>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => resource.PackagePath == packagePath && resource.Key.FullInstance == fullInstance).ToArray());
+        public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByFullInstanceAsync(ulong fullInstance, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => resource.Key.FullInstance == fullInstance).ToArray());
+        public Task<IReadOnlyList<ResourceMetadata>> GetCasPartResourcesByInstancesAsync(IEnumerable<ulong> fullInstances, CancellationToken cancellationToken)
+        {
+            var instances = fullInstances.ToHashSet();
+            return Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources
+                .Where(resource =>
+                    string.Equals(resource.Key.TypeName, "CASPart", StringComparison.OrdinalIgnoreCase) &&
+                    instances.Contains(resource.Key.FullInstance))
+                .ToArray());
+        }
         public Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<AssetSummary?> GetPackageAssetByIdAsync(string packagePath, Guid assetId, CancellationToken cancellationToken) =>
+            Task.FromResult<AssetSummary?>(assets.FirstOrDefault(asset =>
+                string.Equals(asset.PackagePath, packagePath, StringComparison.OrdinalIgnoreCase) &&
+                asset.Id == assetId));
         public Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsAsync(Guid assetId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetVariantSummary>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) =>
             Task.FromResult<ResourceMetadata?>(resources.FirstOrDefault(resource =>
                 string.Equals(resource.PackagePath, packagePath, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(resource.Key.FullTgi, fullTgi, StringComparison.OrdinalIgnoreCase)));
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => string.Equals(resource.Key.FullTgi, fullTgi, StringComparison.OrdinalIgnoreCase)).ToArray());
+        public Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken)
+        {
+            var expectedBodyType = slotCategory switch
+            {
+                "Full Body" => 5,
+                "Body" => 5,
+                "Top" => 6,
+                "Bottom" => 7,
+                "Shoes" => 8,
+                _ => -1
+            };
+            if (expectedBodyType < 0)
+            {
+                return Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+            }
+
+            var filtered = assets
+                .Where(asset => asset.AssetKind == AssetKind.Cas)
+                .Where(asset => string.Equals(asset.Category, slotCategory, StringComparison.OrdinalIgnoreCase))
+                .Where(asset =>
+                {
+                    var facts = Ts4SeedMetadataExtractor.TryExtractCasPartSummaryMetadata(asset.Description, asset.DisplayName, asset.Category);
+                    if (facts is null || facts.BodyType != expectedBodyType)
+                    {
+                        return false;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(facts.SpeciesLabel) &&
+                        !string.Equals(facts.SpeciesLabel, metadata.SpeciesLabel, StringComparison.OrdinalIgnoreCase) &&
+                        !(string.Equals(metadata.SpeciesLabel, "Little Dog", StringComparison.OrdinalIgnoreCase) &&
+                          string.Equals(metadata.AgeLabel, "Child", StringComparison.OrdinalIgnoreCase) &&
+                          string.Equals(facts.SpeciesLabel, "Dog", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return false;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(facts.AgeLabel) &&
+                        !string.Equals(facts.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+                        !facts.AgeLabel.Contains(metadata.AgeLabel, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(facts.GenderLabel) &&
+                        !string.Equals(facts.GenderLabel, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(facts.GenderLabel, "Unisex", StringComparison.OrdinalIgnoreCase) &&
+                        !facts.GenderLabel.Contains(metadata.GenderLabel, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+
+                    return facts.HasNakedLink ||
+                           facts.DefaultForBodyType ||
+                           (string.Equals(metadata.GenderLabel, "Female", StringComparison.OrdinalIgnoreCase) && facts.DefaultForBodyTypeFemale) ||
+                           (string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase) && facts.DefaultForBodyTypeMale);
+                })
+                .OrderBy(asset => asset.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return Task.FromResult<IReadOnlyList<AssetSummary>>(filtered);
+        }
+        public Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateFactSummary>>(simTemplateFacts.Where(fact => string.Equals(fact.ArchetypeKey, archetypeKey, StringComparison.OrdinalIgnoreCase)).ToArray());
+        public Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateBodyPartFact>>(simTemplateBodyPartFacts.Where(fact => fact.ResourceId == resourceId).ToArray());
         public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;
 
         private static bool MatchesSearch(AssetSummary asset, string searchText)

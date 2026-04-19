@@ -34,6 +34,8 @@ public sealed class FileSystemCacheService : ICacheService
 
 public sealed class SqliteIndexStore : IIndexStore
 {
+    private const string SeedFactContentVersionMetadataKey = "seed_fact_content_version";
+    private const string SeedFactContentVersion = "2026-04-19.seed-facts-v1";
     private const string SecondaryIndexesSql =
         """
         CREATE UNIQUE INDEX IF NOT EXISTS ux_resources_id ON resources(id);
@@ -41,12 +43,20 @@ public sealed class SqliteIndexStore : IIndexStore
         CREATE INDEX IF NOT EXISTS ix_resources_search ON resources(type_name, full_tgi, package_path, name);
         CREATE INDEX IF NOT EXISTS ix_resources_source ON resources(data_source_id, package_path);
         CREATE INDEX IF NOT EXISTS ix_resources_package_instance ON resources(package_path, instance_hex, type_name, full_tgi);
+        CREATE INDEX IF NOT EXISTS ix_resources_instance_lookup ON resources(instance_hex, type_name, package_path, full_tgi);
         CREATE INDEX IF NOT EXISTS ix_assets_search ON assets(asset_kind, is_canonical, display_name, package_path);
         CREATE INDEX IF NOT EXISTS ix_assets_source ON assets(data_source_id, package_path);
         CREATE INDEX IF NOT EXISTS ix_assets_canonical_root ON assets(data_source_id, asset_kind, root_tgi, is_canonical);
         CREATE INDEX IF NOT EXISTS ix_assets_canonical_logical_root ON assets(data_source_id, asset_kind, logical_root_tgi, is_canonical);
         CREATE INDEX IF NOT EXISTS ix_asset_variants_asset ON asset_variants(asset_id, variant_kind, variant_index);
         CREATE INDEX IF NOT EXISTS ix_asset_variants_source ON asset_variants(data_source_id, package_path);
+        CREATE INDEX IF NOT EXISTS ix_sim_template_facts_archetype ON sim_template_facts(archetype_key, authoritative_body_driving_outfit_count, authoritative_body_driving_outfit_part_count);
+        CREATE INDEX IF NOT EXISTS ix_sim_template_facts_package ON sim_template_facts(data_source_id, package_path);
+        CREATE INDEX IF NOT EXISTS ix_sim_template_body_parts_resource ON sim_template_body_parts(resource_id, is_body_driving, body_type, part_instance_hex);
+        CREATE INDEX IF NOT EXISTS ix_sim_template_body_parts_package ON sim_template_body_parts(data_source_id, package_path);
+        CREATE INDEX IF NOT EXISTS ix_cas_part_facts_asset ON cas_part_facts(asset_id, body_type, slot_category);
+        CREATE INDEX IF NOT EXISTS ix_cas_part_facts_lookup ON cas_part_facts(body_type, species_label, age_label, gender_label, has_naked_link, default_body_type, default_body_type_female, default_body_type_male);
+        CREATE INDEX IF NOT EXISTS ix_cas_part_facts_package ON cas_part_facts(data_source_id, package_path);
         """;
     private const string ShadowDatabasePattern = "index.building.*.sqlite";
     private const int CatalogShardCount = 4;
@@ -314,42 +324,6 @@ public sealed class SqliteIndexStore : IIndexStore
         }
     }
 
-    public async Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken)
-    {
-        await using var connection = await OpenConnectionAsync(GetServingDatabasePathForPackage(resource.DataSourceId, resource.PackagePath), SqliteConnectionProfile.LiveServing, cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            """
-            UPDATE resources
-            SET name = $name,
-                description = $description,
-                compressed_size = $compressedSize,
-                uncompressed_size = $uncompressedSize,
-                is_compressed = $isCompressed,
-                diagnostics = $diagnostics
-            WHERE id = $id;
-            """;
-        command.Parameters.AddWithValue("$id", resource.Id.ToString("D"));
-        command.Parameters.AddWithValue("$name", (object?)resource.Name ?? DBNull.Value);
-        command.Parameters.AddWithValue("$description", (object?)resource.Description ?? DBNull.Value);
-        command.Parameters.AddWithValue("$compressedSize", (object?)resource.CompressedSize ?? DBNull.Value);
-        command.Parameters.AddWithValue("$uncompressedSize", (object?)resource.UncompressedSize ?? DBNull.Value);
-        command.Parameters.AddWithValue("$isCompressed", resource.IsCompressed.HasValue ? (resource.IsCompressed.Value ? 1 : 0) : DBNull.Value);
-        command.Parameters.AddWithValue("$diagnostics", resource.Diagnostics);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-
-        await using var ftsCommand = connection.CreateCommand();
-        ftsCommand.CommandText = "UPDATE resources_fts SET name = $name, description = $description, type_name = $typeName, full_tgi = $fullTgi, package_path = $packagePath WHERE id = $id;";
-        ftsCommand.Parameters.AddWithValue("$id", resource.Id.ToString("D"));
-        ftsCommand.Parameters.AddWithValue("$name", resource.Name ?? string.Empty);
-        ftsCommand.Parameters.AddWithValue("$description", resource.Description ?? string.Empty);
-        ftsCommand.Parameters.AddWithValue("$typeName", resource.Key.TypeName);
-        ftsCommand.Parameters.AddWithValue("$fullTgi", resource.Key.FullTgi);
-        ftsCommand.Parameters.AddWithValue("$packagePath", resource.PackagePath);
-        await ftsCommand.ExecuteNonQueryAsync(cancellationToken);
-        return resource;
-    }
-
     public async Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken)
     {
         var servingPaths = GetServingDatabasePaths();
@@ -477,6 +451,34 @@ public sealed class SqliteIndexStore : IIndexStore
         return await ReadResourcesAsync(command, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ResourceMetadata>> GetResourcesByFullInstanceAsync(ulong fullInstance, CancellationToken cancellationToken)
+    {
+        var shardResults = await Task.WhenAll(
+            GetServingDatabasePaths().Select(path => GetResourcesByFullInstanceFromDatabaseAsync(path, fullInstance, cancellationToken)));
+        return OrderByResource(
+                shardResults.SelectMany(static items => items),
+                RawResourceSort.Tgi)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<ResourceMetadata>> GetCasPartResourcesByInstancesAsync(IEnumerable<ulong> fullInstances, CancellationToken cancellationToken)
+    {
+        var distinctInstances = fullInstances
+            .Distinct()
+            .ToArray();
+        if (distinctInstances.Length == 0)
+        {
+            return [];
+        }
+
+        var shardResults = await Task.WhenAll(
+            GetServingDatabasePaths().Select(path => GetCasPartResourcesByInstancesFromDatabaseAsync(path, distinctInstances, cancellationToken)));
+        return OrderByResource(
+                shardResults.SelectMany(static items => items),
+                RawResourceSort.Tgi)
+            .ToArray();
+    }
+
     public async Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken)
     {
         var databasePath = ResolvePackageScopedDatabasePath(packagePath);
@@ -495,6 +497,47 @@ public sealed class SqliteIndexStore : IIndexStore
             """;
         command.Parameters.AddWithValue("$packagePath", packagePath);
         return await ReadAssetsAsync(command, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<ResourceMetadata>> GetResourcesByFullInstanceFromDatabaseAsync(
+        string databasePath,
+        ulong fullInstance,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name, description,
+                   catalog_signal_0020, catalog_signal_002c, catalog_signal_0030, catalog_signal_0034,
+                   compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics, scene_root_tgi_hint
+            FROM resources
+            WHERE instance_hex = $instanceHex
+            ORDER BY type_name, package_path, full_tgi;
+            """;
+        command.Parameters.AddWithValue("$instanceHex", fullInstance.ToString("X16"));
+        return await ReadResourcesAsync(command, cancellationToken);
+    }
+
+    public async Task<AssetSummary?> GetPackageAssetByIdAsync(string packagePath, Guid assetId, CancellationToken cancellationToken)
+    {
+        var databasePath = ResolvePackageScopedDatabasePath(packagePath);
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT id, data_source_id, source_kind, asset_kind, display_name, category, description, package_path, root_tgi, logical_root_tgi, thumbnail_tgi,
+                   variant_count, linked_resource_count, has_scene_root, has_exact_geometry_candidate, has_material_references, has_texture_references, diagnostics,
+                   package_name, root_type_name, thumbnail_type_name, primary_geometry_type, identity_type, category_normalized,
+                   has_identity_metadata, has_rig_reference, has_geometry_reference, has_material_resource_candidate, has_texture_resource_candidate, is_package_local_graph, has_diagnostics,
+                   catalog_signal_0020, catalog_signal_002c, catalog_signal_0030, catalog_signal_0034
+            FROM assets
+            WHERE package_path = $packagePath AND id = $assetId
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$packagePath", packagePath);
+        command.Parameters.AddWithValue("$assetId", assetId.ToString());
+        return (await ReadAssetsAsync(command, cancellationToken)).FirstOrDefault();
     }
 
     public async Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsAsync(Guid assetId, CancellationToken cancellationToken)
@@ -535,6 +578,55 @@ public sealed class SqliteIndexStore : IIndexStore
         return OrderByResource(
                 results.SelectMany(static items => items),
                 RawResourceSort.Tgi)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(archetypeKey))
+        {
+            return [];
+        }
+
+        var shardResults = await Task.WhenAll(
+            GetServingDatabasePaths().Select(path => GetSimTemplateFactsByArchetypeFromDatabaseAsync(path, archetypeKey, cancellationToken)));
+        return shardResults
+            .SelectMany(static items => items)
+            .OrderBy(static item => item.ArchetypeKey, StringComparer.OrdinalIgnoreCase)
+            .ThenByDescending(static item => item.AuthoritativeBodyDrivingOutfitCount)
+            .ThenByDescending(static item => item.AuthoritativeBodyDrivingOutfitPartCount)
+            .ThenByDescending(static item => item.OutfitPartCount)
+            .ThenBy(static item => item.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static item => item.RootTgi, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(slotCategory))
+        {
+            return [];
+        }
+
+        var shardResults = await Task.WhenAll(
+            GetServingDatabasePaths().Select(path => GetIndexedDefaultBodyRecipeAssetsFromDatabaseAsync(path, metadata, slotCategory, cancellationToken)));
+        return shardResults
+            .SelectMany(static items => items)
+            .GroupBy(static asset => asset.Id)
+            .Select(static group => group.First())
+            .OrderBy(static asset => asset.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static asset => asset.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken)
+    {
+        var shardResults = await Task.WhenAll(
+            GetServingDatabasePaths().Select(path => GetSimTemplateBodyPartFactsFromDatabaseAsync(path, resourceId, cancellationToken)));
+        return shardResults
+            .SelectMany(static items => items)
+            .OrderBy(static item => item.OutfitIndex)
+            .ThenBy(static item => item.PartIndex)
             .ToArray();
     }
 
@@ -750,6 +842,367 @@ public sealed class SqliteIndexStore : IIndexStore
         return await ReadResourcesAsync(command, cancellationToken);
     }
 
+    private async Task<IReadOnlyList<ResourceMetadata>> GetCasPartResourcesByInstancesFromDatabaseAsync(string databasePath, IReadOnlyList<ulong> fullInstances, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        var parameterNames = new List<string>(fullInstances.Count);
+        for (var index = 0; index < fullInstances.Count; index++)
+        {
+            var parameterName = $"$instance{index}";
+            parameterNames.Add(parameterName);
+            command.Parameters.AddWithValue(parameterName, fullInstances[index].ToString("X16"));
+        }
+
+        command.CommandText =
+            $"""
+            SELECT id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name, description,
+                   catalog_signal_0020, catalog_signal_002c, catalog_signal_0030, catalog_signal_0034,
+                   compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics, scene_root_tgi_hint
+            FROM resources
+            WHERE type_name = 'CASPart' AND instance_hex IN ({string.Join(", ", parameterNames)})
+            ORDER BY package_path, full_tgi;
+            """;
+
+        return await ReadResourcesAsync(command, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeFromDatabaseAsync(string databasePath, string archetypeKey, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT resource_id, data_source_id, source_kind, package_path, root_tgi, archetype_key,
+                   species_label, age_label, gender_label, display_name, notes,
+                   outfit_category_count, outfit_entry_count, outfit_part_count,
+                   body_modifier_count, face_modifier_count, sculpt_count, has_skintone,
+                   authoritative_body_driving_outfit_count, authoritative_body_driving_outfit_part_count
+            FROM sim_template_facts
+            WHERE archetype_key = $archetypeKey
+            ORDER BY authoritative_body_driving_outfit_count DESC,
+                     authoritative_body_driving_outfit_part_count DESC,
+                     outfit_part_count DESC,
+                     package_path,
+                     root_tgi;
+            """;
+        command.Parameters.AddWithValue("$archetypeKey", archetypeKey);
+        return await ReadSimTemplateFactsAsync(command, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsFromDatabaseAsync(string databasePath, Guid resourceId, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT resource_id, data_source_id, source_kind, package_path, root_tgi,
+                   outfit_category_value, outfit_category_label, outfit_index, part_index,
+                   body_type, body_type_label, part_instance_hex, is_body_driving
+            FROM sim_template_body_parts
+            WHERE resource_id = $resourceId
+            ORDER BY outfit_index, part_index;
+            """;
+        command.Parameters.AddWithValue("$resourceId", resourceId.ToString("D"));
+        return await ReadSimTemplateBodyPartFactsAsync(command, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsFromDatabaseAsync(
+        string databasePath,
+        SimInfoSummary metadata,
+        string slotCategory,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        var expectedBodyType = slotCategory switch
+        {
+            "Full Body" => 5,
+            "Body" => 5,
+            "Top" => 6,
+            "Bottom" => 7,
+            "Shoes" => 8,
+            _ => -1
+        };
+        if (expectedBodyType < 0)
+        {
+            return [];
+        }
+
+        var prefixPatterns = BuildIndexedBodyRecipePrefixPatterns(metadata, slotCategory);
+        var speciesAliases = BuildIndexedBodyRecipeSpeciesAliases(metadata);
+        command.CommandText =
+            """
+            SELECT a.id, a.data_source_id, a.source_kind, a.asset_kind, a.display_name, a.category, a.description, a.package_path, a.root_tgi, a.logical_root_tgi, a.thumbnail_tgi,
+                   a.variant_count, a.linked_resource_count, a.has_scene_root, a.has_exact_geometry_candidate, a.has_material_references, a.has_texture_references, a.diagnostics,
+                   a.package_name, a.root_type_name, a.thumbnail_type_name, a.primary_geometry_type, a.identity_type, a.category_normalized,
+                   a.has_identity_metadata, a.has_rig_reference, a.has_geometry_reference, a.has_material_resource_candidate, a.has_texture_resource_candidate, a.is_package_local_graph, a.has_diagnostics,
+                   a.catalog_signal_0020, a.catalog_signal_002c, a.catalog_signal_0030, a.catalog_signal_0034
+            FROM assets a
+            JOIN cas_part_facts f ON f.asset_id = a.id
+            WHERE a.asset_kind = 'Cas'
+              AND a.has_scene_root = 1
+              AND f.body_type = $bodyType
+              AND f.slot_category = $slotCategory
+              AND (
+                    f.species_label IS NULL OR
+                    f.species_label = '' OR
+                    lower(f.species_label) = lower($speciesLabel) OR
+                    lower(f.species_label) = lower($speciesAlias0) OR
+                    lower(f.species_label) = lower($speciesAlias1)
+                  )
+              AND (f.age_label IS NULL OR f.age_label = '' OR lower(f.age_label) = 'unknown' OR lower(f.age_label) LIKE '%' || lower($ageLabel) || '%')
+              AND (f.gender_label IS NULL OR f.gender_label = '' OR lower(f.gender_label) = 'unknown' OR lower(f.gender_label) = 'unisex' OR lower(f.gender_label) LIKE '%' || lower($genderLabel) || '%')
+              AND (
+                    f.has_naked_link = 1 OR
+                    f.default_body_type = 1 OR
+                    ($genderLabel = 'Female' AND f.default_body_type_female = 1) OR
+                    ($genderLabel = 'Male' AND f.default_body_type_male = 1) OR
+                    lower(coalesce(f.internal_name, '')) LIKE $prefixPattern0 OR
+                    lower(coalesce(f.internal_name, '')) LIKE $prefixPattern1 OR
+                    lower(coalesce(f.internal_name, '')) LIKE $prefixPattern2 OR
+                    lower(coalesce(f.internal_name, '')) LIKE $prefixPattern3 OR
+                    lower(coalesce(a.display_name, '')) LIKE $prefixPattern0 OR
+                    lower(coalesce(a.display_name, '')) LIKE $prefixPattern1 OR
+                    lower(coalesce(a.display_name, '')) LIKE $prefixPattern2 OR
+                    lower(coalesce(a.display_name, '')) LIKE $prefixPattern3 OR
+                    lower(coalesce(f.internal_name, '')) LIKE '%nude%' OR
+                    lower(coalesce(a.display_name, '')) LIKE '%nude%' OR
+                    lower(coalesce(a.description, '')) LIKE '%nude%'
+                  )
+            ORDER BY
+                CASE
+                    WHEN lower(coalesce(f.internal_name, '')) LIKE $prefixPattern0 THEN 0
+                    WHEN lower(coalesce(f.internal_name, '')) LIKE $prefixPattern1 THEN 1
+                    WHEN lower(coalesce(f.internal_name, '')) LIKE $prefixPattern2 THEN 2
+                    WHEN lower(coalesce(f.internal_name, '')) LIKE $prefixPattern3 THEN 3
+                    WHEN lower(coalesce(a.display_name, '')) LIKE $prefixPattern0 THEN 4
+                    WHEN lower(coalesce(a.display_name, '')) LIKE $prefixPattern1 THEN 5
+                    WHEN lower(coalesce(a.display_name, '')) LIKE $prefixPattern2 THEN 6
+                    WHEN lower(coalesce(a.display_name, '')) LIKE $prefixPattern3 THEN 7
+                    WHEN lower(coalesce(f.internal_name, '')) LIKE '%nude%' THEN 8
+                    WHEN lower(coalesce(a.display_name, '')) LIKE '%nude%' THEN 9
+                    WHEN lower(coalesce(a.description, '')) LIKE '%nude%' THEN 10
+                    WHEN $genderLabel = 'Female' AND f.default_body_type_female = 1 THEN 11
+                    WHEN $genderLabel = 'Male' AND f.default_body_type_male = 1 THEN 11
+                    WHEN f.default_body_type = 1 THEN 12
+                    WHEN f.has_naked_link = 1 THEN 13
+                    ELSE 14
+                END,
+                CASE
+                    WHEN lower(coalesce(f.gender_label, '')) = lower($genderLabel) THEN 0
+                    WHEN lower(coalesce(f.gender_label, '')) = 'unisex' THEN 1
+                    ELSE 2
+                END,
+                CASE
+                    WHEN lower(coalesce(f.age_label, '')) = lower($ageLabel) THEN 0
+                    WHEN lower(coalesce(f.age_label, '')) LIKE '%' || lower($ageLabel) || '%' THEN 1
+                    ELSE 2
+                END,
+                f.sort_layer,
+                a.display_name,
+                a.package_path
+            LIMIT 96;
+            """;
+        command.Parameters.AddWithValue("$bodyType", expectedBodyType);
+        command.Parameters.AddWithValue("$slotCategory", slotCategory);
+        command.Parameters.AddWithValue("$speciesLabel", metadata.SpeciesLabel ?? string.Empty);
+        command.Parameters.AddWithValue("$speciesAlias0", speciesAliases[0]);
+        command.Parameters.AddWithValue("$speciesAlias1", speciesAliases[1]);
+        command.Parameters.AddWithValue("$ageLabel", metadata.AgeLabel ?? string.Empty);
+        command.Parameters.AddWithValue("$genderLabel", metadata.GenderLabel ?? string.Empty);
+        for (var index = 0; index < 4; index++)
+        {
+            command.Parameters.AddWithValue($"$prefixPattern{index}", prefixPatterns[index]);
+        }
+
+        return await ReadAssetsAsync(command, cancellationToken);
+    }
+
+    private static string[] BuildIndexedBodyRecipePrefixPatterns(SimInfoSummary metadata, string slotCategory)
+    {
+        var prefixes = slotCategory switch
+        {
+            "Full Body" or "Body" => BuildIndexedBodyRecipeNamePrefixes(metadata, "Body"),
+            _ => []
+        };
+        return prefixes
+            .Take(4)
+            .Select(static prefix => $"{prefix.ToLowerInvariant()}%")
+            .Concat(Enumerable.Repeat(string.Empty, 4))
+            .Take(4)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> BuildIndexedBodyRecipeNamePrefixes(SimInfoSummary metadata, string slotStem)
+    {
+        if (string.IsNullOrWhiteSpace(slotStem))
+        {
+            return [];
+        }
+
+        if (string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(metadata.AgeLabel, "Infant", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var prefixes = new List<string>();
+        if (TryBuildIndexedBodyRecipePrefix(metadata, out var exactPrefix))
+        {
+            prefixes.Add($"{exactPrefix}{slotStem}_");
+            prefixes.Add($"{exactPrefix}{slotStem}");
+        }
+
+        foreach (var genericPrefix in BuildGenericIndexedBodyRecipePrefixes(metadata))
+        {
+            prefixes.Add($"{genericPrefix}{slotStem}_");
+            prefixes.Add($"{genericPrefix}{slotStem}");
+        }
+
+        return prefixes
+            .Where(static prefix => !string.IsNullOrWhiteSpace(prefix))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string[] BuildIndexedBodyRecipeSpeciesAliases(SimInfoSummary metadata)
+    {
+        if (string.Equals(metadata.SpeciesLabel, "Little Dog", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(metadata.AgeLabel, "Child", StringComparison.OrdinalIgnoreCase))
+        {
+            return ["Dog", string.Empty];
+        }
+
+        return [string.Empty, string.Empty];
+    }
+
+    private static bool TryBuildIndexedBodyRecipePrefix(SimInfoSummary metadata, out string prefix)
+    {
+        prefix = string.Empty;
+        if (string.IsNullOrWhiteSpace(metadata.SpeciesLabel) ||
+            string.IsNullOrWhiteSpace(metadata.AgeLabel) ||
+            string.Equals(metadata.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder();
+        if (string.Equals(metadata.AgeLabel, "Infant", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append('i');
+        }
+        else if (string.Equals(metadata.AgeLabel, "Toddler", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append(string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) ? 'p' : 'c');
+        }
+        else if (string.Equals(metadata.AgeLabel, "Child", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append('c');
+        }
+        else
+        {
+            builder.Append(string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) ? 'y' : 'a');
+        }
+
+        if (!string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append(GetIndexedNonHumanBodyPrefix(metadata.SpeciesLabel, metadata.AgeLabel));
+        }
+        else if (string.Equals(metadata.AgeLabel, "Baby", StringComparison.OrdinalIgnoreCase) ||
+                 string.IsNullOrWhiteSpace(metadata.GenderLabel) ||
+                 string.Equals(metadata.GenderLabel, "Unknown", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(metadata.GenderLabel, "Unisex", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(metadata.AgeLabel, "Infant", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Append('u');
+        }
+        else
+        {
+            builder.Append(string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase) ? 'm' : 'f');
+        }
+
+        prefix = builder.ToString();
+        return prefix.Length > 0;
+    }
+
+    private static IReadOnlyList<string> BuildGenericIndexedBodyRecipePrefixes(SimInfoSummary metadata)
+    {
+        if (!string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(metadata.AgeLabel) ||
+            string.Equals(metadata.AgeLabel, "Unknown", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(metadata.AgeLabel, "Baby", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        if (string.Equals(metadata.AgeLabel, "Infant", StringComparison.OrdinalIgnoreCase))
+        {
+            return ["iu"];
+        }
+
+        if (string.Equals(metadata.AgeLabel, "Toddler", StringComparison.OrdinalIgnoreCase))
+        {
+            var prefixes = new List<string> { "pu" };
+            if (string.Equals(metadata.GenderLabel, "Female", StringComparison.OrdinalIgnoreCase))
+            {
+                prefixes.Add("pf");
+            }
+            else if (string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase))
+            {
+                prefixes.Add("pm");
+            }
+
+            return prefixes;
+        }
+
+        if (string.Equals(metadata.AgeLabel, "Child", StringComparison.OrdinalIgnoreCase))
+        {
+            var prefixes = new List<string> { "cu" };
+            if (string.Equals(metadata.GenderLabel, "Female", StringComparison.OrdinalIgnoreCase))
+            {
+                prefixes.Add("cf");
+            }
+            else if (string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase))
+            {
+                prefixes.Add("cm");
+            }
+
+            return prefixes;
+        }
+
+        var adultPrefixes = new List<string> { "ac", "ah" };
+        if (string.Equals(metadata.GenderLabel, "Female", StringComparison.OrdinalIgnoreCase))
+        {
+            adultPrefixes.Add("af");
+        }
+        else if (string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase))
+        {
+            adultPrefixes.Add("am");
+        }
+
+        return adultPrefixes;
+    }
+
+    private static char GetIndexedNonHumanBodyPrefix(string speciesLabel, string ageLabel)
+    {
+        if (string.Equals(ageLabel, "Child", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(speciesLabel, "Little Dog", StringComparison.OrdinalIgnoreCase))
+        {
+            return 'd';
+        }
+
+        return speciesLabel switch
+        {
+            "Dog" => 'd',
+            "Cat" => 'c',
+            "Little Dog" => 'l',
+            "Fox" => 'f',
+            "Horse" => 'h',
+            _ => 'a'
+        };
+    }
+
     private async Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsFromDatabaseAsync(string databasePath, Guid assetId, CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
@@ -814,6 +1267,11 @@ public sealed class SqliteIndexStore : IIndexStore
                 root_path TEXT NOT NULL,
                 kind TEXT NOT NULL,
                 is_enabled INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cache_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS packages (
@@ -908,11 +1366,73 @@ public sealed class SqliteIndexStore : IIndexStore
                 thumbnail_tgi TEXT NULL,
                 diagnostics TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS sim_template_facts (
+                resource_id TEXT NOT NULL PRIMARY KEY,
+                data_source_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                package_path TEXT NOT NULL,
+                root_tgi TEXT NOT NULL,
+                archetype_key TEXT NOT NULL,
+                species_label TEXT NOT NULL,
+                age_label TEXT NOT NULL,
+                gender_label TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                notes TEXT NOT NULL,
+                outfit_category_count INTEGER NOT NULL,
+                outfit_entry_count INTEGER NOT NULL,
+                outfit_part_count INTEGER NOT NULL,
+                body_modifier_count INTEGER NOT NULL,
+                face_modifier_count INTEGER NOT NULL,
+                sculpt_count INTEGER NOT NULL,
+                has_skintone INTEGER NOT NULL,
+                authoritative_body_driving_outfit_count INTEGER NOT NULL,
+                authoritative_body_driving_outfit_part_count INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sim_template_body_parts (
+                resource_id TEXT NOT NULL,
+                data_source_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                package_path TEXT NOT NULL,
+                root_tgi TEXT NOT NULL,
+                outfit_category_value INTEGER NOT NULL,
+                outfit_category_label TEXT NOT NULL,
+                outfit_index INTEGER NOT NULL,
+                part_index INTEGER NOT NULL,
+                body_type INTEGER NOT NULL,
+                body_type_label TEXT NULL,
+                part_instance_hex TEXT NOT NULL,
+                is_body_driving INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cas_part_facts (
+                asset_id TEXT NOT NULL,
+                data_source_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                package_path TEXT NOT NULL,
+                root_tgi TEXT NOT NULL,
+                slot_category TEXT NOT NULL,
+                category_normalized TEXT NULL,
+                body_type INTEGER NOT NULL,
+                internal_name TEXT NULL,
+                default_body_type INTEGER NOT NULL,
+                default_body_type_female INTEGER NOT NULL,
+                default_body_type_male INTEGER NOT NULL,
+                has_naked_link INTEGER NOT NULL,
+                restrict_opposite_gender INTEGER NOT NULL,
+                restrict_opposite_frame INTEGER NOT NULL,
+                sort_layer INTEGER NOT NULL,
+                species_label TEXT NULL,
+                age_label TEXT NOT NULL,
+                gender_label TEXT NOT NULL
+            );
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureDeferredMetadataSchemaAsync(connection, cancellationToken);
         await EnsureScanTokenSchemaAsync(connection, cancellationToken);
         await EnsureAssetSummarySchemaAsync(connection, cancellationToken);
+        await EnsureSeedFactContentVersionAsync(connection, cancellationToken);
         if (!includeSearchStructures)
         {
             return;
@@ -929,6 +1449,43 @@ public sealed class SqliteIndexStore : IIndexStore
         {
             await SyncFtsTablesAsync(connection, cancellationToken);
         }
+    }
+
+    private static async Task EnsureSeedFactContentVersionAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var existingVersion = await GetCacheMetadataValueAsync(
+            connection,
+            SeedFactContentVersionMetadataKey,
+            cancellationToken).ConfigureAwait(false);
+        if (string.Equals(existingVersion, SeedFactContentVersion, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            DELETE FROM sim_template_body_parts;
+            DELETE FROM sim_template_facts;
+            DELETE FROM cas_part_facts;
+            INSERT INTO cache_metadata(key, value)
+            VALUES ($key, $value)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+            """;
+        command.Parameters.AddWithValue("$key", SeedFactContentVersionMetadataKey);
+        command.Parameters.AddWithValue("$value", SeedFactContentVersion);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static async Task<string?> GetCacheMetadataValueAsync(SqliteConnection connection, string key, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT value FROM cache_metadata WHERE key = $key;";
+        command.Parameters.AddWithValue("$key", key);
+        return Convert.ToString(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     private async Task<SqliteConnection> OpenConnectionAsync(string databasePath, SqliteConnectionProfile profile, CancellationToken cancellationToken)
@@ -1099,6 +1656,63 @@ public sealed class SqliteIndexStore : IIndexStore
                 reader.IsDBNull(13) ? null : Convert.ToUInt32(reader.GetInt64(13)),
                 reader.IsDBNull(14) ? null : Convert.ToUInt32(reader.GetInt64(14)),
                 reader.IsDBNull(23) ? null : reader.GetString(23)));
+        }
+
+        return results;
+    }
+
+    private static async Task<IReadOnlyList<SimTemplateFactSummary>> ReadSimTemplateFactsAsync(SqliteCommand command, CancellationToken cancellationToken)
+    {
+        var results = new List<SimTemplateFactSummary>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new SimTemplateFactSummary(
+                Guid.Parse(reader.GetString(0)),
+                Guid.Parse(reader.GetString(1)),
+                Enum.Parse<SourceKind>(reader.GetString(2)),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                reader.GetString(8),
+                reader.GetString(9),
+                reader.GetString(10),
+                reader.GetInt32(11),
+                reader.GetInt32(12),
+                reader.GetInt32(13),
+                reader.GetInt32(14),
+                reader.GetInt32(15),
+                reader.GetInt32(16),
+                reader.GetInt32(17) == 1,
+                reader.GetInt32(18),
+                reader.GetInt32(19)));
+        }
+
+        return results;
+    }
+
+    private static async Task<IReadOnlyList<SimTemplateBodyPartFact>> ReadSimTemplateBodyPartFactsAsync(SqliteCommand command, CancellationToken cancellationToken)
+    {
+        var results = new List<SimTemplateBodyPartFact>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new SimTemplateBodyPartFact(
+                Guid.Parse(reader.GetString(0)),
+                Guid.Parse(reader.GetString(1)),
+                Enum.Parse<SourceKind>(reader.GetString(2)),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetInt32(5),
+                reader.GetString(6),
+                reader.GetInt32(7),
+                reader.GetInt32(8),
+                reader.GetInt32(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                Convert.ToUInt64(reader.GetString(11), 16),
+                reader.GetInt32(12) == 1));
         }
 
         return results;
@@ -2224,6 +2838,56 @@ public sealed class SqliteIndexStore : IIndexStore
             "variantIndex", "variantKind", "displayLabel", "swatchHex", "thumbnailTgi", "diagnostics"
         ];
 
+        private static readonly string[] SimTemplateFactInsertColumns =
+        [
+            "resource_id", "data_source_id", "source_kind", "package_path", "root_tgi", "archetype_key",
+            "species_label", "age_label", "gender_label", "display_name", "notes",
+            "outfit_category_count", "outfit_entry_count", "outfit_part_count",
+            "body_modifier_count", "face_modifier_count", "sculpt_count", "has_skintone",
+            "authoritative_body_driving_outfit_count", "authoritative_body_driving_outfit_part_count"
+        ];
+
+        private static readonly string[] SimTemplateFactInsertParameterBases =
+        [
+            "resourceId", "dataSourceId", "sourceKind", "packagePath", "rootTgi", "archetypeKey",
+            "speciesLabel", "ageLabel", "genderLabel", "displayName", "notes",
+            "outfitCategoryCount", "outfitEntryCount", "outfitPartCount",
+            "bodyModifierCount", "faceModifierCount", "sculptCount", "hasSkintone",
+            "authoritativeBodyDrivingOutfitCount", "authoritativeBodyDrivingOutfitPartCount"
+        ];
+
+        private static readonly string[] SimTemplateBodyPartInsertColumns =
+        [
+            "resource_id", "data_source_id", "source_kind", "package_path", "root_tgi",
+            "outfit_category_value", "outfit_category_label", "outfit_index", "part_index",
+            "body_type", "body_type_label", "part_instance_hex", "is_body_driving"
+        ];
+
+        private static readonly string[] SimTemplateBodyPartInsertParameterBases =
+        [
+            "resourceId", "dataSourceId", "sourceKind", "packagePath", "rootTgi",
+            "outfitCategoryValue", "outfitCategoryLabel", "outfitIndex", "partIndex",
+            "bodyType", "bodyTypeLabel", "partInstanceHex", "isBodyDriving"
+        ];
+
+        private static readonly string[] CasPartFactInsertColumns =
+        [
+            "asset_id", "data_source_id", "source_kind", "package_path", "root_tgi",
+            "slot_category", "category_normalized", "body_type", "internal_name",
+            "default_body_type", "default_body_type_female", "default_body_type_male",
+            "has_naked_link", "restrict_opposite_gender", "restrict_opposite_frame",
+            "sort_layer", "species_label", "age_label", "gender_label"
+        ];
+
+        private static readonly string[] CasPartFactInsertParameterBases =
+        [
+            "assetId", "dataSourceId", "sourceKind", "packagePath", "rootTgi",
+            "slotCategory", "categoryNormalized", "bodyType", "internalName",
+            "defaultBodyType", "defaultBodyTypeFemale", "defaultBodyTypeMale",
+            "hasNakedLink", "restrictOppositeGender", "restrictOppositeFrame",
+            "sortLayer", "speciesLabel", "ageLabel", "genderLabel"
+        ];
+
         private sealed class BatchMetricsAccumulator
         {
             public TimeSpan DropIndexesElapsed { get; set; }
@@ -2236,6 +2900,27 @@ public sealed class SqliteIndexStore : IIndexStore
         }
 
         private sealed record FtsPackageKey(Guid DataSourceId, string PackagePath);
+
+        private sealed record IndexedCasPartFact(
+            Guid AssetId,
+            Guid DataSourceId,
+            SourceKind SourceKind,
+            string PackagePath,
+            string RootTgi,
+            string SlotCategory,
+            string? CategoryNormalized,
+            int BodyType,
+            string? InternalName,
+            bool DefaultForBodyType,
+            bool DefaultForBodyTypeFemale,
+            bool DefaultForBodyTypeMale,
+            bool HasNakedLink,
+            bool RestrictOppositeGender,
+            bool RestrictOppositeFrame,
+            int SortLayer,
+            string? SpeciesLabel,
+            string AgeLabel,
+            string GenderLabel);
 
         private sealed class PreparedInsertCommand(SqliteCommand command, SqliteParameter[] parameters) : IAsyncDisposable
         {
@@ -2260,10 +2945,16 @@ public sealed class SqliteIndexStore : IIndexStore
         private readonly SqliteCommand deletePackageResourcesCommand;
         private readonly SqliteCommand deletePackageAssetsCommand;
         private readonly SqliteCommand deletePackageAssetVariantsCommand;
+        private readonly SqliteCommand deletePackageSimTemplateFactsCommand;
+        private readonly SqliteCommand deletePackageSimTemplateBodyPartsCommand;
+        private readonly SqliteCommand deletePackageCasPartFactsCommand;
         private readonly SqliteCommand upsertPackageCommand;
         private readonly PreparedInsertCommand preparedResourceInsertCommand;
         private readonly PreparedInsertCommand preparedAssetInsertCommand;
         private readonly PreparedInsertCommand preparedAssetVariantInsertCommand;
+        private readonly PreparedInsertCommand preparedSimTemplateFactInsertCommand;
+        private readonly PreparedInsertCommand preparedSimTemplateBodyPartInsertCommand;
+        private readonly PreparedInsertCommand preparedCasPartFactInsertCommand;
         private IndexWriteMetrics? lastMetrics;
         private bool secondaryIndexesPending;
         private bool deferFtsSyncUntilFinalize;
@@ -2289,10 +2980,16 @@ public sealed class SqliteIndexStore : IIndexStore
             deletePackageResourcesCommand = CreateDeletePackageResourcesCommand(connection);
             deletePackageAssetsCommand = CreateDeletePackageAssetsCommand(connection);
             deletePackageAssetVariantsCommand = CreateDeletePackageAssetVariantsCommand(connection);
+            deletePackageSimTemplateFactsCommand = CreateDeletePackageSimTemplateFactsCommand(connection);
+            deletePackageSimTemplateBodyPartsCommand = CreateDeletePackageSimTemplateBodyPartsCommand(connection);
+            deletePackageCasPartFactsCommand = CreateDeletePackageCasPartFactsCommand(connection);
             upsertPackageCommand = CreateUpsertPackageCommand(connection);
             preparedResourceInsertCommand = CreatePreparedInsertCommand("resources", ResourceInsertColumns, ResourceInsertParameterBases);
             preparedAssetInsertCommand = CreatePreparedInsertCommand("assets", AssetInsertColumns, AssetInsertParameterBases);
             preparedAssetVariantInsertCommand = CreatePreparedInsertCommand("asset_variants", AssetVariantInsertColumns, AssetVariantInsertParameterBases);
+            preparedSimTemplateFactInsertCommand = CreatePreparedInsertCommand("sim_template_facts", SimTemplateFactInsertColumns, SimTemplateFactInsertParameterBases);
+            preparedSimTemplateBodyPartInsertCommand = CreatePreparedInsertCommand("sim_template_body_parts", SimTemplateBodyPartInsertColumns, SimTemplateBodyPartInsertParameterBases);
+            preparedCasPartFactInsertCommand = CreatePreparedInsertCommand("cas_part_facts", CasPartFactInsertColumns, CasPartFactInsertParameterBases);
             PrepareCommands();
         }
 
@@ -2422,6 +3119,15 @@ public sealed class SqliteIndexStore : IIndexStore
 
                 Bind(deletePackageAssetVariantsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
                 await deletePackageAssetVariantsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                Bind(deletePackageSimTemplateFactsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
+                await deletePackageSimTemplateFactsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                Bind(deletePackageSimTemplateBodyPartsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
+                await deletePackageSimTemplateBodyPartsCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                Bind(deletePackageCasPartFactsCommand, transaction, packageScan.DataSourceId, packageScan.PackagePath);
+                await deletePackageCasPartFactsCommand.ExecuteNonQueryAsync(cancellationToken);
                 deleteStopwatch.Stop();
                 metrics.DeleteElapsed += deleteStopwatch.Elapsed;
             }
@@ -2438,6 +3144,10 @@ public sealed class SqliteIndexStore : IIndexStore
             BulkInsertAssets(transaction, assets, scanToken, cancellationToken);
             var assetVariants = MaterializeAssetVariants(packageScan, assets);
             BulkInsertAssetVariants(transaction, assetVariants, scanToken, cancellationToken);
+            BulkInsertSimTemplateFacts(transaction, packageScan.SimTemplateFacts, cancellationToken);
+            BulkInsertSimTemplateBodyParts(transaction, packageScan.SimTemplateBodyPartFacts, cancellationToken);
+            var casPartFacts = MaterializeCasPartFacts(packageScan, assets);
+            BulkInsertCasPartFacts(transaction, casPartFacts, cancellationToken);
             assetInsertStopwatch.Stop();
             metrics.InsertAssetsElapsed += assetInsertStopwatch.Elapsed;
 
@@ -2556,6 +3266,51 @@ public sealed class SqliteIndexStore : IIndexStore
             }
         }
 
+        private void BulkInsertSimTemplateFacts(SqliteTransaction transaction, IReadOnlyList<SimTemplateFactSummary> facts, CancellationToken cancellationToken)
+        {
+            preparedSimTemplateFactInsertCommand.Command.Transaction = transaction;
+            for (var index = 0; index < facts.Count; index++)
+            {
+                if ((index & 255) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                SetSimTemplateFactParameterValues(preparedSimTemplateFactInsertCommand.Parameters, facts[index]);
+                preparedSimTemplateFactInsertCommand.Command.ExecuteNonQuery();
+            }
+        }
+
+        private void BulkInsertSimTemplateBodyParts(SqliteTransaction transaction, IReadOnlyList<SimTemplateBodyPartFact> bodyParts, CancellationToken cancellationToken)
+        {
+            preparedSimTemplateBodyPartInsertCommand.Command.Transaction = transaction;
+            for (var index = 0; index < bodyParts.Count; index++)
+            {
+                if ((index & 255) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                SetSimTemplateBodyPartParameterValues(preparedSimTemplateBodyPartInsertCommand.Parameters, bodyParts[index]);
+                preparedSimTemplateBodyPartInsertCommand.Command.ExecuteNonQuery();
+            }
+        }
+
+        private void BulkInsertCasPartFacts(SqliteTransaction transaction, IReadOnlyList<IndexedCasPartFact> facts, CancellationToken cancellationToken)
+        {
+            preparedCasPartFactInsertCommand.Command.Transaction = transaction;
+            for (var index = 0; index < facts.Count; index++)
+            {
+                if ((index & 255) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                SetCasPartFactParameterValues(preparedCasPartFactInsertCommand.Parameters, facts[index]);
+                preparedCasPartFactInsertCommand.Command.ExecuteNonQuery();
+            }
+        }
+
         private static IReadOnlyList<AssetVariantSummary> MaterializeAssetVariants(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets)
         {
             if (packageScan.AssetVariants.Count == 0 || assets.Count == 0)
@@ -2590,6 +3345,51 @@ public sealed class SqliteIndexStore : IIndexStore
             }
 
             return variants;
+        }
+
+        private static IReadOnlyList<IndexedCasPartFact> MaterializeCasPartFacts(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets)
+        {
+            if (packageScan.CasPartFacts.Count == 0 || assets.Count == 0)
+            {
+                return [];
+            }
+
+            var assetsByRoot = assets
+                .Where(static asset => asset.AssetKind == AssetKind.Cas)
+                .ToDictionary(
+                    static asset => $"{asset.DataSourceId:D}|{asset.PackagePath}|{asset.RootKey.FullTgi}",
+                    StringComparer.OrdinalIgnoreCase);
+            var facts = new List<IndexedCasPartFact>(packageScan.CasPartFacts.Count);
+            foreach (var fact in packageScan.CasPartFacts)
+            {
+                if (!assetsByRoot.TryGetValue($"{fact.DataSourceId:D}|{fact.PackagePath}|{fact.RootTgi}", out var asset))
+                {
+                    continue;
+                }
+
+                facts.Add(new IndexedCasPartFact(
+                    asset.Id,
+                    fact.DataSourceId,
+                    fact.SourceKind,
+                    fact.PackagePath,
+                    fact.RootTgi,
+                    fact.SlotCategory,
+                    fact.CategoryNormalized,
+                    fact.BodyType,
+                    fact.InternalName,
+                    fact.DefaultForBodyType,
+                    fact.DefaultForBodyTypeFemale,
+                    fact.DefaultForBodyTypeMale,
+                    fact.HasNakedLink,
+                    fact.RestrictOppositeGender,
+                    fact.RestrictOppositeFrame,
+                    fact.SortLayer,
+                    fact.SpeciesLabel,
+                    fact.AgeLabel,
+                    fact.GenderLabel));
+            }
+
+            return facts;
         }
 
         private async Task SyncFtsForPackagesAsync(SqliteTransaction transaction, IReadOnlyList<FtsPackageKey> packageKeys, CancellationToken cancellationToken)
@@ -2685,6 +3485,9 @@ public sealed class SqliteIndexStore : IIndexStore
             await preparedResourceInsertCommand.DisposeAsync();
             await preparedAssetInsertCommand.DisposeAsync();
             await preparedAssetVariantInsertCommand.DisposeAsync();
+            await preparedSimTemplateFactInsertCommand.DisposeAsync();
+            await preparedSimTemplateBodyPartInsertCommand.DisposeAsync();
+            await preparedCasPartFactInsertCommand.DisposeAsync();
 
             foreach (var prepared in preparedDeleteResourcesFtsCommands.Values)
             {
@@ -2710,6 +3513,9 @@ public sealed class SqliteIndexStore : IIndexStore
             await deletePackageResourcesCommand.DisposeAsync();
             await deletePackageAssetsCommand.DisposeAsync();
             await deletePackageAssetVariantsCommand.DisposeAsync();
+            await deletePackageSimTemplateFactsCommand.DisposeAsync();
+            await deletePackageSimTemplateBodyPartsCommand.DisposeAsync();
+            await deletePackageCasPartFactsCommand.DisposeAsync();
             await connection.DisposeAsync();
             commandsDisposed = true;
         }
@@ -2735,6 +3541,9 @@ public sealed class SqliteIndexStore : IIndexStore
             deletePackageResourcesCommand.Prepare();
             deletePackageAssetsCommand.Prepare();
             deletePackageAssetVariantsCommand.Prepare();
+            deletePackageSimTemplateFactsCommand.Prepare();
+            deletePackageSimTemplateBodyPartsCommand.Prepare();
+            deletePackageCasPartFactsCommand.Prepare();
             upsertPackageCommand.Prepare();
         }
 
@@ -2941,6 +3750,70 @@ public sealed class SqliteIndexStore : IIndexStore
             SetParameterValue(parameters[12], variant.Diagnostics);
         }
 
+        private static void SetSimTemplateFactParameterValues(SqliteParameter[] parameters, SimTemplateFactSummary fact)
+        {
+            SetParameterValue(parameters[0], fact.ResourceId.ToString("D"));
+            SetParameterValue(parameters[1], fact.DataSourceId.ToString("D"));
+            SetParameterValue(parameters[2], fact.SourceKind.ToString());
+            SetParameterValue(parameters[3], fact.PackagePath);
+            SetParameterValue(parameters[4], fact.RootTgi);
+            SetParameterValue(parameters[5], fact.ArchetypeKey);
+            SetParameterValue(parameters[6], fact.SpeciesLabel);
+            SetParameterValue(parameters[7], fact.AgeLabel);
+            SetParameterValue(parameters[8], fact.GenderLabel);
+            SetParameterValue(parameters[9], fact.DisplayName);
+            SetParameterValue(parameters[10], fact.Notes);
+            SetParameterValue(parameters[11], fact.OutfitCategoryCount);
+            SetParameterValue(parameters[12], fact.OutfitEntryCount);
+            SetParameterValue(parameters[13], fact.OutfitPartCount);
+            SetParameterValue(parameters[14], fact.BodyModifierCount);
+            SetParameterValue(parameters[15], fact.FaceModifierCount);
+            SetParameterValue(parameters[16], fact.SculptCount);
+            SetParameterValue(parameters[17], fact.HasSkintone ? 1 : 0);
+            SetParameterValue(parameters[18], fact.AuthoritativeBodyDrivingOutfitCount);
+            SetParameterValue(parameters[19], fact.AuthoritativeBodyDrivingOutfitPartCount);
+        }
+
+        private static void SetSimTemplateBodyPartParameterValues(SqliteParameter[] parameters, SimTemplateBodyPartFact bodyPart)
+        {
+            SetParameterValue(parameters[0], bodyPart.ResourceId.ToString("D"));
+            SetParameterValue(parameters[1], bodyPart.DataSourceId.ToString("D"));
+            SetParameterValue(parameters[2], bodyPart.SourceKind.ToString());
+            SetParameterValue(parameters[3], bodyPart.PackagePath);
+            SetParameterValue(parameters[4], bodyPart.RootTgi);
+            SetParameterValue(parameters[5], bodyPart.OutfitCategoryValue);
+            SetParameterValue(parameters[6], bodyPart.OutfitCategoryLabel);
+            SetParameterValue(parameters[7], bodyPart.OutfitIndex);
+            SetParameterValue(parameters[8], bodyPart.PartIndex);
+            SetParameterValue(parameters[9], bodyPart.BodyType);
+            SetParameterValue(parameters[10], bodyPart.BodyTypeLabel);
+            SetParameterValue(parameters[11], bodyPart.PartInstance.ToString("X16"));
+            SetParameterValue(parameters[12], bodyPart.IsBodyDriving ? 1 : 0);
+        }
+
+        private static void SetCasPartFactParameterValues(SqliteParameter[] parameters, IndexedCasPartFact fact)
+        {
+            SetParameterValue(parameters[0], fact.AssetId.ToString("D"));
+            SetParameterValue(parameters[1], fact.DataSourceId.ToString("D"));
+            SetParameterValue(parameters[2], fact.SourceKind.ToString());
+            SetParameterValue(parameters[3], fact.PackagePath);
+            SetParameterValue(parameters[4], fact.RootTgi);
+            SetParameterValue(parameters[5], fact.SlotCategory);
+            SetParameterValue(parameters[6], fact.CategoryNormalized);
+            SetParameterValue(parameters[7], fact.BodyType);
+            SetParameterValue(parameters[8], fact.InternalName);
+            SetParameterValue(parameters[9], fact.DefaultForBodyType ? 1 : 0);
+            SetParameterValue(parameters[10], fact.DefaultForBodyTypeFemale ? 1 : 0);
+            SetParameterValue(parameters[11], fact.DefaultForBodyTypeMale ? 1 : 0);
+            SetParameterValue(parameters[12], fact.HasNakedLink ? 1 : 0);
+            SetParameterValue(parameters[13], fact.RestrictOppositeGender ? 1 : 0);
+            SetParameterValue(parameters[14], fact.RestrictOppositeFrame ? 1 : 0);
+            SetParameterValue(parameters[15], fact.SortLayer);
+            SetParameterValue(parameters[16], fact.SpeciesLabel);
+            SetParameterValue(parameters[17], fact.AgeLabel);
+            SetParameterValue(parameters[18], fact.GenderLabel);
+        }
+
         private static void SetParameterValue(SqliteParameter parameter, object? value) =>
             parameter.Value = value ?? DBNull.Value;
 
@@ -3002,6 +3875,33 @@ public sealed class SqliteIndexStore : IIndexStore
         {
             var command = connection.CreateCommand();
             command.CommandText = "DELETE FROM asset_variants WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            return command;
+        }
+
+        internal static SqliteCommand CreateDeletePackageSimTemplateFactsCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM sim_template_facts WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            return command;
+        }
+
+        internal static SqliteCommand CreateDeletePackageSimTemplateBodyPartsCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM sim_template_body_parts WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
+            command.Parameters.Add("$dataSourceId", SqliteType.Text);
+            command.Parameters.Add("$packagePath", SqliteType.Text);
+            return command;
+        }
+
+        internal static SqliteCommand CreateDeletePackageCasPartFactsCommand(SqliteConnection connection)
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM cas_part_facts WHERE data_source_id = $dataSourceId AND package_path = $packagePath;";
             command.Parameters.Add("$dataSourceId", SqliteType.Text);
             command.Parameters.Add("$packagePath", SqliteType.Text);
             return command;
@@ -3425,12 +4325,10 @@ public sealed class SqliteIndexStore : IIndexStore
 public sealed class ResourceMetadataEnrichmentService : IResourceMetadataEnrichmentService
 {
     private readonly IResourceCatalogService resourceCatalogService;
-    private readonly IIndexStore indexStore;
 
-    public ResourceMetadataEnrichmentService(IResourceCatalogService resourceCatalogService, IIndexStore indexStore)
+    public ResourceMetadataEnrichmentService(IResourceCatalogService resourceCatalogService)
     {
         this.resourceCatalogService = resourceCatalogService;
-        this.indexStore = indexStore;
     }
 
     public async Task<ResourceMetadata> EnrichAsync(ResourceMetadata resource, CancellationToken cancellationToken)
@@ -3445,8 +4343,9 @@ public sealed class ResourceMetadataEnrichmentService : IResourceMetadataEnrichm
             return resource;
         }
 
-        var enriched = await resourceCatalogService.EnrichResourceAsync(resource, cancellationToken).ConfigureAwait(false);
-        return await indexStore.PersistResourceEnrichmentAsync(enriched, cancellationToken).ConfigureAwait(false);
+        // Runtime browse/open/export paths may enrich metadata for the current operation,
+        // but they must not mutate the persisted serving catalog.
+        return await resourceCatalogService.EnrichResourceAsync(resource, cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -3735,12 +4634,19 @@ public sealed class PackageIndexCoordinator
         {
             List<ResourceMetadata>? enrichedResources = null;
             List<DiscoveredAssetVariant>? discoveredVariants = null;
+            List<SimTemplateFactSummary>? discoveredSimTemplateFacts = null;
+            List<SimTemplateBodyPartFact>? discoveredSimTemplateBodyParts = null;
+            List<DiscoveredCasPartFact>? discoveredCasPartFacts = null;
             await using var package = await TryOpenPackageForSeedEnrichmentAsync(packageScan.PackagePath, cancellationToken).ConfigureAwait(false);
 
             foreach (var (resource, index) in seedCandidates)
             {
                 var enrichment = await EnrichSeedResourceAsync(resource, package, sourceRootPath, cancellationToken).ConfigureAwait(false);
-                if (enrichment.Resource == resource && enrichment.AssetVariants.Count == 0)
+                if (enrichment.Resource == resource &&
+                    enrichment.AssetVariants.Count == 0 &&
+                    enrichment.SimTemplateFacts.Count == 0 &&
+                    enrichment.SimTemplateBodyPartFacts.Count == 0 &&
+                    enrichment.CasPartFacts.Count == 0)
                 {
                     continue;
                 }
@@ -3756,19 +4662,47 @@ public sealed class PackageIndexCoordinator
                     discoveredVariants ??= [];
                     discoveredVariants.AddRange(enrichment.AssetVariants);
                 }
+
+                if (enrichment.SimTemplateFacts.Count > 0)
+                {
+                    discoveredSimTemplateFacts ??= [];
+                    discoveredSimTemplateFacts.AddRange(enrichment.SimTemplateFacts);
+                }
+
+                if (enrichment.SimTemplateBodyPartFacts.Count > 0)
+                {
+                    discoveredSimTemplateBodyParts ??= [];
+                    discoveredSimTemplateBodyParts.AddRange(enrichment.SimTemplateBodyPartFacts);
+                }
+
+                if (enrichment.CasPartFacts.Count > 0)
+                {
+                    discoveredCasPartFacts ??= [];
+                    discoveredCasPartFacts.AddRange(enrichment.CasPartFacts);
+                }
             }
 
-            return enrichedResources is null && discoveredVariants is null
+            return enrichedResources is null &&
+                   discoveredVariants is null &&
+                   discoveredSimTemplateFacts is null &&
+                   discoveredSimTemplateBodyParts is null &&
+                   discoveredCasPartFacts is null
                 ? packageScan
                 : packageScan with
                 {
                     Resources = enrichedResources ?? resources,
-                    AssetVariants = discoveredVariants ?? packageScan.AssetVariants
+                    AssetVariants = discoveredVariants ?? packageScan.AssetVariants,
+                    SimTemplateFacts = discoveredSimTemplateFacts ?? packageScan.SimTemplateFacts,
+                    SimTemplateBodyPartFacts = discoveredSimTemplateBodyParts ?? packageScan.SimTemplateBodyPartFacts,
+                    CasPartFacts = discoveredCasPartFacts ?? packageScan.CasPartFacts
                 };
         }
 
         var enrichedBuffer = resources.ToArray();
         var discoveredVariantBuffer = new ConcurrentBag<DiscoveredAssetVariant>();
+        var discoveredSimTemplateFactBuffer = new ConcurrentBag<SimTemplateFactSummary>();
+        var discoveredSimTemplateBodyPartBuffer = new ConcurrentBag<SimTemplateBodyPartFact>();
+        var discoveredCasPartFactBuffer = new ConcurrentBag<DiscoveredCasPartFact>();
         var chunkSize = Math.Max(1, (int)Math.Ceiling(seedCandidates.Length / (double)GetSeedEnrichmentParallelism(seedCandidates.Length)));
         var tasks = new List<Task>();
         for (var offset = 0; offset < seedCandidates.Length; offset += chunkSize)
@@ -3792,6 +4726,21 @@ public sealed class PackageIndexCoordinator
                 {
                     discoveredVariantBuffer.Add(variant);
                 }
+
+                foreach (var fact in enrichment.SimTemplateFacts)
+                {
+                    discoveredSimTemplateFactBuffer.Add(fact);
+                }
+
+                foreach (var bodyPart in enrichment.SimTemplateBodyPartFacts)
+                {
+                    discoveredSimTemplateBodyPartBuffer.Add(bodyPart);
+                }
+
+                foreach (var fact in enrichment.CasPartFacts)
+                {
+                    discoveredCasPartFactBuffer.Add(fact);
+                }
             }
         }
 
@@ -3802,6 +4751,25 @@ public sealed class PackageIndexCoordinator
                 .OrderBy(static variant => variant.RootKey.FullTgi, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(static variant => variant.VariantKind, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(static variant => variant.VariantIndex)
+                .ToArray(),
+            SimTemplateFacts = discoveredSimTemplateFactBuffer
+                .OrderBy(static fact => fact.ArchetypeKey, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(static fact => fact.AuthoritativeBodyDrivingOutfitCount)
+                .ThenByDescending(static fact => fact.AuthoritativeBodyDrivingOutfitPartCount)
+                .ThenBy(static fact => fact.PackagePath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static fact => fact.RootTgi, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            SimTemplateBodyPartFacts = discoveredSimTemplateBodyPartBuffer
+                .OrderBy(static fact => fact.PackagePath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static fact => fact.RootTgi, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static fact => fact.OutfitIndex)
+                .ThenBy(static fact => fact.PartIndex)
+                .ToArray(),
+            CasPartFacts = discoveredCasPartFactBuffer
+                .OrderBy(static fact => fact.PackagePath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static fact => fact.RootTgi, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static fact => fact.BodyType)
+                .ThenBy(static fact => fact.InternalName, StringComparer.OrdinalIgnoreCase)
                 .ToArray()
         };
     }
@@ -3850,7 +4818,12 @@ public sealed class PackageIndexCoordinator
                         ? resource.Description
                         : casSeedMetadata.Description
                 };
-                return new SeedEnrichmentOutcome(enrichedResource, casSeedMetadata.Variants);
+                return new SeedEnrichmentOutcome(
+                    enrichedResource,
+                    casSeedMetadata.Variants,
+                    [],
+                    [],
+                    casSeedMetadata.Fact is null ? [] : [casSeedMetadata.Fact]);
             }
 
             return new SeedEnrichmentOutcome(resource, []);
@@ -3884,13 +4857,40 @@ public sealed class PackageIndexCoordinator
                 return new SeedEnrichmentOutcome(resource, []);
             }
 
+            var simTemplateSeedMetadata = Ts4SeedMetadataExtractor.TryExtractSimTemplateSeedMetadata(resource, bytes);
+
             return new SeedEnrichmentOutcome(
                 resource with
                 {
                     Name = string.IsNullOrWhiteSpace(simInfoSeedMetadata.DisplayName) ? resource.Name : simInfoSeedMetadata.DisplayName,
                     Description = string.IsNullOrWhiteSpace(simInfoSeedMetadata.Description) ? resource.Description : simInfoSeedMetadata.Description
                 },
+                [],
+                simTemplateSeedMetadata is null ? [] : [simTemplateSeedMetadata.Fact],
+                simTemplateSeedMetadata?.BodyPartFacts ?? [],
                 []);
+        }
+
+        if (Ts4StructuredResourceMetadataExtractor.RequiresStructuredDescription(resource.Key.TypeName))
+        {
+            var structuredMetadata = Ts4StructuredResourceMetadataExtractor.Describe(resource.Key.TypeName, bytes);
+            if (!string.IsNullOrWhiteSpace(structuredMetadata.Description) ||
+                !string.IsNullOrWhiteSpace(structuredMetadata.SuggestedName))
+            {
+                return new SeedEnrichmentOutcome(
+                    resource with
+                    {
+                        Name = string.IsNullOrWhiteSpace(structuredMetadata.SuggestedName)
+                            ? resource.Name
+                            : structuredMetadata.SuggestedName,
+                        Description = string.IsNullOrWhiteSpace(structuredMetadata.Description)
+                            ? resource.Description
+                            : structuredMetadata.Description
+                    },
+                    []);
+            }
+
+            return new SeedEnrichmentOutcome(resource, []);
         }
 
         var technicalName = Ts4SeedMetadataExtractor.TryExtractTechnicalName(resource, bytes);
@@ -3969,6 +4969,11 @@ public sealed class PackageIndexCoordinator
         }
 
         if (resource.Key.TypeName == "SimInfo")
+        {
+            return string.IsNullOrWhiteSpace(resource.Name) || string.IsNullOrWhiteSpace(resource.Description);
+        }
+
+        if (Ts4StructuredResourceMetadataExtractor.RequiresStructuredDescription(resource.Key.TypeName))
         {
             return string.IsNullOrWhiteSpace(resource.Name) || string.IsNullOrWhiteSpace(resource.Description);
         }
@@ -4242,21 +5247,31 @@ public sealed class PackageIndexCoordinator
                 : packageScan.Resources.Skip(offset).Take(sliceSize).ToArray();
             resourcesWrittenAfterSlice += sliceSize;
             var sliceIndex = slices.Count + 1;
-            slices.Add(new PersistWorkItem(
-                workItem,
-                sliceSize == totalResources
-                    ? packageScan
+            var isFinalSlice = sliceIndex == sliceCount;
+            var slicePackageScan = sliceSize == totalResources
+                ? packageScan
+                : isFinalSlice
+                    ? packageScan with
+                    {
+                        Resources = sliceResources
+                    }
                     : packageScan with
                     {
                         Resources = sliceResources,
-                        AssetVariants = []
-                    },
-                sliceIndex == sliceCount ? assets : Array.Empty<AssetSummary>(),
+                        AssetVariants = [],
+                        SimTemplateFacts = [],
+                        SimTemplateBodyPartFacts = [],
+                        CasPartFacts = []
+                    };
+            slices.Add(new PersistWorkItem(
+                workItem,
+                slicePackageScan,
+                isFinalSlice ? assets : Array.Empty<AssetSummary>(),
                 totalResources,
                 resourcesWrittenAfterSlice,
                 sliceIndex,
                 sliceCount,
-                sliceIndex == sliceCount));
+                isFinalSlice));
         }
 
         return slices;
@@ -4290,9 +5305,39 @@ public sealed class PackageIndexCoordinator
         int SliceCount,
         bool IsFinalSlice);
 
+    private sealed record IndexedCasPartFact(
+        Guid AssetId,
+        Guid DataSourceId,
+        SourceKind SourceKind,
+        string PackagePath,
+        string RootTgi,
+        string SlotCategory,
+        string? CategoryNormalized,
+        int BodyType,
+        string? InternalName,
+        bool DefaultForBodyType,
+        bool DefaultForBodyTypeFemale,
+        bool DefaultForBodyTypeMale,
+        bool HasNakedLink,
+        bool RestrictOppositeGender,
+        bool RestrictOppositeFrame,
+        int SortLayer,
+        string? SpeciesLabel,
+        string AgeLabel,
+        string GenderLabel);
+
     private sealed record SeedEnrichmentOutcome(
         ResourceMetadata Resource,
-        IReadOnlyList<DiscoveredAssetVariant> AssetVariants);
+        IReadOnlyList<DiscoveredAssetVariant> AssetVariants,
+        IReadOnlyList<SimTemplateFactSummary> SimTemplateFacts,
+        IReadOnlyList<SimTemplateBodyPartFact> SimTemplateBodyPartFacts,
+        IReadOnlyList<DiscoveredCasPartFact> CasPartFacts)
+    {
+        public SeedEnrichmentOutcome(ResourceMetadata resource, IReadOnlyList<DiscoveredAssetVariant> assetVariants)
+            : this(resource, assetVariants, [], [], [])
+        {
+        }
+    }
 
     private sealed class IndexingRunState
     {

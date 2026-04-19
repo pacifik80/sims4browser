@@ -174,5 +174,6 @@ try {
 }
 catch {
 }
-& $resolvedExePath
-exit $LASTEXITCODE
+$startedProcess = Start-Process -FilePath $resolvedExePath -PassThru
+$startedProcess.WaitForExit()
+exit $startedProcess.ExitCode

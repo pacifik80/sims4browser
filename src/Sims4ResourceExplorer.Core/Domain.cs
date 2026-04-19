@@ -90,6 +90,9 @@ public sealed record PackageScanResult(
     IReadOnlyList<string> Diagnostics)
 {
     public IReadOnlyList<DiscoveredAssetVariant> AssetVariants { get; init; } = [];
+    public IReadOnlyList<SimTemplateFactSummary> SimTemplateFacts { get; init; } = [];
+    public IReadOnlyList<SimTemplateBodyPartFact> SimTemplateBodyPartFacts { get; init; } = [];
+    public IReadOnlyList<DiscoveredCasPartFact> CasPartFacts { get; init; } = [];
 }
 
 public sealed record AssetCapabilitySnapshot(
@@ -190,6 +193,26 @@ public sealed record DiscoveredAssetVariant(
     string? SwatchHex = null,
     string? ThumbnailTgi = null,
     string Diagnostics = "");
+
+public sealed record DiscoveredCasPartFact(
+    Guid DataSourceId,
+    SourceKind SourceKind,
+    string PackagePath,
+    string RootTgi,
+    string SlotCategory,
+    string? CategoryNormalized,
+    int BodyType,
+    string? InternalName,
+    bool DefaultForBodyType,
+    bool DefaultForBodyTypeFemale,
+    bool DefaultForBodyTypeMale,
+    bool HasNakedLink,
+    bool RestrictOppositeGender,
+    bool RestrictOppositeFrame,
+    int SortLayer,
+    string? SpeciesLabel,
+    string AgeLabel,
+    string GenderLabel);
 
 public sealed record AssetVariantSummary(
     Guid AssetId,
@@ -457,12 +480,29 @@ public sealed record SimAssemblyStageSummary(
     SimAssemblyStageState State,
     string Notes);
 
+public sealed record SimAssemblySeamInputSummary(
+    string Label,
+    string StatusLabel,
+    string SourceLabel,
+    string SourceResourceTgi,
+    string SourcePackagePath,
+    int MeshStartIndex,
+    int MeshCount,
+    int MaterialStartIndex,
+    int MaterialCount,
+    int BoneCount,
+    int RebasedWeightCount,
+    int AddedBoneCount,
+    string Notes);
+
 public sealed record SimAssemblyOutputSummary(
     string Label,
     string StatusLabel,
     int MeshCount,
     int MaterialCount,
     int BoneCount,
+    int AcceptedContributionCount,
+    IReadOnlyList<SimAssemblySeamInputSummary> AcceptedInputs,
     string Notes);
 
 public sealed record SimAssemblyContributionSummary(
@@ -489,22 +529,36 @@ public sealed record SimAssemblyPayloadSummary(
 public sealed record SimAssemblyAnchorSummary(
     string Label,
     string StatusLabel,
+    string SourceLabel,
+    string SourceResourceTgi,
+    string SourcePackagePath,
     int BoneCount,
     IReadOnlyList<string> BoneNames,
     string Notes);
 
+public sealed record SimAssemblyBoneMapEntrySummary(
+    int SourceBoneIndex,
+    int MergedBoneIndex,
+    string BoneName);
+
 public sealed record SimAssemblyBoneMapSummary(
     string Label,
     string SourceLabel,
+    string SourceResourceTgi,
+    string SourcePackagePath,
     int SourceBoneCount,
     int ReusedBoneReferenceCount,
     int AddedBoneCount,
     int RebasedWeightCount,
+    IReadOnlyList<SimAssemblyBoneMapEntrySummary> Entries,
     string Notes);
 
 public sealed record SimAssemblyMeshBatchSummary(
     string Label,
     string SourceLabel,
+    string SourceResourceTgi,
+    string SourcePackagePath,
+    int MeshStartIndex,
     int MeshCount,
     int MaterialStartIndex,
     int MaterialCount,
@@ -754,12 +808,23 @@ public sealed record CasAssetGraph(
     IReadOnlyList<ResourceMetadata> RigResources,
     IReadOnlyList<ResourceMetadata> MaterialResources,
     IReadOnlyList<ResourceMetadata> TextureResources,
+    IReadOnlyList<CasRegionMapSummary> RegionMaps,
     IReadOnlyList<MaterialManifestEntry> Materials,
     string? Category,
     string? SwatchSummary,
     string? SelectedLodLabel,
     bool IsSupported,
     string SupportedSubset);
+
+public sealed record CasRegionMapSummary(
+    string Label,
+    string ResourceTgi,
+    string PackagePath,
+    int EntryCount,
+    int LinkedKeyCount,
+    bool HasReplacementEntries,
+    IReadOnlyList<string> RegionLabels,
+    string Notes);
 
 public sealed record SimInfoSummary(
     uint Version,
@@ -783,6 +848,18 @@ public sealed record SimInfoSummary(
     string? SkintoneInstanceHex = null,
     float? SkintoneShift = null);
 
+public sealed record SimSkintoneRenderSummary(
+    string? SkintoneInstanceHex,
+    float? SkintoneShift,
+    string? SkintoneResourceTgi,
+    string? SkintonePackagePath,
+    string? BaseTextureResourceTgi,
+    string? BaseTexturePackagePath,
+    int OverlayTextureCount,
+    int SwatchColorCount,
+    CanonicalColor? ViewportTintColor,
+    string Notes);
+
 public sealed record SimSlotGroupSummary(
     string Label,
     int Count,
@@ -801,6 +878,7 @@ public sealed record SimBodySourceSummary(
 public enum SimBodyCandidateSourceKind
 {
     ExactPartLink,
+    IndexedDefaultBodyRecipe,
     CanonicalFoundation,
     BodyTypeFallback,
     ArchetypeCompatibilityFallback
@@ -818,6 +896,7 @@ public enum SimBodyAssemblyMode
     None,
     FullBodyShell,
     BodyShell,
+    BodyUnderlayWithSplitLayers,
     SplitBodyLayers,
     FallbackSingleLayer
 }
@@ -882,6 +961,60 @@ public static class SimBodyAssemblyPolicy
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
+        var preferredShell = labels.Contains("Full Body")
+            ? "Full Body"
+            : labels.Contains("Body")
+                ? "Body"
+                : null;
+
+        if (labels.Contains("Top") && labels.Contains("Bottom"))
+        {
+            var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Top", "Bottom" };
+            if (preferredShell is not null)
+            {
+                active.Add(preferredShell);
+            }
+
+            if (labels.Contains("Shoes"))
+            {
+                active.Add("Shoes");
+            }
+
+            return active;
+        }
+
+        if (labels.Contains("Top"))
+        {
+            if (preferredShell is not null)
+            {
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase) { preferredShell };
+            }
+
+            var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Top" };
+            if (labels.Contains("Shoes"))
+            {
+                active.Add("Shoes");
+            }
+
+            return active;
+        }
+
+        if (labels.Contains("Bottom"))
+        {
+            if (preferredShell is not null)
+            {
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase) { preferredShell };
+            }
+
+            var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Bottom" };
+            if (labels.Contains("Shoes"))
+            {
+                active.Add("Shoes");
+            }
+
+            return active;
+        }
+
         if (labels.Contains("Full Body"))
         {
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Full Body" };
@@ -902,6 +1035,13 @@ public static class SimBodyAssemblyPolicy
         if (activeLabels.Count == 0)
         {
             return SimBodyAssemblyMode.None;
+        }
+
+        var hasShell = activeLabels.Contains("Full Body") || activeLabels.Contains("Body");
+        var hasSplitLayers = activeLabels.Contains("Top") && activeLabels.Contains("Bottom");
+        if (hasShell && hasSplitLayers)
+        {
+            return SimBodyAssemblyMode.BodyUnderlayWithSplitLayers;
         }
 
         if (activeLabels.Contains("Full Body"))
@@ -927,6 +1067,12 @@ public static class SimBodyAssemblyPolicy
         if (activeLabels.Contains(label))
         {
             return SimBodyAssemblyLayerState.Active;
+        }
+
+        var hasSplitLayers = activeLabels.Contains("Top") && activeLabels.Contains("Bottom");
+        if (hasSplitLayers && (activeLabels.Contains("Full Body") || activeLabels.Contains("Body")))
+        {
+            return SimBodyAssemblyLayerState.Available;
         }
 
         if (activeLabels.Contains("Full Body"))
@@ -987,20 +1133,77 @@ public sealed record SimTemplateOptionSummary(
     int BodyModifierCount,
     int FaceModifierCount,
     int SculptCount,
-    bool HasSkintone)
+    bool HasSkintone,
+    int? AuthoritativeBodyDrivingOutfitCount = null,
+    int? AuthoritativeBodyDrivingOutfitPartCount = null)
 {
     public bool HasAuthoritativeBodyParts =>
         OutfitPartCount > 0 || OutfitEntryCount > 0 || OutfitCategoryCount > 0;
+
+    public bool HasIndexedAuthoritativeBodyDrivingFacts =>
+        AuthoritativeBodyDrivingOutfitCount.HasValue &&
+        AuthoritativeBodyDrivingOutfitPartCount.HasValue;
 }
+
+public sealed record SimTemplateFactSummary(
+    Guid ResourceId,
+    Guid DataSourceId,
+    SourceKind SourceKind,
+    string PackagePath,
+    string RootTgi,
+    string ArchetypeKey,
+    string SpeciesLabel,
+    string AgeLabel,
+    string GenderLabel,
+    string DisplayName,
+    string Notes,
+    int OutfitCategoryCount,
+    int OutfitEntryCount,
+    int OutfitPartCount,
+    int BodyModifierCount,
+    int FaceModifierCount,
+    int SculptCount,
+    bool HasSkintone,
+    int AuthoritativeBodyDrivingOutfitCount,
+    int AuthoritativeBodyDrivingOutfitPartCount);
+
+public sealed record SimTemplateBodyPartFact(
+    Guid ResourceId,
+    Guid DataSourceId,
+    SourceKind SourceKind,
+    string PackagePath,
+    string RootTgi,
+    int OutfitCategoryValue,
+    string OutfitCategoryLabel,
+    int OutfitIndex,
+    int PartIndex,
+    int BodyType,
+    string? BodyTypeLabel,
+    ulong PartInstance,
+    bool IsBodyDriving);
 
 public static class SimTemplateSelectionPolicy
 {
+    public static bool HasExplicitBodyDrivingRecipe(SimTemplateOptionSummary template) =>
+        (template.AuthoritativeBodyDrivingOutfitCount ?? 0) > 0;
+
+    public static int GetBodyShellSelectionTier(SimTemplateOptionSummary template) =>
+        HasExplicitBodyDrivingRecipe(template)
+            ? 0
+            : template.HasAuthoritativeBodyParts
+                ? 1
+                : template.HasIndexedAuthoritativeBodyDrivingFacts
+                    ? 2
+                    : 3;
+
     public static IOrderedEnumerable<SimTemplateOptionSummary> OrderTemplates(IEnumerable<SimTemplateOptionSummary> templates) =>
         templates
-            .OrderByDescending(static template => template.HasAuthoritativeBodyParts)
-            .ThenByDescending(static template => template.OutfitPartCount)
-            .ThenByDescending(static template => template.OutfitEntryCount)
-            .ThenByDescending(static template => template.OutfitCategoryCount)
+            .OrderBy(GetBodyShellSelectionTier)
+            .ThenByDescending(static template => template.AuthoritativeBodyDrivingOutfitCount ?? 0)
+            .ThenByDescending(static template => template.AuthoritativeBodyDrivingOutfitPartCount ?? 0)
+            .ThenBy(static template => template.OutfitCategoryCount)
+            .ThenBy(static template => template.OutfitEntryCount)
+            .ThenBy(static template => template.OutfitPartCount)
             .ThenByDescending(static template => template.BodyModifierCount + template.SculptCount)
             .ThenByDescending(static template => template.FaceModifierCount)
             .ThenByDescending(static template => template.HasSkintone)
@@ -1025,6 +1228,7 @@ public static class SimTemplateSelectionPolicy
 public sealed record SimAssetGraph(
     ResourceMetadata SimInfoResource,
     SimInfoSummary Metadata,
+    SimSkintoneRenderSummary? SkintoneRender,
     IReadOnlyList<SimTemplateOptionSummary> TemplateOptions,
     IReadOnlyList<SimBodyFoundationSummary> BodyFoundation,
     IReadOnlyList<SimBodySourceSummary> BodySources,
@@ -1114,6 +1318,16 @@ public static class AssetDerivedState
     {
         if (assetKind == AssetKind.Sim && facts.HasIdentityMetadata)
         {
+            if (facts.HasExactGeometryCandidate && facts.HasTextureReferences)
+            {
+                return "Geometry+Textures";
+            }
+
+            if (facts.HasExactGeometryCandidate)
+            {
+                return "Geometry";
+            }
+
             return "Metadata";
         }
 
@@ -1142,7 +1356,17 @@ public static class AssetDerivedState
     {
         if (assetKind == AssetKind.Sim && facts.HasIdentityMetadata)
         {
-            return "This Sim archetype is currently metadata-only and is derived from grouped SimInfo rows; full assembled character preview is not implemented yet.";
+            if (facts.HasExactGeometryCandidate && facts.HasTextureReferences)
+            {
+                return "A rendered body-first Sim preview is available from resolved body/head assembly inputs; full named or preset character assembly is still in progress.";
+            }
+
+            if (facts.HasExactGeometryCandidate)
+            {
+                return "A rendered body-first Sim preview is available, but material or texture coverage is still partial; full named or preset character assembly is still in progress.";
+            }
+
+            return "This Sim archetype currently exposes grouped SimInfo metadata plus a body-first assembly inspector. A rendered preview depends on an authoritative body-driving template and resolved shell candidates; full named or preset character assembly is still in progress.";
         }
 
         if (!facts.HasSceneRoot)
@@ -1179,7 +1403,7 @@ public static class AssetDetailsFormatter
         var simGraph = graph.SimGraph;
         var general3DGraph = graph.General3DGraph;
         var scene = scenePreview?.Scene;
-        var displayFacts = BuildDisplayCapabilitySnapshot(asset, graph);
+        var displayFacts = BuildDisplayCapabilitySnapshot(asset, graph, sceneRoot, scenePreview);
         var supportLabel = AssetDerivedState.BuildSupportLabel(asset.AssetKind, displayFacts);
         var supportNotes = AssetDerivedState.BuildSupportNotes(asset.AssetKind, displayFacts);
         var diagnostics = graph.Diagnostics
@@ -1266,7 +1490,7 @@ public static class AssetDetailsFormatter
                 Has Texture Resource Candidate: {FormatYesNo(displayFacts.HasTextureResourceCandidate)}
                 Package-Local Graph: {FormatYesNo(displayFacts.IsPackageLocalGraph)}
                 Has Diagnostics: {FormatYesNo(displayFacts.HasDiagnostics)}
-                Scene Reconstruction: Template-driven Sim archetype asset; proxy body preview may be available from resolved body candidates, but full assembled-character scene synthesis is not implemented yet
+                Scene Reconstruction: {BuildSimSceneReconstructionStatus(scenePreview)}
                 Variant Count: {asset.VariantCount}
                 Selected Variant: {FormatSelectedVariant(selectedVariant)}
                 Indexed Variants:
@@ -1422,24 +1646,31 @@ public static class AssetDetailsFormatter
             """;
     }
 
-    private static AssetCapabilitySnapshot BuildDisplayCapabilitySnapshot(AssetSummary asset, AssetGraph graph)
+    private static AssetCapabilitySnapshot BuildDisplayCapabilitySnapshot(
+        AssetSummary asset,
+        AssetGraph graph,
+        ResourceMetadata? sceneRoot,
+        ScenePreviewContent? scenePreview)
     {
         var facts = asset.CapabilitySnapshot;
         var isPackageLocalGraph = facts.IsPackageLocalGraph &&
             graph.LinkedResources.All(resource => string.Equals(resource.PackagePath, asset.PackagePath, StringComparison.OrdinalIgnoreCase));
         var hasDiagnostics = facts.HasDiagnostics || graph.Diagnostics.Any(static diagnostic => !string.IsNullOrWhiteSpace(diagnostic));
+        var hasDisplayScene = scenePreview?.Scene is not null;
+        var hasDisplayMaterials = scenePreview?.Scene?.Materials.Count > 0;
+        var hasDisplayTextures = scenePreview?.Scene?.Materials.Any(static material => material.Textures.Count > 0) == true;
 
         if (graph.BuildBuyGraph is { } buildBuyGraph)
         {
             return facts with
             {
-                HasExactGeometryCandidate = facts.HasExactGeometryCandidate || buildBuyGraph.ModelLodResources.Count > 0 || buildBuyGraph.ModelResource is not null,
-                HasMaterialReferences = facts.HasMaterialReferences || buildBuyGraph.Materials.Count > 0 || buildBuyGraph.MaterialResources.Count > 0,
-                HasTextureReferences = facts.HasTextureReferences || buildBuyGraph.TextureResources.Count > 0 || buildBuyGraph.Materials.Any(static material => material.Textures.Count > 0),
+                HasExactGeometryCandidate = facts.HasExactGeometryCandidate || hasDisplayScene || buildBuyGraph.ModelLodResources.Count > 0 || buildBuyGraph.ModelResource is not null,
+                HasMaterialReferences = facts.HasMaterialReferences || hasDisplayMaterials || buildBuyGraph.Materials.Count > 0 || buildBuyGraph.MaterialResources.Count > 0,
+                HasTextureReferences = facts.HasTextureReferences || hasDisplayTextures || buildBuyGraph.TextureResources.Count > 0 || buildBuyGraph.Materials.Any(static material => material.Textures.Count > 0),
                 HasIdentityMetadata = facts.HasIdentityMetadata || buildBuyGraph.IdentityResources.Count > 0,
-                HasGeometryReference = facts.HasGeometryReference || buildBuyGraph.ModelLodResources.Count > 0 || buildBuyGraph.ModelResource is not null,
-                HasMaterialResourceCandidate = facts.HasMaterialResourceCandidate || buildBuyGraph.MaterialResources.Count > 0,
-                HasTextureResourceCandidate = facts.HasTextureResourceCandidate || buildBuyGraph.TextureResources.Count > 0,
+                HasGeometryReference = facts.HasGeometryReference || hasDisplayScene || buildBuyGraph.ModelLodResources.Count > 0 || buildBuyGraph.ModelResource is not null,
+                HasMaterialResourceCandidate = facts.HasMaterialResourceCandidate || hasDisplayMaterials || buildBuyGraph.MaterialResources.Count > 0,
+                HasTextureResourceCandidate = facts.HasTextureResourceCandidate || hasDisplayTextures || buildBuyGraph.TextureResources.Count > 0,
                 IsPackageLocalGraph = isPackageLocalGraph,
                 HasDiagnostics = hasDiagnostics
             };
@@ -1449,14 +1680,14 @@ public static class AssetDetailsFormatter
         {
             return facts with
             {
-                HasExactGeometryCandidate = facts.HasExactGeometryCandidate || casGraph.GeometryResource is not null,
-                HasMaterialReferences = facts.HasMaterialReferences || casGraph.MaterialResources.Count > 0 || casGraph.Materials.Count > 0,
-                HasTextureReferences = facts.HasTextureReferences || casGraph.TextureResources.Count > 0 || casGraph.Materials.Any(static material => material.Textures.Count > 0),
+                HasExactGeometryCandidate = facts.HasExactGeometryCandidate || hasDisplayScene || casGraph.GeometryResource is not null,
+                HasMaterialReferences = facts.HasMaterialReferences || hasDisplayMaterials || casGraph.MaterialResources.Count > 0 || casGraph.Materials.Count > 0,
+                HasTextureReferences = facts.HasTextureReferences || hasDisplayTextures || casGraph.TextureResources.Count > 0 || casGraph.Materials.Any(static material => material.Textures.Count > 0),
                 HasIdentityMetadata = facts.HasIdentityMetadata || casGraph.IdentityResources.Count > 0,
                 HasRigReference = facts.HasRigReference || casGraph.RigResources.Count > 0,
-                HasGeometryReference = facts.HasGeometryReference || casGraph.GeometryResources.Count > 0,
-                HasMaterialResourceCandidate = facts.HasMaterialResourceCandidate || casGraph.MaterialResources.Count > 0,
-                HasTextureResourceCandidate = facts.HasTextureResourceCandidate || casGraph.TextureResources.Count > 0,
+                HasGeometryReference = facts.HasGeometryReference || hasDisplayScene || casGraph.GeometryResources.Count > 0,
+                HasMaterialResourceCandidate = facts.HasMaterialResourceCandidate || hasDisplayMaterials || casGraph.MaterialResources.Count > 0,
+                HasTextureResourceCandidate = facts.HasTextureResourceCandidate || hasDisplayTextures || casGraph.TextureResources.Count > 0,
                 IsPackageLocalGraph = isPackageLocalGraph,
                 HasDiagnostics = hasDiagnostics
             };
@@ -1466,14 +1697,14 @@ public static class AssetDetailsFormatter
         {
             return facts with
             {
-                HasExactGeometryCandidate = facts.HasExactGeometryCandidate || general3DGraph.SceneRootResource is not null,
-                HasMaterialReferences = facts.HasMaterialReferences || general3DGraph.MaterialResources.Count > 0,
-                HasTextureReferences = facts.HasTextureReferences || general3DGraph.TextureResources.Count > 0,
+                HasExactGeometryCandidate = facts.HasExactGeometryCandidate || hasDisplayScene || general3DGraph.SceneRootResource is not null,
+                HasMaterialReferences = facts.HasMaterialReferences || hasDisplayMaterials || general3DGraph.MaterialResources.Count > 0,
+                HasTextureReferences = facts.HasTextureReferences || hasDisplayTextures || general3DGraph.TextureResources.Count > 0,
                 HasIdentityMetadata = facts.HasIdentityMetadata || general3DGraph.RootResource is not null,
                 HasRigReference = facts.HasRigReference || general3DGraph.RigResources.Count > 0,
-                HasGeometryReference = facts.HasGeometryReference || general3DGraph.GeometryResources.Count > 0 || general3DGraph.ModelLodResources.Count > 0 || general3DGraph.ModelResources.Count > 0,
-                HasMaterialResourceCandidate = facts.HasMaterialResourceCandidate || general3DGraph.MaterialResources.Count > 0,
-                HasTextureResourceCandidate = facts.HasTextureResourceCandidate || general3DGraph.TextureResources.Count > 0,
+                HasGeometryReference = facts.HasGeometryReference || hasDisplayScene || general3DGraph.GeometryResources.Count > 0 || general3DGraph.ModelLodResources.Count > 0 || general3DGraph.ModelResources.Count > 0,
+                HasMaterialResourceCandidate = facts.HasMaterialResourceCandidate || hasDisplayMaterials || general3DGraph.MaterialResources.Count > 0,
+                HasTextureResourceCandidate = facts.HasTextureResourceCandidate || hasDisplayTextures || general3DGraph.TextureResources.Count > 0,
                 IsPackageLocalGraph = isPackageLocalGraph,
                 HasDiagnostics = hasDiagnostics
             };
@@ -1483,7 +1714,13 @@ public static class AssetDetailsFormatter
         {
             return facts with
             {
+                HasExactGeometryCandidate = facts.HasExactGeometryCandidate || hasDisplayScene,
+                HasMaterialReferences = facts.HasMaterialReferences || hasDisplayMaterials,
+                HasTextureReferences = facts.HasTextureReferences || hasDisplayTextures,
                 HasIdentityMetadata = facts.HasIdentityMetadata || simGraph.IdentityResources.Count > 0,
+                HasGeometryReference = facts.HasGeometryReference || hasDisplayScene,
+                HasMaterialResourceCandidate = facts.HasMaterialResourceCandidate || hasDisplayMaterials,
+                HasTextureResourceCandidate = facts.HasTextureResourceCandidate || hasDisplayTextures,
                 IsPackageLocalGraph = isPackageLocalGraph,
                 HasDiagnostics = hasDiagnostics
             };
@@ -1506,6 +1743,21 @@ public static class AssetDetailsFormatter
         if (scenePreview is null)
         {
             return "Pending";
+        }
+
+        return scenePreview.Status switch
+        {
+            SceneBuildStatus.SceneReady => "SceneReady",
+            SceneBuildStatus.Partial => "Partial",
+            _ => scenePreview.Scene is not null ? "Succeeded" : "Failed"
+        };
+    }
+
+    private static string BuildSimSceneReconstructionStatus(ScenePreviewContent? scenePreview)
+    {
+        if (scenePreview is null)
+        {
+            return "Not attempted (no assembled Sim preview scene is available)";
         }
 
         return scenePreview.Status switch
@@ -1656,6 +1908,7 @@ public static class AssetDetailsFormatter
         {
             SimBodyAssemblyMode.FullBodyShell => "Full-body shell",
             SimBodyAssemblyMode.BodyShell => "Primary body shell",
+            SimBodyAssemblyMode.BodyUnderlayWithSplitLayers => "Body underlay + split layers",
             SimBodyAssemblyMode.SplitBodyLayers => "Split body layers",
             SimBodyAssemblyMode.FallbackSingleLayer => "Fallback single layer",
             _ => "Unresolved"
@@ -1821,11 +2074,13 @@ public interface IAssetGraphBuilder
 {
     IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan);
     Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken);
+    Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken);
 }
 
 public interface IPreviewService
 {
     Task<PreviewResult> CreatePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
+    Task<PreviewResult> CreatePreviewAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
 }
 
 public interface ITextureDecodeService
@@ -1836,6 +2091,7 @@ public interface ITextureDecodeService
 public interface ISceneBuildService
 {
     Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
+    Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
 }
 
 public interface IFbxExportService
@@ -1868,7 +2124,6 @@ public interface IIndexStore
     Task ReplacePackageAsync(PackageScanResult packageScan, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
     Task<IIndexWriteSession> OpenWriteSessionAsync(CancellationToken cancellationToken);
     Task<IIndexWriteSession> OpenRebuildSessionAsync(IEnumerable<DataSourceDefinition> sources, CancellationToken cancellationToken);
-    Task<ResourceMetadata> PersistResourceEnrichmentAsync(ResourceMetadata resource, CancellationToken cancellationToken);
     Task<WindowedQueryResult<ResourceMetadata>> QueryResourcesAsync(RawResourceBrowserQuery query, CancellationToken cancellationToken);
     Task<WindowedQueryResult<AssetSummary>> QueryAssetsAsync(AssetBrowserQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<DataSourceDefinition>> GetDataSourcesAsync(CancellationToken cancellationToken);
@@ -1876,10 +2131,16 @@ public interface IIndexStore
     Task<IReadOnlyList<IndexedPackageRecord>> GetIndexedPackagesAsync(IEnumerable<Guid> dataSourceIds, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetPackageResourcesAsync(string packagePath, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetResourcesByInstanceAsync(string packagePath, ulong fullInstance, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ResourceMetadata>> GetResourcesByFullInstanceAsync(ulong fullInstance, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ResourceMetadata>> GetCasPartResourcesByInstancesAsync(IEnumerable<ulong> fullInstances, CancellationToken cancellationToken);
     Task<IReadOnlyList<AssetSummary>> GetPackageAssetsAsync(string packagePath, CancellationToken cancellationToken);
+    Task<AssetSummary?> GetPackageAssetByIdAsync(string packagePath, Guid assetId, CancellationToken cancellationToken);
     Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsAsync(Guid assetId, CancellationToken cancellationToken);
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken);
+    Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken);
+    Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken);
     Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);
 }
 
