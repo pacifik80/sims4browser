@@ -9,7 +9,10 @@ Use it when the question is not "how do I export X right now?" but "where does t
 If the task is about shared TS4 render/material behavior:
 
 - start with [Shared TS4 Material, Texture, And UV Pipeline](shared-ts4-material-texture-pipeline.md)
+- open [Research Restart Guide](workflows/material-pipeline/research-restart-guide.md) first if the task is a resumed external-first research pass
+- then jump to [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md) if the question is object-side or Build/Buy-specific
 - then jump to [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md) if the question is family-specific
+- then jump to [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md) if the question is profile- or slot-specific
 - then open [Source map and trust levels](references/codex-wiki/04-research-and-sources/01-source-map.md) when you need provenance
 
 If the task is about Sim assembly or body-shell logic:
@@ -44,6 +47,14 @@ These are the first-entry docs that define the current project stance.
 These carry dense topic-specific knowledge that would bloat the main guides if left inline.
 
 - [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+- [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md)
+- [Research Restart Guide](workflows/material-pipeline/research-restart-guide.md)
+- [Edge-Family Matrix](workflows/material-pipeline/edge-family-matrix.md)
+- [P1 Live-Proof Queue](workflows/material-pipeline/p1-live-proof-queue.md)
+- [Live-Proof Packets](workflows/material-pipeline/live-proof-packets/README.md)
+- [Skintone And Overlay Compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
+- [Family Sheets](workflows/material-pipeline/family-sheets/README.md)
 - [Sim domain roadmap](sim-domain-roadmap.md)
 - [Sim body-shell contract](sim-body-shell-contract.md)
 
@@ -79,14 +90,25 @@ These are not source-of-truth design docs. They track current direction and rema
 ### I need the current material/render rule
 
 1. [Shared TS4 Material, Texture, And UV Pipeline](shared-ts4-material-texture-pipeline.md)
-2. [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
-3. [Source map and trust levels](references/codex-wiki/04-research-and-sources/01-source-map.md)
+2. [Research Restart Guide](workflows/material-pipeline/research-restart-guide.md)
+3. [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+4. [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+5. [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md)
+6. [Edge-Family Matrix](workflows/material-pipeline/edge-family-matrix.md)
+7. [P1 Live-Proof Queue](workflows/material-pipeline/p1-live-proof-queue.md)
+8. [Live-Proof Packets](workflows/material-pipeline/live-proof-packets/README.md)
+9. [Skintone And Overlay Compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
+10. [Family Sheets](workflows/material-pipeline/family-sheets/README.md)
+11. [Source map and trust levels](references/codex-wiki/04-research-and-sources/01-source-map.md)
 
 ### I need family-specific CAS/Sim authority details
 
 1. [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
-2. [Sim body-shell contract](sim-body-shell-contract.md)
-3. [Full Sim and morph pipeline](references/codex-wiki/02-pipelines/03-full-sim-and-morphs.md)
+2. [Skintone And Overlay Compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
+3. [Edge-Family Matrix](workflows/material-pipeline/edge-family-matrix.md)
+4. [Family Sheets](workflows/material-pipeline/family-sheets/README.md)
+5. [Sim body-shell contract](sim-body-shell-contract.md)
+6. [Full Sim and morph pipeline](references/codex-wiki/02-pipelines/03-full-sim-and-morphs.md)
 
 ### I need low-level binary/reference material
 

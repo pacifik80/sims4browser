@@ -16,7 +16,11 @@ This file is only the documentation index. Repo-level working rules live in [AGE
 If the task is about repo-level TS4 render/material truth:
 
 - [Shared TS4 material, texture, and UV pipeline](shared-ts4-material-texture-pipeline.md)
+- [Material research restart guide](workflows/material-pipeline/research-restart-guide.md)
+- [Build/Buy material authority matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
 - [CAS/Sim material authority matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Shader family registry](workflows/material-pipeline/shader-family-registry.md)
+- [Skintone and overlay compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
 - [Knowledge map](knowledge-map.md)
 
 If the task is about Sim assembly and shell behavior:
@@ -73,4 +77,8 @@ If the task is about evidence and reverse-engineering provenance:
 - [Export CAS asset](workflows/export-cas-asset.md)
 - [Export raw resource](workflows/export-raw-resource.md)
 - [Material pipeline deep dives](workflows/material-pipeline/README.md)
+- [Material research restart guide](workflows/material-pipeline/research-restart-guide.md)
+- [Build/Buy material authority matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
 - [CAS/Sim material authority matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Shader family registry](workflows/material-pipeline/shader-family-registry.md)
+- [Skintone and overlay compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)

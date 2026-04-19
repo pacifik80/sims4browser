@@ -8,7 +8,10 @@ Detailed current authority notes now also live in:
 
 - [Knowledge map](../../../knowledge-map.md)
 - [Material pipeline deep dives](../../../workflows/material-pipeline/README.md)
+- [Build/Buy Material Authority Matrix](../../../workflows/material-pipeline/buildbuy-material-authority-matrix.md)
 - [CAS/Sim Material Authority Matrix](../../../workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Shader Family Registry](../../../workflows/material-pipeline/shader-family-registry.md)
+- [Skintone And Overlay Compositor](../../../workflows/material-pipeline/skintone-and-overlay-compositor.md)
 
 ## Что уже НЕ стоит считать open question
 
@@ -28,8 +31,9 @@ Detailed current authority notes now also live in:
 Что уже известно:
 
 - repo уже имеет shared decoder и shared material IR
-- repo now also has a first `v0` shader-family registry grounded in local decoder buckets and the current precompiled-profile corpus
-- current decoder slot-name normalization and UV-parameter interpretation heuristics are now explicit in the docs instead of being hidden in code
+- repo now also has a first `v0` working shader-family registry, but its current local decoder buckets are documented only as implementation boundary
+- repo now also has a linked external-first shader-family deep-dive with the currently strongest family packets
+- current decoder slot-name normalization and UV-parameter interpretation heuristics are now explicit in the docs as approximation behavior, not as family truth
 - representative per-family `v0` tables now exist for core surface, color-map, foliage, layered, projective, and Sim-special examples
 - the remaining `raw/unmapped` params are now split into narrower buckets such as cross-family runtime helpers, lighting/reveal helpers, projection controls, and family-local unresolved texture-like inputs
 - edge-case families are now split between structurally runtime-dependent cases and narrow unresolved-family cases
@@ -38,7 +42,7 @@ Detailed current authority notes now also live in:
 
 Что всё ещё открыто:
 
-- полный список shader families и profile names на реальных live assets
+- полный список shader families и profile names на реальных live assets, especially outside the current sampled Build/Buy packet
 - authoritative slot table для каждой family
 - exact scalar/vector parameter semantics по каждой family
 - exact alpha/blend/compositor rules для каждой family
@@ -46,7 +50,7 @@ Detailed current authority notes now also live in:
 
 Что бы это закрыло:
 
-- fixture-backed or source-backed registry table, где для каждой family есть:
+- wider fixture-backed or source-backed registry table, где для каждой family есть:
   - representative assets
   - slot map
   - UV rules
@@ -63,6 +67,7 @@ Detailed current authority notes now also live in:
 - there are now narrow `P1` target sheets for `RefractionMap/tex1`, `ShaderDayNightParameters`, `NextFloorLightMapXform`, and `CASHotSpotAtlas`
 - local `precomp_sblk_inventory` now adds per-profile concentration evidence, not just profile presence/absence
 - the remaining narrow gaps are now split more explicitly between `surface-material`, `lightmap/projection`, and `CAS editing/morph` branches
+- there is now also a bounded edge-family packet for `CAS/Sim` authority instead of leaving every narrow family under one generic fallback story
 - но он всё ещё support-oriented, а не full authoritative contract
 
 Уточнение по самым узким текущим gaps:
@@ -144,6 +149,11 @@ Detailed current authority notes now also live in:
   - accessories
   - skin details / makeup
   - selected Build/Buy object families
+- plus the current narrow edge families:
+  - transparent glass-like shell companions
+  - hotspot or morph atlas branch
+  - pelt or animal-edit helper branch
+  - lightmap or reveal carry-through families
 
 Для каждого нужно явно показать источник истины material linkage и границу допустимого fallback.
 
@@ -154,6 +164,16 @@ Detailed current authority notes now also live in:
 - `Skintone` несёт skin sets, overlay instances, overlay multipliers, hue/saturation, opacity and display order
 - reference code already applies a layered skin synthesis model
 - `CompositionMethod` and CAS overlays then stack on top of that
+- current repo code now has a clearer documented boundary too:
+  - it resolves real `Skintone` resources
+  - builds region-map-aware skintone targets
+  - applies routing to merged canonical materials
+  - but still does not claim exact in-game blend parity
+- `TS4 Skininator`, `TS4 Skin Converter`, and local `TS4SimRipper` code now provide stronger corroboration for:
+  - normal/tanned/burned skin-state structure
+  - burn masks
+  - age/gender overlay instances
+  - underlayer/chest-overlay patch evolution
 
 Что всё ещё открыто:
 
@@ -237,23 +257,52 @@ Detailed current authority notes now also live in:
 - `MODL -> MLOD` is the strongest documented object mesh path
 - `MLOD` binds group -> `VRTF`/`VBUF`/`IBUF`/`SKIN`/`MATD or MTST`
 - `Object Definition -> Model/Model LOD -> Material Set -> Material Definition` is now the best-supported base authority order
+- that base chain is now also split into its own companion doc:
+  - [Build/Buy Material Authority Matrix](../../../workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+- current external object-side packet is also tighter now:
+  - `COBJ` is the catalogue-facing side
+  - `OBJD` links `Model`, `Rig`, `Slot`, and `Footprint`
+  - `MaterialVariant` in `OBJD` points by FNV32 name into `MODL/MLOD` material entries and from there to the relevant material definition
 - `Light` is a parallel resource family for lighting behavior, not evidence that the surface-material chain itself is unknown
 - a first `v0` authority/fallback matrix now exists for major Build/Buy, CAS, and Sim family groups
+- the first named Build/Buy edge-family fixture now sits cleanly on that chain:
+  - `EP10\\ClientFullBuild0.package | sculptFountainSurface3x3_EP10GENlilyPad`
+  - `OBJD` model candidate `01661233:00000000:FDD2F1F700F643B0`
+  - resolved root `01661233:00000000:00F643B0FDD2F1F7`
+  - local probe confirms companion `MATD` chunks on the same root packet
+- the first obvious-name `SimGlass` extraction pass is now also bounded:
+  - checked `EP10` glass/window/mirror/fountain object rows with direct model candidates
+  - the first exact and `instance-swap32` root lookups stayed negative
+  - this narrows the next glass-family search boundary instead of leaving it diffuse
+- the current glass-family boundary is now narrower on both the external and local sides:
+  - creator-facing TS4 guidance ties `SimGlass` more strongly to transparent layered clothing, glasses, hair, and lashes than to generic architectural windows
+  - a broader `EP10` transparent-decor cluster is now isolated for the next Build/Buy pass:
+    - `fishBowl_EP10GENmarimo -> 01661233:00000000:FAE0318F3711431D`
+    - `shelfFloor2x1_EP10TEAdisplayShelf -> 01661233:00000000:E779C31F25406B73`
+    - `shelfFloor2x1_EP10TEAshopDisplayTileable -> 01661233:00000000:93EE8A0CF97A3861`
+    - `lightWall_EP10GENlantern -> 01661233:00000000:F4A27FC1857F08D4`
+    - `mirrorWall1x1_EP10BATHsunrise -> 01661233:00000000:3CD0344C1824BDDD`
+  - those transformed roots already appear in `tmp/probe_all_buildbuy.txt`, but current direct reopen attempts still return `Build/Buy asset not found`
+  - safe reading: this is a better next search route, not a closed fixture packet
 
 Что всё ещё открыто:
 
-- exact deviations from the base authority order across all Build/Buy families
-- which object categories need more than the basic static-model path
-- when `VPXY` or other graph helpers materially affect practical scene reconstruction for specific object ecosystems
+- exact deviations from the now-stable base authority order across all Build/Buy families
+- which object categories need more than the basic static-object path
+- when `VPXY` or other graph helpers materially affect practical scene reconstruction for specific linked-object ecosystems
 - complete family-specific authority/fallback coverage for all major CAS and Sim layer types
+- for the `SimGlass` branch specifically:
+  - which broader Build/Buy family, if any, preserves the same transparent-layered reading strongly enough to serve as the first stable row-level fixture
+  - whether one of the narrowed `EP10` transparent-decor roots can be reopened cleanly, or whether the next packet must widen to another package slice
 
 Что бы это закрыло:
 
-- a per-family object render matrix:
+- a fixture-backed Build/Buy family matrix that closes the remaining object-side branches:
   - static furniture/decor
-  - cabinets/counters
   - lights
-  - stateful objects
+  - stateful/material-set objects
+  - cutout-bearing architectural objects
+  - linked/modular object ecosystems
 
 ## 8. Full Sim assembly parity
 

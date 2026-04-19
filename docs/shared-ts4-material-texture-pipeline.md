@@ -1,6 +1,12 @@
 # Shared TS4 Material, Texture, And UV Pipeline
 
-This document is the repo-level source of truth for the shared The Sims 4 material, texture, shader, and UV pipeline.
+This document is the working synthesis for the shared The Sims 4 material, texture, shader, and UV pipeline.
+
+Primary rule:
+
+- external references, creator tooling, and external snapshots are the authority base
+- this guide turns that evidence into one shared architectural model
+- current repo code is useful only as implementation boundary, failure evidence, or a place where the current approximation is visible
 
 Use it when the task is about texture linkage, shader/material decoding, UV routing, viewport rendering, or export for `BuildBuy`, `CAS`, or `Sim`.
 
@@ -9,6 +15,9 @@ Related docs:
 - [Knowledge map](knowledge-map.md)
 - [Workflows index](workflows/README.md)
 - [Material pipeline deep dives](workflows/material-pipeline/README.md)
+- [Build/Buy material authority matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+- [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md)
+- [Skintone And Overlay Compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
 - [Architecture](architecture.md)
 - [Sim domain roadmap](sim-domain-roadmap.md)
 - [CAS/Sim material authority matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
@@ -35,6 +44,38 @@ The correct architectural stance is:
 - shader family, texture role, UV channel, UV transform, alpha mode, and layering rules must be interpreted the same way everywhere unless a real format rule proves otherwise
 
 This matches both the current repo direction and the way the game content is structured: object content, CAS content, and assembled Sims use different identity and discovery paths, but they still resolve into the same broad class of render inputs.
+
+## Universal shader contract
+
+The project is not trying to build:
+
+- one shader system for `BuildBuy`
+- another for `CAS`
+- another for `Sim`
+
+The project is trying to build:
+
+- one shared shader/material contract
+- one shared canonical material IR
+- one shared decode/render/export path after authoritative inputs are found
+
+Safe reading:
+
+- `BuildBuy`, `CAS`, and `Sim` are discovery and authority domains
+- they are not separate shader domains
+- family-local authority order may differ before decoding
+- shader semantics must not fork by asset class unless a real format rule proves that a shader family itself is different
+
+What asset fixtures are for:
+
+- proving that a family or helper input really exists
+- proving where authoritative inputs come from
+- proving where the current implementation still flattens or loses provenance
+
+What asset fixtures are not for:
+
+- inventing asset-bound shader variants
+- implying that one object class needs its own renderer branch just because its discovery path is different
 
 ## Confidence model
 
@@ -67,16 +108,16 @@ Current section status:
 | `Proven resource-field rules` | `partial` | Build/Buy, `CASP`, `RegionMap`, `GEOM/MTNF`, `Skintone`, and core compositor inputs are substantially narrowed, a first bounded `CAS/Sim` material-input graph exists, character family groups are better separated, worn-slot families have a stronger exact-part-link boundary, and shell families now have a tighter default/nude, skintone, material-truth-source, and `MTNF` boundary, but full authority order is not closed |
 | `Texture-role registry` | `partial` | canonical texture-role vocabulary is useful, but not yet complete for all shader families |
 | `UV and transform rules` | `partial` | multi-UV, shared atlas, `SharedUVMapSpace`, and edit/morph UV facts are well bounded, but full per-family UV/transform coverage is still missing |
-| `Layering and compositing rules` | `partial` | Build/Buy, CAS, and Sim layering structure is documented, but exact end-to-end compositor math is still incomplete |
-| `Registry requirements` and `v0 shader-family registry` | `partial` | the document now has a real registry baseline, but it is still support-oriented rather than fully authoritative |
+| `Layering and compositing rules` | `partial` | Build/Buy, CAS, and Sim layering structure is documented more strongly now, and a dedicated skintone/overlay compositor deep-dive exists, but exact end-to-end compositor math is still incomplete |
+| `Registry requirements` and `v0 shader-family registry` | `partial` | the document now has a real registry baseline plus a linked external-first family deep-dive, but it is still support-oriented rather than fully authoritative |
 | `Raw/unmapped taxonomy`, `edge-case matrix`, and `P1 target sheets` | `partial` | this space is no longer a blind bucket; the remaining gaps are narrow and named |
-| `Authority and fallback matrix` | `partial` | the first cross-domain matrix exists, separates the main character family groups, gives a stronger worn-slot boundary for hair/accessory/footwear, and now treats body/head shell as a tighter foundation branch with a narrower field-routing-versus-material-definition boundary, but edge families and full authority proofs still need more work |
+| `Authority and fallback matrix` | `partial` | the first cross-domain matrix exists, separates the main character family groups, gives a stronger worn-slot boundary for hair/accessory/footwear, treats body/head shell as a tighter foundation branch with a narrower field-routing-versus-material-definition boundary, and now has a first bounded edge-family packet, but full authority proofs still need more work |
 | `Current repo status`, `practical rules`, and `validation checklist` | `closed for implementation baseline` | these sections are now strong enough to guide implementation packets and reviews |
 | `Open gaps` | `dark zone` | these are the still-real holes that block full parity or full authority claims |
 
 Current darkest pockets:
 
-- full shader-family slot/parameter contract from live assets
+- full cross-domain shader-family slot/parameter contract from live assets, especially outside the current sampled Build/Buy packet
 - full per-family `CAS/Sim` authority order, especially inside body/head shell material-definition versus field-routing rules, embedded `MTNF`, and overlay/detail families after the worn-slot boundary
 - exact skintone/compositor math
 - full per-family UV transform matrix
@@ -97,12 +138,17 @@ What this pass improved:
 - the `SimSkin` versus `SimSkinMask` asymmetry is now one step tighter: current repo/local external code exposes named `SimSkin` and `SimGlass` paths, while current local and external evidence still frames `SimSkinMask` as parameter-level plus overlay/skintone-adjacent semantics rather than a proven standalone geometry family
 - that asymmetry is now also checked against a wider in-repo corpus and a broader mainstream toolchain packet: no additional local geometry branch surfaced beyond the duplicated `TS4SimRipper` sample set, and no checked mainstream TS4 tool source in hand exposes a peer named `SimSkinMask` asset/export/import branch
 - the densest `CAS/Sim` authority packet is now split into its own linked subdocument, so the main guide can stay cross-domain and the family-specific matrix can keep growing without turning this file into one giant authority dump
+- the shader-family packet is now also split into its own linked deep-dive, so the shared guide can keep the cross-domain rules while live family tables and representative asset packets grow separately
+- the densest skintone/compositor packet is now also split into its own linked deep-dive, so the main guide can keep the cross-domain rule while the exact boundary between `routing`, `overlay/detail` families, `tan/burn`, and `exact blend math` evolves separately
 
 ## Progress tree (`v1.1`)
 
 Use this tree as the quick navigation/status layer for the guide.
 
-If the question becomes family-specific, use [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md) rather than continuing to expand this file with narrow `CAS/Sim` authority detail.
+If the question becomes authority-specific, use the narrower companions instead of continuing to expand this file:
+
+- [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md) for object-side authority and object/material linkage
+- [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md) for narrow `CAS/Sim` authority detail
 
 Legend:
 
@@ -135,27 +181,27 @@ Shared TS4 Material / Texture / UV Pipeline
 │  ├─ SharedUVMapSpace / shared atlas ~ 85%
 │  ├─ CAS editing/morph UV branch ~ 80%
 │  └─ Full per-family UV transform matrix ✗ 0%
-├─ Layering and compositing rules ~ 60%
+├─ Layering and compositing rules ~ 66%
 │  ├─ Build/Buy layering ~ 75%
 │  ├─ CAS CompositionMethod / SortLayer ~ 70%
-│  └─ Exact skintone/compositor math ~ 30%
-├─ Shader-family registry ~ 68%
-│  ├─ v0 family registry and representative tables ~ 89%
+│  └─ Exact skintone/compositor math ~ 38%
+├─ Shader-family registry ~ 76%
+│  ├─ v0 family registry and representative tables ~ 93%
 │  ├─ Raw/unmapped taxonomy ~ 80%
 │  ├─ P1 narrow target sheets ~ 78%
-│  └─ Live-asset slot/parameter contract ✗ 0%
-├─ Authority and fallback matrix ~ 72%
-│  ├─ Build/Buy base families ~ 75%
+│  └─ Live-asset slot/parameter contract ~ 42%
+├─ Authority and fallback matrix ~ 78%
+│  ├─ Build/Buy base families ~ 82%
 │  ├─ CAS/Sim major family groups ~ 78%
 │  ├─ Shell field-routing vs explicit material boundary ~ 65%
-│  └─ Edge-family full matrix ✗ 0%
+│  └─ Edge-family full matrix ~ 46%
 ├─ Current repo status ✓ 100%
 ├─ Practical implementation rules ✓ 100%
 ├─ Validation checklist ✓ 100%
-└─ Open gaps ~ 45%
-   ├─ Full shader-family live-asset contract ✗ 0%
+└─ Open gaps ~ 53%
+   ├─ Full shader-family live-asset contract ~ 42%
    ├─ Full per-family CAS/Sim authority order ~ 55%
-   ├─ Exact skintone compositor math ~ 30%
+   ├─ Exact skintone compositor math ~ 38%
    ├─ Full UV transform matrix ✗ 0%
    └─ TS4-specific VPXY traversal contract ~ 20%
 ```
@@ -187,6 +233,12 @@ After discovery, all three domains must flow through the same stages:
 
 No domain-specific renderer branch is allowed after this stage unless a real format rule proves the divergence.
 
+Corollary:
+
+- family-specific authority docs may be domain-heavy because discovery and precedence differ
+- that does not authorize family-specific renderer branches by domain
+- the output of those docs must still feed one shared shader/material pipeline
+
 ### 3. The canonical material layer is the stable handoff
 
 The stable repo contract is the canonical material layer in [Domain.cs](../src/Sims4ResourceExplorer.Core/Domain.cs):
@@ -211,6 +263,11 @@ This step is still domain-specific:
 - `Sim` resolves the selected Sim/outfit/body-part graph into `CASP` and geometry candidates
 
 The shared pipeline begins only after the asset graph has identified material-relevant resources.
+
+Safe rule:
+
+- differences before Stage 1 are expected
+- differences after Stage 1 must be justified as shader-family facts, not as `BuildBuy/CAS/Sim` special cases
 
 ### Stage 1. Collect material-bearing inputs
 
@@ -242,6 +299,10 @@ The existing repo decoder already points in this direction:
 - [ShaderSemantics.cs](../src/Sims4ResourceExplorer.Preview/ShaderSemantics.cs)
 - [ShaderProfileRegistry.cs](../src/Sims4ResourceExplorer.Preview/ShaderProfileRegistry.cs)
 
+Safe rule:
+
+- when a material family is discovered through different authority paths in different domains, normalize them into the same family semantics unless evidence proves they are actually different families
+
 ### Stage 3. Normalize texture roles
 
 Texture roles are shader semantics, not domain semantics.
@@ -252,6 +313,10 @@ The engine-facing question is not "is this `BuildBuy` or `CAS`?" but:
 - which texture slots are authoritative for that family
 - which slots are optional utility inputs
 - which inputs are routing masks rather than directly sampled color maps
+
+Unsafe question:
+
+- "which domain-specific slot table should this asset class use?"
 
 ### Stage 4. Route UVs per sampled map
 
@@ -955,11 +1020,13 @@ What must be preserved in canonical form even when the preview remains approxima
 
 ## Registry requirements for implementation
 
-We still do not have a complete authoritative registry, but the repo now has enough decoder-backed evidence to keep a first working registry instead of leaving this as a blank future task.
+We still do not have a complete authoritative registry, but the repo now has enough external and creator-backed evidence to keep a first working registry instead of leaving this as a blank future task.
 
-### First repo-local shader-family registry (`v0`)
+### Current implementation registry boundary (`v0`)
 
-The current local corpus comes from the decoder-backed profile snapshot in `tmp/precomp_shader_profiles.json`, loaded by [ShaderProfileRegistry.cs](../src/Sims4ResourceExplorer.Preview/ShaderProfileRegistry.cs) and classified by [MaterialCoverageMetrics.cs](../src/Sims4ResourceExplorer.Preview/MaterialCoverageMetrics.cs).
+The current local corpus comes from the profile snapshot in `tmp/precomp_shader_profiles.json`, loaded by [ShaderProfileRegistry.cs](../src/Sims4ResourceExplorer.Preview/ShaderProfileRegistry.cs) and classified by [MaterialCoverageMetrics.cs](../src/Sims4ResourceExplorer.Preview/MaterialCoverageMetrics.cs).
+
+For the external-first family packet, use [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md).
 
 Current corpus snapshot:
 
@@ -973,8 +1040,9 @@ Important limit:
 
 - these tiers describe current repo preview support, not authoritative in-game equivalence
 - family names are currently normalized from the first token of the profile name before `-`, `_`, or whitespace
+- this section is implementation archaeology, not a truth source for family semantics
 
-The current practical registry is:
+The current practical boundary is:
 
 | Registry bucket | Representative profiles seen locally | Current decoder path | Current support shape | Notes |
 | --- | --- | --- | --- | --- |
@@ -989,9 +1057,9 @@ The current practical registry is:
 | `Sim-special surface families` | `SimGlass`, `SimGhost`, `SimGhostGlassCAS`, `SimWingsUV` | generic plus current slot heuristics | mixed, currently not fully specialized | Keep as a separate tracking bucket because these are likely to matter for later `CAS/Sim` parity work. |
 | `Unknown/default` | everything not matched by a dedicated strategy | `DefaultMaterialDecodeStrategy` | mixed | This is the remaining research bucket; do not treat it as one real shader family. |
 
-### Representative family detail samples
+### Representative implementation detail samples
 
-These are still support-oriented notes, not final authoritative contracts. The local profile corpus contains a lot of shared global parameters, so the useful signal here is the combination of texture-like slots, UV-like controls, and the strategy bucket that currently catches the profile.
+These are implementation-oriented notes, not final authoritative contracts. The local profile corpus contains a lot of shared global parameters, so the useful signal here is the combination of texture-like slots, UV-like controls, and the strategy bucket that currently catches the profile.
 
 | Representative profile | Current bucket | Useful local slot/UV hints | Safe current reading |
 | --- | --- | --- | --- |
@@ -1012,7 +1080,7 @@ Current practical lesson:
 
 ### Current decoder slot and UV heuristics
 
-The repo already has one concrete set of slot and UV heuristics. They are not the final TS4 contract, but they are the current implementation baseline and should be documented explicitly.
+The repo already has one concrete set of slot and UV heuristics. They are not the TS4 contract; they are documented here only so current approximation behavior stays explicit and auditable.
 
 Current canonical slot-name normalization in [ShaderSemantics.cs](../src/Sims4ResourceExplorer.Preview/ShaderSemantics.cs):
 
@@ -1259,6 +1327,7 @@ Local decoder/corpus evidence:
 - the same profile also carries `gPosToUVDest`, `uvMapping`, `samplerEmissionMap`, and multiple glass/refraction-adjacent helper names
 - local `precomp_sblk_inventory` counters keep `tex1` fully isolated to `RefractionMap` (`87`) while `gPosToUVDest` spreads across multiple projected/runtime families such as `particleFogMultiplier` (`42`), `RefractionMap` (`36`), `PickInstancedVertexAnim` (`36`), `Bloom_Blur` (`35`), and `WorldToDepthMapSpaceMatrix` (`24`)
 - current decoder code already treats `gPosToUVDest` as a strong runtime/projective signal rather than ordinary UV-scale metadata
+- the current narrower `EP10` Build/Buy identity pass now links the cleaner projective bridge root `01661233:00000000:00F643B0FDD2F1F7` back to `ClientFullBuild0.package | sculptFountainSurface3x3_EP10GENlilyPad` through an `instance-swap32` resolution from `OBJD` candidate `01661233:00000000:FDD2F1F700F643B0`
 
 Engine-lineage corroboration:
 
@@ -1276,6 +1345,7 @@ What would close it:
 
 - live-asset extraction that shows how `RefractionMap` binds `tex1` in real materials
 - stronger code/spec evidence for whether `tex1` is a scene/refraction buffer, secondary lookup, or ordinary sampled texture
+- a stronger end-to-end confirmation that the named lily-pad bridge root carries direct `RefractionMap`-family material identity rather than only the adjacent `WorldToDepthMapSpaceMatrix` bridge packet
 
 #### 2. `ShaderDayNightParameters` + `samplerRevealMap` / `LightsAnimLookupMap`
 
@@ -1392,7 +1462,8 @@ Every shader/material family entry must capture:
 This registry is the right place for future consolidation work. It should be driven by:
 
 - live asset samples
-- current decoder output
+- external references and creator tooling
+- local snapshots of external tooling
 - format references
 - explicit fixture validation
 
@@ -1401,6 +1472,8 @@ It should not be replaced by more domain-specific renderer branches.
 ### First authority and fallback matrix (`v0`)
 
 The repo also now has enough evidence to keep a first family-specific authority matrix. This is still incomplete, but it is already stronger than one global fallback rule.
+
+For the authority/family expansion, use [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md), [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md), and [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md).
 
 | Asset family | Primary authority today | Additional render-relevant inputs | Fallback boundary | Confidence |
 | --- | --- | --- | --- | --- |
@@ -1467,13 +1540,17 @@ Any future material/texture/UV packet should answer:
 6. Which fixtures or live assets prove the behavior?
 7. Did the packet preserve provenance and diagnostics for approximate paths?
 
+And it should avoid this failure mode:
+
+- using a fixture to justify a new asset-class-specific shader path instead of a better shared-family rule
+
 ## Open gaps
 
 These gaps are still real. Do not treat them as solved.
 
 ### 1. The shader-family registry is still incomplete
 
-We now have a first decoder-backed registry, but we still do not have one complete table of:
+We now have a first working registry plus a linked external-first family deep-dive, but we still do not have one complete cross-domain table of:
 
 - shader family
 - authoritative texture roles
@@ -1509,7 +1586,7 @@ Status: `open gap`
 
 ### 4. Complete slot-specific UV transform coverage is missing
 
-The current decoder already recognizes that map-specific UV routing exists, but we do not yet have a complete proof and implementation matrix for all live families and all transform encodings.
+Map-specific UV routing is clearly real, but we do not yet have a complete proof and implementation matrix for all live families and all transform encodings.
 
 Status: `open gap`
 
@@ -1521,8 +1598,8 @@ Status: `open gap`
 
 ## Recommended next work
 
-1. Expand the `v0` shader-family registry into a per-family slot/param table derived from live assets and current decoder output.
-2. Separate authoritative `CAS/Sim` material-definition paths from approximation paths in both documentation and diagnostics.
+1. Expand the external-first shader-family packet into per-family slot/param tables derived from live assets, creator tooling, and external snapshots.
+2. Extend the current family packet from sampled Build/Buy roots into sampled `CASP/GEOM` families with real material dumps.
 3. Add a validation corpus that exercises the same material families across `BuildBuy`, `CAS`, and `Sim`.
 4. Promote `CASP` routing fields, `GEOM/MTNF`, `Skintone`, and `RegionMap` into one explicit material-input graph rather than scattered helpers.
 5. Keep extending the shared decoder, not the number of special-case renderers.

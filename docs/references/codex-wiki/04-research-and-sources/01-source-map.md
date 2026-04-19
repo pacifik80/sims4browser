@@ -85,7 +85,10 @@ Companion docs created from this source pack:
 - [Workflows index](../../../workflows/README.md)
 - [Material pipeline deep dives](../../../workflows/material-pipeline/README.md)
 - [Shared TS4 Material, Texture, And UV Pipeline](../../../shared-ts4-material-texture-pipeline.md)
+- [Build/Buy Material Authority Matrix](../../../workflows/material-pipeline/buildbuy-material-authority-matrix.md)
 - [CAS/Sim Material Authority Matrix](../../../workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Shader Family Registry](../../../workflows/material-pipeline/shader-family-registry.md)
+- [Skintone And Overlay Compositor](../../../workflows/material-pipeline/skintone-and-overlay-compositor.md)
 
 Для общей темы `BuildBuy/CAS/Sim` render pipeline полезно заранее разделять источники не только по trust level, но и по тому, какой кусок пайплайна они реально подтверждают.
 
@@ -118,6 +121,7 @@ Companion docs created from this source pack:
 - `MTS / Sims_4:0x01D10F34` (`MLOD`)
 - `MTS / Sims_4:0x015A1849` (`GEOM`)
 - `MTS / Sims_4:0xC0DB5AE7` (`Object Definition`)
+- `MTS / Info | COBJ/OBJD resources`
 - `MTS / Sims_4:0x03B4C61D` (`LITE`)
 - `EA forum thread` on `Object Definition` vs object definition cross-references
 
@@ -127,8 +131,16 @@ Companion docs created from this source pack:
 - `GEOM` как body geometry container
 - embedded `MTNF`
 - multi-UV and vertex-layout reality
+- object-side seam details for Build/Buy fixtures:
+  - `OBJD` carries direct `Model`, `Rig`, `Slot`, and `Footprint` references
+  - `MaterialVariant` in `OBJD` points by FNV32 name into `MODL/MLOD` material entries and from there to the relevant material definition
 - базовый Build/Buy authority order: `Object Definition -> Model/Model LOD -> Material Set -> Material Definition`
 - `LITE` как отдельную light/emitter ветку рядом с surface-material chain
+- enough external object-side authority to keep a dedicated `Build/Buy` companion doc stable:
+  - `COBJ/OBJD` as swatch-level identity
+  - `MODL/MLOD` as the base mesh/material chain
+  - `MTST/MATD` as the current material authority seam
+  - `LITE` and `VPXY` as bounded parallel/helper branches rather than replacements for that seam
 
 Чего они не дают полностью:
 
@@ -181,8 +193,8 @@ Companion docs created from this source pack:
   - parsed `CASP` texture refs and `region_map` are eagerly resolved before scene build, so shell families already have a field-routed material floor even when no explicit `MaterialDefinition` is present
   - explicit companion `MaterialDefinition` resources can still upgrade shell materials when geometry companions expose them
   - explicit shell `MaterialDefinition` evidence is currently asymmetric: strong for generic CAS and worn-slot scene-build fixtures, partial for shell-specific end-to-end graph/scene fixtures, but already proven at the composer-level shell merge seam
-  - current shell fixtures still frequently materialize as shell-scoped `ApproximateCas`, so explicit `MATD` is a supported upgrade path, not yet a proven universal shell prerequisite
-  - `MTNF` is strongly confirmed as a real embedded `GEOM` material carrier by external references, but current repo GEOM parsing still skips the embedded payload and current shell fixtures barely exercise it
+- current shell fixtures still frequently materialize as shell-scoped `ApproximateCas`, so explicit `MATD` is a supported upgrade path, not yet a proven universal shell prerequisite
+- `MTNF` is strongly confirmed as a real embedded `GEOM` material carrier by external references, but current repo GEOM parsing still skips the embedded payload and current shell fixtures barely exercise it
   - the bundled local `TS4SimRipper` body/head/waist sample corpus gives a first prevalence hint: `9/9` sampled shell-like `.simgeom` resources in that snapshot contain `MTNF`
   - that first local sample hint is now also split into a small matrix: `Body 4/4`, `Head 4/4`, `Waist 1/1`
   - modern TS4 creator-tooling evidence also supports `MTNF` as behaviorally relevant payload: incorrect MTNF shader-size handling is documented as causing save/game issues for `GEOM`s
@@ -200,8 +212,18 @@ Companion docs created from this source pack:
   - the current local negative finding is now tighter too: an exact code sweep across the current repo render/composition paths plus bundled external tool code checked in-repo still does not surface a named `SimSkinMask` authority/export branch, while `SimSkin` and `SimGlass` are explicitly named
   - creator tooling now corroborates that reading from the other side as well: `TS4 Skininator`, `TS4 Skin Converter`, and recent `Sims 4 Studio` notes all keep mask-bearing skin content inside skintone/overlay/image workflows rather than surfacing a peer `SimSkinMask` geometry family
   - a wider workspace sweep still does not surface a broader local live/sample corpus for `SimSkinMask`: outside the mirrored `TS4SimRipper` resources, no extra `.simgeom` packet in the current repo snapshot exposes a peer branch
-  - the broader mainstream toolchain packet checked for this pass still points the same way: `TS4CASTools`, `TS4SimRipper`, `Skininator`, and `Sims 4 Studio` expose `SimSkin`, `SimGlass`, `ColorShiftMask`, overlays, and burn-mask semantics, but not a peer named `SimSkinMask` geometry/export/import branch
-  - that dense `CAS/Sim` authority packet is now also split out into its own workflow doc so further family-by-family passes can stay local instead of bloating the main cross-domain guide
+- the broader mainstream toolchain packet checked for this pass still points the same way: `TS4CASTools`, `TS4SimRipper`, `Skininator`, and `Sims 4 Studio` expose `SimSkin`, `SimGlass`, `ColorShiftMask`, overlays, and burn-mask semantics, but not a peer named `SimSkinMask` geometry/export/import branch
+- that dense `CAS/Sim` authority packet is now also split out into its own workflow doc so further family-by-family passes can stay local instead of bloating the main cross-domain guide
+- the shader-family packet is now also split out more explicitly:
+  - `MaterialDecoding.cs` now defines the current preview-facing strategy buckets
+  - `ShaderSemantics.cs` now defines the current slot fallback rules for families like `DecalMap`, `ShaderDayNightParameters`, `WriteDepthMask`, and `WorldToDepthMapSpaceMatrix`
+  - local sample coverage dumps now add representative live Build/Buy roots for `SeasonalFoliage`, `colorMap7`, `WriteDepthMask`, `ShaderDayNightParameters`, `WorldToDepthMapSpaceMatrix`, `SpecularEnvMap`, `DecalMap`, `painting`, `SimWingsUV`, and `samplerCASPeltEditTexture`
+  - bundled local `TS4SimRipper` `.simgeom` resources keep the first direct `SimSkin` sample packet even where full per-family material dumps are still missing
+- the skintone/compositor packet is now also split out more explicitly:
+  - `TONE` carries skin sets, overlay instances, overlay multipliers, hue/saturation, opacity, and per-overlay age/gender flags
+  - `SkinBlender` implements a clear multi-pass approximation using base skin, body details, skin-set overlay/mask, overlay color, second-pass opacity, and age/gender overlays
+  - current repo code already resolves real `Skintone` resources and applies region-map-aware skintone routing to selected canonical materials, but does not yet implement exact compositor math
+  - overlay/detail families are now better bounded as compositor-driven `CASPart` layers, not geometry-family roots
 
 Чего они не дают полностью:
 
@@ -218,6 +240,10 @@ Companion docs created from this source pack:
 - creator troubleshooting threads on `Mod The Sims`
 - `CAS Designer Toolkit` release notes:
   - https://modthesims.info/d/694549
+- TS4 creator-facing transparency guidance:
+  - [Transparency in clothing tutorial](https://maxismatchccworld.tumblr.com/post/645249485712326656/transparency-in-clothing-tutorial)
+  - [Semi-Square Eyeglasses](https://kijiko-catfood.com/semi-square-eyeglasses/)
+  - [Lashes and hair cc clashing](https://forums.ea.com/discussions/the-sims-4-mods-and-custom-content-en/lashes-and-hair-cc-clashing-pics-included-please-help-/12047424)
 
 Что они хорошо подтверждают:
 
@@ -237,6 +263,11 @@ Companion docs created from this source pack:
 - creator-facing evidence that importing/exporting `MTNF` can materially affect CAS mesh behavior even outside formal format docs
 - TS4 creator-tooling changelogs now also support that malformed `MTNF` shader payloads are not benign metadata errors; they can affect saved/game-visible `GEOM` behavior
 - creator-facing evidence that family-specific GEOM shader choices like `SimGlass` and `SimEyes` change visible TS4 behavior and therefore should not be flattened away in documentation or IR design
+- creator-facing evidence that `SimGlass` is not just "anything glass-like":
+  - creators explicitly switch to `Simglass` for transparent clothing parts
+  - semi-transparent eyeglass frames are described as requiring `SimGlass`
+  - current support/forum guidance describes alpha hair and lashes as using the same "glass" shader family as glasses and other transparent CAS items
+- this makes `SimGlass` safer to search from transparent layered content than from broad architectural window vocabulary alone
 - local external code-backed evidence that some GEOM shader families are already treated as separate export/render branches, not just named flags
 - local corpus-backed evidence that shader-family prevalence is uneven and should influence prioritization: `SimSkin`-adjacent families appear much more heavily than `SimGlass` in the current precompiled snapshot
 

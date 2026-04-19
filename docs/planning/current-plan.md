@@ -13,11 +13,134 @@ Every active plan in this file must include:
 
 The plan must be updated during the same user request, not only at session closeout.
 
+## TS4 Material Research Restart Contract
+
+If the active work is the external-first TS4 material, texture, shader, and UV research track, start here:
+
+- [Research Restart Guide](../workflows/material-pipeline/research-restart-guide.md)
+
+This restart contract overrides the common failure mode for that task:
+
+- external sources, creator tooling, and local snapshots of external tools are the truth layer
+- local corpus and precompiled summaries are candidate-target hints only
+- current repo code is implementation boundary and failure evidence only, not TS4 truth
+- each run should advance the next bounded packet, then update the queue, matrix, and plan
+- each run should close with the compact tree-style status report defined in the restart guide
+
 ## Active Task
 
 Status: `In Progress`
 
 ### Current Request Addendum
+
+#### Problem
+
+The repo now has a dense `CAS/Sim` authority companion, but `Build/Buy` authority is still split between the shared guide, edge-family packets, and source notes. That makes the strongest object-side contract harder to reuse and leaves the `Full Build/Buy family authority order` open question broader than it needs to be. The next bounded gap is a dedicated external-first `Build/Buy` material authority matrix that turns the already-proved base path and current family deviations into one restart-safe deep dive.
+
+#### Chosen Approach
+
+- Keep this as a documentation and synthesis packet, not a code packet.
+- Use external Build/Buy resource references as the truth layer: `Resource Type Index`, `File Types`, `RCOL`, `MLOD`, `LITE`, and the community `COBJ/OBJD` / material-variant linkage notes.
+- Reuse existing live-proof packets only as fixture-backed examples of the already-proved authority chain.
+- Add one new companion doc for Build/Buy authority, then sync the shared guide, workflow indexes, source map, open questions, and plan.
+
+#### Actions
+
+- [x] Re-open the current shared/workflow/source docs and confirm that no dedicated Build/Buy authority companion exists yet.
+- [x] Create a dedicated external-first `Build/Buy` material authority matrix under `docs/workflows/material-pipeline/`.
+- [x] Link the new matrix from the shared guide, workflow index, and source-map docs.
+- [x] Narrow the `Full Build/Buy family authority order` open question so future packets can continue from concrete family gaps instead of rediscovering the base path.
+- [x] Fold the continuation hints back into the current plan.
+
+#### Restart Hints
+
+- This packet should not try to solve exact per-family shader semantics; it should freeze the Build/Buy authority-discovery and material-linkage contract.
+- The safe base order is already strong: `Object Catalog/Object Definition -> Model/Model LOD -> Material Set/Material Definition`, with `Light` as a parallel branch and `VPXY` kept bounded as a linkage helper rather than a base authority node.
+- Existing edge-family packets (`RefractionMap`, `ShaderDayNightParameters`, `GenerateSpotLightmap`, `SimGlass`) should be linked as family-specific deviations or live fixtures, not re-explained from scratch.
+- The new restart-safe companion is `docs/workflows/material-pipeline/buildbuy-material-authority-matrix.md`.
+- The next Build/Buy continuation should start from one of three narrower gaps: `SimGlass` row-level fixture closure, stronger `MTST` state/variant fixtures, or bounded linked-object/`VPXY` family packets.
+
+#### Problem
+
+The main shared docs now state the universal shader/material contract clearly, but the narrower family and live-proof docs can still be misread if they mention domains, fixtures, or authority branches without repeating the architectural split. The next bounded gap is consistency: the lower-layer docs should reinforce “domain-specific authority, shared shader semantics” instead of relying on the reader to remember it from the top-level guide.
+
+#### Chosen Approach
+
+- Keep this as a wording and structure packet, not a new evidence packet.
+- Audit the narrow workflow docs that most often talk about family usage, fixtures, and edge cases.
+- Add short, repeated “safe reading” reminders where domain-specific wording could be mistaken for shader specialization.
+- Fold the clarification into the restart-facing docs and status layers only where it materially improves future continuity.
+
+#### Actions
+
+- [x] Re-open the narrow workflow docs most likely to blur discovery/authority with shader semantics.
+- [x] Tighten family, edge-family, and live-proof wording so domain mentions stay clearly on the authority/discovery side.
+- [x] Tighten restart/status docs so future packets inherit the same wording automatically.
+- [x] Fold the clarification back into the current plan.
+
+#### Restart Hints
+
+- The architecture is already fixed at the top level: one shared shader/material contract after authoritative inputs are found.
+- This packet is only about propagating that wording into lower-level docs.
+- Target the docs that talk most about families and fixtures, because those are the ones easiest to misread as asset-bound shader branches.
+- The lower-layer reinforcement now lives in `edge-family-matrix.md`, `p1-live-proof-queue.md`, `live-proof-packets/simglass-vs-shell-baseline.md`, and `live-proof-packets/refractionmap-live-proof.md`.
+- Safe reading to preserve on future packets: fixtures and domains prove authority routes and family survival, then flow back into the same shared material/shader contract.
+
+#### Problem
+
+The docs now have stronger live-proof packets, but a reader can still misread the evidence layer as if the project were building separate `BuildBuy`, `CAS`, or `Sim` shaders. That is the wrong architectural reading. The remaining gap is not shader specialization by asset class; it is clearer wording that domain families only control discovery and authority order before everything converges into one shared shader/material contract.
+
+#### Chosen Approach
+
+- Keep the clarification architectural, not code-driven.
+- Tighten the shared guide first, because it is the source-of-truth statement for the universal material/shader contract.
+- Then align the shader-family registry and `CAS/Sim` authority companion so they explicitly read as input-authority docs, not domain-specific shader docs.
+- Add one short rule for live fixtures: fixtures prove authoritative inputs and family semantics, not asset-bound renderer branches.
+
+#### Actions
+
+- [x] Re-open the shared guide and the two main companion docs that are most likely to be misread as domain-specific shader packets.
+- [x] Tighten the shared guide so the universal shader/material contract is explicit and easy to find.
+- [x] Tighten the shader registry and `CAS/Sim` authority matrix so domain usage is documented only as discovery/authority context, not as separate shader logic.
+- [x] Fold the clarification back into restart-facing docs and the current plan.
+
+#### Restart Hints
+
+- The architectural rule to preserve is: domain-specific discovery, shared post-discovery shader/material semantics.
+- `BuildBuy`, `CAS`, and `Sim` stay relevant only for identity roots, authoritative input order, and family-local constraints before canonical-material decoding.
+- Live fixtures are still useful, but only as evidence that certain inputs/families exist and enter the shared pipeline; they are not evidence for domain-specific renderer branches.
+
+#### Problem
+
+The current edge-family documentation now has a named `RefractionMap` bridge fixture, but the next restart-safe gap is still open: the docs do not yet record one broader survey-backed row-level extraction route for `SimGlass`, and the refraction packet still needs a tighter statement about what the lily-pad object/material seam does and does not prove. Without that bounded follow-up, the next run would have to rediscover the same search boundary.
+
+#### Chosen Approach
+
+- Keep the work external-first and documentation-first.
+- Use the already named `RefractionMap` lily-pad fixture only to tighten the object/material seam wording, not to infer shader semantics from current code.
+- Use local survey and probe artifacts only to isolate the next `SimGlass` candidate route.
+- Add any new source-backed or survey-backed narrowing to the live-proof packet, queue, matrix, and restart docs so the next run can continue without rescanning.
+
+#### Actions
+
+- [x] Re-open the current edge-family packet state and identify the next bounded documentation gap.
+- [x] Reconfirm the named `RefractionMap` object/material seam and tighten its documented safe reading only if the evidence supports a narrower statement.
+- [x] Isolate one broader survey-backed next-step route for `SimGlass` that is better than the already-bounded `EP10` obvious-name window/mirror sweep.
+- [x] Fold the proved part back into the live-proof packet, queue, matrix, restart guide, source/open-question indexes, and current plan.
+
+#### Restart Hints
+
+- The active continuation packet is still the edge-family research track, not implementation work.
+- `RefractionMap` currently has one named bridge fixture: `EP10\\ClientFullBuild0.package | sculptFountainSurface3x3_EP10GENlilyPad -> 01661233:00000000:00F643B0FDD2F1F7`.
+- `RefractionMap` safe-reading is now tighter too: the lily-pad seam proves a durable object/material bridge fixture, but similar `instance-swap32` transformed roots in the broader `SimGlass` packet do not yet reopen cleanly, so that transform must not be treated as a universal proof rule.
+- The next `SimGlass` step should come from the broader `EP10` transparent-decor cluster rather than from another `EP10` obvious-name sweep:
+  - `fishBowl_EP10GENmarimo -> 01661233:00000000:FAE0318F3711431D`
+  - `shelfFloor2x1_EP10TEAdisplayShelf -> 01661233:00000000:E779C31F25406B73`
+  - `shelfFloor2x1_EP10TEAshopDisplayTileable -> 01661233:00000000:93EE8A0CF97A3861`
+  - `lightWall_EP10GENlantern -> 01661233:00000000:F4A27FC1857F08D4`
+  - `mirrorWall1x1_EP10BATHsunrise -> 01661233:00000000:3CD0344C1824BDDD`
+- Treat those five roots as survey-backed search anchors only. Current direct reopen attempts still return `Build/Buy asset not found`.
+- After this packet, the minimum doc sync set is `live-proof-packets/`, `p1-live-proof-queue.md`, `edge-family-matrix.md`, `research-restart-guide.md`, `01-source-map.md`, `03-open-questions.md`, and this file.
 
 #### Problem
 
@@ -56,8 +179,10 @@ The new shared pipeline guide is in place, but its main open gaps are still open
 
 - Continue the same request as a second research/consolidation packet rather than jumping back into code fixes.
 - Use the new repo guide as the anchor and now gather missing evidence specifically for the open gaps it lists.
-- Combine live web research with local reference implementations and local reverse-engineering snapshots (`TS4SimRipper`, repo decoder code, external snapshots) instead of relying on only one source type.
+- Combine live web research with community tooling and local snapshots of external tooling (`TS4SimRipper`, external snapshots) instead of relying on only one source type.
+- Treat current repo code and local decoder output only as implementation boundary or failure evidence, not as a truth source for TS4 material semantics.
 - Distill any newly proven rules back into the shared guide and supporting source-map docs, while keeping unresolved areas explicitly marked as open.
+- Close each run with one status matrix that shows current percentage, progress, and per-run increment for every top-level section and important subsection.
 
 #### Actions
 
@@ -66,9 +191,9 @@ The new shared pipeline guide is in place, but its main open gaps are still open
 - [x] Gather stronger evidence for `SharedUVMapSpace`, `CompositionMethod`, and `SortLayer` from code-backed and creator-facing sources.
 - [x] Update the shared guide and supporting source-map docs with the newly proven rules and narrower wording.
 - [x] Record which gaps still remain unresolved after this deeper pass.
-- [x] Build the first `v0` repo-local shader-family registry from local decoder buckets and the profile corpus snapshot.
+- [x] Build the first `v0` working shader-family registry packet, then reframe it so external sources remain primary and local decoder buckets stay only as implementation boundary.
 - [x] Produce the first `v0` authority/fallback matrix for major `Build/Buy`, `CAS`, and `Sim` family groups.
-- [x] Document the current decoder slot-name and UV-interpretation heuristics as explicit implementation baseline.
+- [x] Document the current decoder slot-name and UV-interpretation heuristics explicitly as implementation boundary, not as family truth.
 - [x] Add representative per-family `v0` slot/parameter tables, including still-raw parameters that need later semantics work.
 - [x] Split the remaining `raw/unmapped` names into narrower semantic buckets instead of one undifferentiated unknown class.
 - [x] Split edge-case families into structurally runtime-dependent cases vs narrow family-local unresolved cases, with a priority queue for the next semantic pass.
@@ -76,7 +201,7 @@ The new shared pipeline guide is in place, but its main open gaps are still open
 - [x] Strengthen the `P1` pass with local `precomp_sblk_inventory` concentration evidence and external `CASHotSpotAtlas` hotspot-atlas corroboration from TS4 morph/slider documentation.
 - [x] Separate `CASHotSpotAtlas` into an explicit CAS editing/morph branch (`HotSpotControl -> SimModifier -> DMap/BGEO/BOND -> GEOM`) instead of leaving it mixed into the ordinary surface-material chain.
 - [x] Split the remaining narrow semantic gaps into explicit `surface-material`, `lightmap/projection`, and `CAS editing/morph` branches, and add engine-lineage corroboration for `samplerRevealMap` / refraction naming where direct TS4 writeups remain weak.
-- [x] Add a co-presence pass for `samplerRevealMap`, `LightsAnimLookupMap`, `NextFloorLightMapXform`, and `RefractionMap/tex1`, tying local corpus concentration to the current decoder semantics.
+- [x] Add a co-presence pass for `samplerRevealMap`, `LightsAnimLookupMap`, `NextFloorLightMapXform`, and `RefractionMap/tex1`, using local corpus concentration only as supporting evidence for narrower external-first hypotheses.
 - [x] Add an explicit document coverage map and narrow `VPXY` into a bounded scenegraph/linkage helper instead of leaving it as a diffuse all-purpose unknown.
 - [x] Turn the current `CAS/Sim` evidence into a bounded material-input graph that separates primary identity/material roots from modifier layers and reserve-only fallback paths.
 - [x] Turn the bounded `CAS/Sim` graph into a first family-level slot matrix that separates body shell, head shell, footwear, hair/accessory, and overlay behavior.
@@ -99,9 +224,22 @@ The new shared pipeline guide is in place, but its main open gaps are still open
 - [x] Re-check the wider in-repo sample corpus beyond the first folder: no broader local `.simgeom` family surfaced outside the mirrored `TS4SimRipper` resource copies, so the current no-find is not just a one-folder artifact.
 - [x] Re-check the broader mainstream toolchain packet: `TS4CASTools` and public `TS4SimRipper` sources still expose `SimSkin` / `SimGlass` but no peer named `SimSkinMask` asset/export/import branch.
 - [x] Split the densest `CAS/Sim` authority packet into a dedicated workflow doc with cross-links, so the main shared guide stays cross-domain while family-specific authority notes continue to deepen separately.
-- [x] Add stronger body/head/slot corroboration into that dedicated authority doc using current repo code plus `Modifying Sim Appearances`, `File Types`, `Skininator`, and `TS4 Skin Converter`.
-- [ ] Expand the `v0` shader registry into per-family slot/parameter tables with representative live assets.
-- [ ] Expand the `v0` authority/fallback matrix to edge-case `CAS/Sim` and `Build/Buy` families.
+- [x] Add stronger body/head/slot corroboration into that dedicated authority doc using external references, creator tooling, and local external snapshots, with current repo code demoted to implementation anchors only.
+- [x] Add a dedicated skintone/compositor deep-dive that separates current implementation routing from still-open exact in-game blend math, using `TS4SimRipper` `TONE` / `SkinBlender`, `Skininator`, `Skin Converter`, and creator-facing overlay references as the primary evidence packet.
+- [x] Split the shader-family packet into its own deep-dive so live family tables can grow without bloating the shared guide.
+- [x] Expand the `v0` shader registry into per-family slot/parameter tables with representative local live assets and corpus-backed edge packets.
+- [x] Expand the `v0` authority/fallback matrix to edge-case `CAS/Sim` and `Build/Buy` families.
+- [x] Turn `SimSkin` versus `SimSkinMask` into a concrete live-proof packet instead of leaving it only in the queue or matrix.
+- [x] Turn `CASHotSpotAtlas` carry-through into a concrete live-proof packet instead of leaving it only in the queue or matrix.
+- [x] Turn `ShaderDayNightParameters` into a concrete visible-pass live-proof packet with isolated Build/Buy roots.
+- [x] Turn `GenerateSpotLightmap / NextFloorLightMapXform` into a concrete generated-light live-proof packet instead of leaving it only at the family-sheet layer.
+- [x] Turn `RefractionMap` into a concrete live-proof packet with family-local `tex1` isolation and an explicit weak-live-root boundary.
+- [x] Lift `SimGlass` and `RefractionMap` one tier higher in the live-proof layer by recording their Build/Buy survey-level presence separately from precompiled name archaeology.
+- [x] Add the first adjacent-root bridge for the refraction/projective neighborhood and the first explicit shell-control baseline for `SimGlass`, without overstating either one as closed proof.
+- [x] Record the current direct owning archaeology rows for `SimGlass` (`0xB6F2B1B1`) and `RefractionMap` (`0xBB85A5B7`) separately from live-fixture evidence, so later passes can re-anchor the same packets without re-scanning the whole corpus.
+- [x] Split the current refraction bridge into a cleaner first target (`00F643B0FDD2F1F7`) versus a mixed boundary case (`0124E3B8AC7BEE62` with one `FresnelOffset` LOD), and record that asymmetry explicitly.
+- [x] Record that the cleaner refraction bridge root (`00F643B0FDD2F1F7`) currently keeps explicit local `diffuse + texture_5`, while the weaker bridge root (`0124E3B8AC7BEE62`) leans on fallback diffuse resolution.
+- [x] Record that `00F643B0FDD2F1F7` now repeats across multiple sampled coverage artifacts, so it is the current best unnamed extraction target even though object-name linkage is still missing.
 
 #### Restart Hints
 
@@ -138,8 +276,79 @@ The new shared pipeline guide is in place, but its main open gaps are still open
 - the widened corpus pass still stayed negative: outside the mirrored `TS4SimRipper` resource copies, the current workspace does not yet contain a broader local sample family that would challenge that reading.
 - the widened mainstream toolchain pass also stayed negative: checked `TS4CASTools` and public `TS4SimRipper` code still expose `SimSkin` / `SimGlass` only, so a counterexample likely requires genuinely new live assets or rarer toolchains rather than one more pass over the same obvious sources.
 - the authority topic is now also split structurally: the main guide keeps the shared cross-domain contract, while the detailed `CAS/Sim` family matrix lives in `docs/workflows/material-pipeline/cas-sim-material-authority-matrix.md`.
+- the shader-family topic is now also split structurally: `docs/workflows/material-pipeline/shader-family-registry.md` is the external-first family packet and must keep current decoder/corpus behavior only as implementation boundary, not as truth source.
+- the next accumulation layer under that packet is now also present: `docs/workflows/material-pipeline/family-sheets/` holds narrow external-first evidence sheets so future runs can deepen one family at a time.
+- that family-sheet layer now has first concrete packets for `SimSkin/SimGlass/SimSkinMask`, `CASHotSpotAtlas`, `ShaderDayNightParameters`, and `GenerateSpotLightmap/NextFloorLightMapXform`; the next synthesis step is a stricter edge-family matrix built from those sheets.
+- that synthesis step is now started too: `docs/workflows/material-pipeline/edge-family-matrix.md` is the compact row-by-row authority layer for narrow families, and future runs should deepen it row by row instead of widening generic fallback language.
+- `edge-family-matrix.md` now also carries a proof-packet summary and a `P1/P2` live-proof queue; future runs should resume from that queue instead of inventing a new ordering.
+- `p1-live-proof-queue.md` now turns that ordering into one concrete working queue with candidate targets; future runs should update that queue instead of scattering target notes back into chat.
+- the first concrete live-proof packet is now also started: `docs/workflows/material-pipeline/live-proof-packets/simglass-vs-shell-baseline.md` turns the first `P1` row into an actual inspection document instead of leaving it as only a queue item.
+- the live-proof layer is now broader too: `docs/workflows/material-pipeline/live-proof-packets/simskin-vs-simskinmask.md` and `docs/workflows/material-pipeline/live-proof-packets/cas-hotspotatlas-carry-through.md` now turn the next two `P1` rows into concrete packets.
+- the live-proof layer now also covers `ShaderDayNightParameters` and `GenerateSpotLightmap / NextFloorLightMapXform`, so the next unfinished concrete packet is now `RefractionMap`.
+- the live-proof layer now also covers `RefractionMap`, so the current edge-family queue is structurally complete and the next step is a stronger live-fixture pass rather than another new packet type.
+- the stronger live-fixture pass is now narrowed one step further too: `SimGlass` and `RefractionMap` both have Build/Buy survey-level family hits, so the next step is row-level root extraction from that survey layer rather than another generic corpus pass.
+- the current bridge packet is now slightly stronger too: `RefractionMap` has adjacent projective roots (`00F643B0FDD2F1F7`, `0124E3B8AC7BEE62`) plus visible comparison roots (`0737711577697F1C`, `00B6ABED04A8F593`), while `SimGlass` now has explicit bundled `SimSkin` shell controls for side-by-side comparison. None of these should be restated as direct family proof.
+- the archaeology layer is now also easier to resume precisely: `SimGlass` currently anchors to `0xB6F2B1B1`, `RefractionMap` to `0xBB85A5B7`, and adjacent `samplerRefractionMap` to `0xF087D458` in the current precompiled snapshots. These are packet anchors, not live roots.
+- the refraction bridge is now also internally ranked: `00F643B0FDD2F1F7` is the cleaner first extraction target, while `0124E3B8AC7BEE62` is useful mainly as a mixed boundary case because one sampled LOD lands on `FresnelOffset` instead of `WorldToDepthMapSpaceMatrix`.
+- that ranking is now one step stronger too: `00F643B0FDD2F1F7` currently preserves explicit local `diffuse + texture_5`, while `0124E3B8AC7BEE62` currently reaches visible texture only through a fallback same-instance diffuse path.
+- `00F643B0FDD2F1F7` is now also repeated across multiple sampled coverage artifacts, so the next pass should treat it as the best unnamed extraction target rather than as just one more adjacent bridge root.
+- the skintone/compositor topic is now split structurally too: `docs/workflows/material-pipeline/skintone-and-overlay-compositor.md` keeps the dense boundary between routing, overlay/detail families, tan/burn state, and still-open exact blend math.
+- the first live-backed shader packet is now no longer purely hypothetical: sampled Build/Buy coverage files now anchor `SeasonalFoliage`, `colorMap7`, `WriteDepthMask`, `ShaderDayNightParameters`, `WorldToDepthMapSpaceMatrix`, `SpecularEnvMap`, `DecalMap`, `painting`, `SimWingsUV`, and `samplerCASPeltEditTexture` to concrete package roots.
+- the first edge-family matrix is now no longer one generic open bucket either: `CAS/Sim` docs now keep explicit rows for transparent glass companions, skin-family GEOM seams, hotspot/morph atlas behavior, pelt/edit helpers, and lightmap or reveal carry-through families.
 - the guide now also carries more direct section-level source pointers; future passes should keep adding them in-place instead of leaving provenance only in chat.
 - Prefer sources that can improve implementation confidence directly: format pages, creator tooling evidence, `TS4SimRipper`, repo decoder code, and local external snapshots.
+
+#### Problem
+
+The current material research queue is structurally complete, but the next bounded gap is still open: `SimGlass` and `RefractionMap` only have survey-level Build/Buy presence plus unnamed bridge roots. Without one row-level root tied back to a concrete object identity, the live-proof layer is still one step short of a durable implementation-facing fixture.
+
+#### Chosen Approach
+
+- Continue from the restart guide's first unfinished packet instead of opening a new family branch.
+- Use the existing local Build/Buy identity-survey tooling and probe artifacts to extract one named row-level root, starting with the cleaner `RefractionMap` bridge target `00F643B0FDD2F1F7`.
+- Treat current repo probes only as extraction and implementation-boundary evidence; the family reading itself still comes from external and external-snapshot sources.
+- Fold only the newly proved linkage back into the live-proof packet, queue, matrix, and supporting indexes.
+
+#### Actions
+
+- [x] Re-read the restart guide, queue, matrix, and current live-proof packets to recover the exact continuation point.
+- [x] Run a narrow Build/Buy identity extraction pass for the `EP10` refraction bridge root `00F643B0FDD2F1F7`.
+- [x] If the identity pass succeeds, record the named row-level root and the exact package/object linkage in the `RefractionMap` live-proof packet.
+- [x] Update the queue, edge-family matrix, and top-level restart hints to reflect the stronger live-fixture footing.
+- [x] Close the run with the compact tree-style status report required by the restart guide.
+
+#### Restart Hints
+
+- The next bounded packet is no longer "create another doc"; it is "name one row-level root".
+- The first row-level root is now named: `EP10\\ClientFullBuild0.package | sculptFountainSurface3x3_EP10GENlilyPad -> 01661233:00000000:00F643B0FDD2F1F7`.
+- The durable linkage anchor is the `OBJD` candidate `01661233:00000000:FDD2F1F700F643B0`, which resolves to the model root via `instance-swap32`.
+- The next move is no longer identity extraction for `00F643`; it is object/material inspection of that named lily-pad fixture, then the same extraction method for `SimGlass`.
+- Keep `0124E3B8AC7BEE62` only as the mixed boundary/control case, not as the primary proof target.
+
+#### Problem
+
+The refraction bridge now has one named fixture, but the documentation is still missing the next two closure layers: an external-first object/material chain packet that explains why this Build/Buy fixture is a valid inspection root, and a matching row-level fixture for `SimGlass` so the two narrow edge families stop progressing asymmetrically.
+
+#### Chosen Approach
+
+- Keep the named lily-pad root as the current refraction anchor and strengthen it with external resource-chain evidence rather than repo-code reasoning.
+- Use local probes only to read package/object/resource linkage for that specific fixture and to extract the next `SimGlass` candidate root.
+- Add only bounded documentation: one stronger note for the Build/Buy object/material seam and one stronger note for the `SimGlass` live-fixture hunt.
+
+#### Actions
+
+- [x] Update the live plan before continuing the next documentation packet.
+- [x] Gather external evidence for the Build/Buy object/material chain relevant to named fixture inspection (`OBJD/COBJ -> model -> material set/definition`).
+- [x] Inspect the named lily-pad fixture only far enough to document its object/material companion seam without inventing unsupported material semantics.
+- [x] Extract one row-level `SimGlass` candidate root or, if the search stays negative, document the negative result and the narrowest next search boundary.
+- [x] Fold the proved results back into the live-proof packet, queue/matrix docs, and open-questions layer.
+
+#### Restart Hints
+
+- The current refraction fixture work should stay object-chain-first, not slot-semantics-first.
+- The exact thing to prove next is not "`tex1` means X"; it is "this named object is a valid durable inspection root inside the known Build/Buy authority chain".
+- `SimGlass` should resume through row-level extraction only after the lily-pad object/material seam is documented clearly enough to reuse as a pattern.
+- The first obvious-name `EP10` glass/window/mirror packet is now a bounded negative control, not the next recommended search frontier.
 
 #### Problem
 
