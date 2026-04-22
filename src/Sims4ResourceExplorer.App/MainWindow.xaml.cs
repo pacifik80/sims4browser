@@ -1747,6 +1747,12 @@ public sealed partial class MainWindow : Window
             return null;
         }
 
+        var transparencyKind = DetermineViewportTransparencyKind(material, textures);
+        if (transparencyKind == ViewportTransparencyKind.Opaque)
+        {
+            return null;
+        }
+
         if (string.IsNullOrWhiteSpace(selectedSlot))
         {
             return SelectOpacityTexture(material, baseColorTexture);
@@ -1791,9 +1797,15 @@ public sealed partial class MainWindow : Window
             return false;
         }
 
+        var transparencyKind = DetermineViewportTransparencyKind(material, textures);
+        if (transparencyKind == ViewportTransparencyKind.Opaque)
+        {
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(selectedSlot))
         {
-            return material?.IsTransparent == true || HasExplicitOpacityTexture(material);
+            return SelectOpacityTexture(material, baseColorTexture) is not null;
         }
 
         var scopedAlphaSlot = !string.IsNullOrWhiteSpace(material?.AlphaTextureSlot) &&
@@ -1806,6 +1818,75 @@ public sealed partial class MainWindow : Window
     private static bool IsNonVisualViewportMaterial(CanonicalMaterial? material) =>
         string.Equals(material?.VisualPayloadKind, "non-visual", StringComparison.OrdinalIgnoreCase) ||
         (material?.Approximation?.Contains("non-visual helper/control material", StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private enum ViewportTransparencyKind
+    {
+        Opaque = 0,
+        ObjectGlass = 1,
+        ThresholdCutout = 2,
+        AlphaBlended = 3,
+        SimGlass = 4,
+        Generic = 5
+    }
+
+    private static ViewportTransparencyKind DetermineViewportTransparencyKind(CanonicalMaterial? material, IReadOnlyList<CanonicalTexture> textures)
+    {
+        if (material is null || IsNonVisualViewportMaterial(material))
+        {
+            return ViewportTransparencyKind.Opaque;
+        }
+
+        // Current evidence order is object-glass -> threshold/cutout -> AlphaBlended -> SimGlass.
+        if (MaterialMetadataContains(material, "GlassForObjectsTranslucent") ||
+            (MaterialMetadataContains(material, "glass") && !MaterialMetadataContains(material, "SimGlass")))
+        {
+            return ViewportTransparencyKind.ObjectGlass;
+        }
+
+        if (MaterialMetadataContains(material, "AlphaCutout", "cutout", "AlphaThresholdMask", "AlphaMaskThreshold") ||
+            string.Equals(material.AlphaMode, "alpha-test-or-blend", StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrWhiteSpace(material.AlphaTextureSlot) ||
+            textures.Any(texture =>
+                texture.Semantic == CanonicalTextureSemantic.Opacity ||
+                texture.Slot.Contains("alpha", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("opacity", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("mask", StringComparison.OrdinalIgnoreCase) ||
+                texture.Slot.Contains("cutout", StringComparison.OrdinalIgnoreCase)))
+        {
+            return ViewportTransparencyKind.ThresholdCutout;
+        }
+
+        if (MaterialMetadataContains(material, "AlphaBlended"))
+        {
+            return ViewportTransparencyKind.AlphaBlended;
+        }
+
+        if (MaterialMetadataContains(material, "SimGlass"))
+        {
+            return ViewportTransparencyKind.SimGlass;
+        }
+
+        return material.IsTransparent || textures.Any(TextureSupportsAlpha)
+            ? ViewportTransparencyKind.Generic
+            : ViewportTransparencyKind.Opaque;
+    }
+
+    private static bool MaterialMetadataContains(CanonicalMaterial material, params string[] needles)
+    {
+        foreach (var needle in needles)
+        {
+            if ((material.ShaderFamily?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (material.ShaderName?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (material.DecodeStrategy?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (material.AlphaMode?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (material.Approximation?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static CanonicalTexture? SelectOpacityTexture(IReadOnlyList<CanonicalTexture> textures, CanonicalTexture? baseColorTexture, string? explicitAlphaSlot)
     {
