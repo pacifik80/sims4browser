@@ -870,12 +870,12 @@ public sealed partial class MainWindow : Window
             ? scene.Materials[materialIndex]
             : null;
         var textures = SelectViewportTextures(material, renderMode, selectedSlot);
-        var diffuseTexture = SelectBaseColorTexture(textures);
-        var layeredColorTexture = SelectLayeredColorTexture(textures);
-        var emissiveTexture = SelectEmissiveTexture(textures, diffuseTexture, layeredColorTexture);
+        var diffuseTexture = SelectBaseColorTexture(material, textures);
+        var layeredColorTexture = SelectLayeredColorTexture(material, textures);
+        var emissiveTexture = SelectEmissiveTexture(material, textures, diffuseTexture, layeredColorTexture);
         var opacityTexture = SelectViewportOpacityTexture(material, textures, diffuseTexture, selectedSlot);
-        var normalTexture = SelectNormalTexture(textures);
-        var specularTexture = SelectSpecularTexture(textures);
+        var normalTexture = SelectNormalTexture(material, textures);
+        var specularTexture = SelectSpecularTexture(material, textures);
         var colorShiftMaskTexture = SelectColorShiftMaskTexture(textures);
         var selectedSlotTexture = !string.IsNullOrWhiteSpace(selectedSlot)
             ? textures.FirstOrDefault(texture => texture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
@@ -1312,7 +1312,7 @@ public sealed partial class MainWindow : Window
             ? scene.Materials[materialIndex]
             : null;
         var textures = SelectViewportTextures(material, SceneRenderMode.LitTexture, selectedSlot);
-        var diffuseTexture = SelectBaseColorTexture(textures);
+        var diffuseTexture = SelectBaseColorTexture(material, textures);
         return ShouldRenderTransparentViewport(material, textures, diffuseTexture, selectedSlot);
     }
 
@@ -1699,15 +1699,61 @@ public sealed partial class MainWindow : Window
             ?? material.Textures.FirstOrDefault();
     }
 
-    private static CanonicalTexture? SelectBaseColorTexture(IReadOnlyList<CanonicalTexture> textures)
+    private static CanonicalTexture? SelectBaseColorTexture(CanonicalMaterial? material, IReadOnlyList<CanonicalTexture> textures)
     {
         if (textures.Count == 0)
         {
             return null;
         }
 
-        var scope = new CanonicalMaterial("Scoped", textures);
+        var scope = CreateScopedMaterial(material, textures);
         return SelectBaseColorTexture(scope);
+    }
+
+    private static CanonicalMaterial CreateScopedMaterial(
+        CanonicalMaterial? material,
+        IReadOnlyList<CanonicalTexture> textures,
+        string? explicitAlphaSlot = null)
+    {
+        var scopedSlots = new HashSet<string>(
+            textures.Select(texture => texture.Slot),
+            StringComparer.OrdinalIgnoreCase);
+
+        if (material is null)
+        {
+            return new CanonicalMaterial("Scoped", textures, AlphaTextureSlot: explicitAlphaSlot);
+        }
+
+        var scopedAlphaSlot = explicitAlphaSlot ?? material.AlphaTextureSlot;
+        if (!string.IsNullOrWhiteSpace(scopedAlphaSlot) && !scopedSlots.Contains(scopedAlphaSlot))
+        {
+            scopedAlphaSlot = null;
+        }
+
+        var scopedLayeredSlots = material.LayeredTextureSlots?
+            .Where(slot => scopedSlots.Contains(slot))
+            .ToArray();
+        if (scopedLayeredSlots is { Length: 0 })
+        {
+            scopedLayeredSlots = null;
+        }
+
+        var scopedSampling = material.Sampling?
+            .Where(entry => scopedSlots.Contains(entry.Slot))
+            .ToArray();
+        if (scopedSampling is { Length: 0 })
+        {
+            scopedSampling = null;
+        }
+
+        return material with
+        {
+            Name = "Scoped",
+            Textures = textures,
+            AlphaTextureSlot = scopedAlphaSlot,
+            LayeredTextureSlots = scopedLayeredSlots,
+            Sampling = scopedSampling
+        };
     }
 
     private static CanonicalTexture? SelectOpacityTexture(CanonicalMaterial? material, CanonicalTexture? baseColorTexture)
@@ -1762,7 +1808,7 @@ public sealed partial class MainWindow : Window
                               string.Equals(material.AlphaTextureSlot, selectedSlot, StringComparison.OrdinalIgnoreCase)
             ? material.AlphaTextureSlot
             : null;
-        return SelectOpacityTexture(textures, baseColorTexture, scopedAlphaSlot);
+        return SelectOpacityTexture(material, textures, baseColorTexture, scopedAlphaSlot);
     }
 
     private static bool HasExplicitOpacityTexture(CanonicalMaterial? material)
@@ -1812,7 +1858,7 @@ public sealed partial class MainWindow : Window
                               string.Equals(material.AlphaTextureSlot, selectedSlot, StringComparison.OrdinalIgnoreCase)
             ? material.AlphaTextureSlot
             : null;
-        return SelectOpacityTexture(textures, baseColorTexture, scopedAlphaSlot) is not null;
+        return SelectOpacityTexture(material, textures, baseColorTexture, scopedAlphaSlot) is not null;
     }
 
     private static bool IsNonVisualViewportMaterial(CanonicalMaterial? material) =>
@@ -1888,14 +1934,18 @@ public sealed partial class MainWindow : Window
         return false;
     }
 
-    private static CanonicalTexture? SelectOpacityTexture(IReadOnlyList<CanonicalTexture> textures, CanonicalTexture? baseColorTexture, string? explicitAlphaSlot)
+    private static CanonicalTexture? SelectOpacityTexture(
+        CanonicalMaterial? material,
+        IReadOnlyList<CanonicalTexture> textures,
+        CanonicalTexture? baseColorTexture,
+        string? explicitAlphaSlot)
     {
         if (textures.Count == 0)
         {
             return TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null;
         }
 
-        var scope = new CanonicalMaterial("Scoped", textures, AlphaTextureSlot: explicitAlphaSlot);
+        var scope = CreateScopedMaterial(material, textures, explicitAlphaSlot);
         return SelectOpacityTexture(scope, baseColorTexture);
     }
 
@@ -1937,14 +1987,18 @@ public sealed partial class MainWindow : Window
                 : null);
     }
 
-    private static CanonicalTexture? SelectEmissiveTexture(IReadOnlyList<CanonicalTexture> textures, CanonicalTexture? baseColorTexture, CanonicalTexture? layeredColorTexture)
+    private static CanonicalTexture? SelectEmissiveTexture(
+        CanonicalMaterial? material,
+        IReadOnlyList<CanonicalTexture> textures,
+        CanonicalTexture? baseColorTexture,
+        CanonicalTexture? layeredColorTexture)
     {
         if (textures.Count == 0)
         {
             return null;
         }
 
-        var scope = new CanonicalMaterial("Scoped", textures);
+        var scope = CreateScopedMaterial(material, textures);
         return SelectEmissiveTexture(scope, baseColorTexture, layeredColorTexture);
     }
 
@@ -1961,14 +2015,14 @@ public sealed partial class MainWindow : Window
                 texture.Slot.Contains("bump", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static CanonicalTexture? SelectNormalTexture(IReadOnlyList<CanonicalTexture> textures)
+    private static CanonicalTexture? SelectNormalTexture(CanonicalMaterial? material, IReadOnlyList<CanonicalTexture> textures)
     {
         if (textures.Count == 0)
         {
             return null;
         }
 
-        var scope = new CanonicalMaterial("Scoped", textures);
+        var scope = CreateScopedMaterial(material, textures);
         return SelectNormalTexture(scope);
     }
 
@@ -1988,14 +2042,14 @@ public sealed partial class MainWindow : Window
                 texture.Slot.Contains("smooth", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static CanonicalTexture? SelectSpecularTexture(IReadOnlyList<CanonicalTexture> textures)
+    private static CanonicalTexture? SelectSpecularTexture(CanonicalMaterial? material, IReadOnlyList<CanonicalTexture> textures)
     {
         if (textures.Count == 0)
         {
             return null;
         }
 
-        var scope = new CanonicalMaterial("Scoped", textures);
+        var scope = CreateScopedMaterial(material, textures);
         return SelectSpecularTexture(scope);
     }
 
@@ -2038,14 +2092,14 @@ public sealed partial class MainWindow : Window
                 texture.Slot.Contains("grime", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static CanonicalTexture? SelectLayeredColorTexture(IReadOnlyList<CanonicalTexture> textures)
+    private static CanonicalTexture? SelectLayeredColorTexture(CanonicalMaterial? material, IReadOnlyList<CanonicalTexture> textures)
     {
         if (textures.Count == 0)
         {
             return null;
         }
 
-        var scope = new CanonicalMaterial("Scoped", textures);
+        var scope = CreateScopedMaterial(material, textures);
         return SelectLayeredColorTexture(scope);
     }
 
