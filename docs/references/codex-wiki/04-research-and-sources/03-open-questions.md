@@ -9,9 +9,13 @@ Detailed current authority notes now also live in:
 - [Knowledge map](../../../knowledge-map.md)
 - [Material pipeline deep dives](../../../workflows/material-pipeline/README.md)
 - [Build/Buy Material Authority Matrix](../../../workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+- [Build/Buy Stateful Material-Set Seam](../../../workflows/material-pipeline/buildbuy-stateful-material-set-seam.md)
 - [CAS/Sim Material Authority Matrix](../../../workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [CASPart Parser Boundary](../../../workflows/material-pipeline/caspart-parser-boundary.md)
+- [CASPart GEOM Resolution Boundary](../../../workflows/material-pipeline/caspart-geom-resolution-boundary.md)
 - [Shader Family Registry](../../../workflows/material-pipeline/shader-family-registry.md)
 - [Skintone And Overlay Compositor](../../../workflows/material-pipeline/skintone-and-overlay-compositor.md)
+- [Object Glass And Transparency](../../../workflows/material-pipeline/family-sheets/object-glass-and-transparency.md)
 
 ## Что уже НЕ стоит считать open question
 
@@ -68,6 +72,10 @@ Detailed current authority notes now also live in:
 - local `precomp_sblk_inventory` now adds per-profile concentration evidence, not just profile presence/absence
 - the remaining narrow gaps are now split more explicitly between `surface-material`, `lightmap/projection`, and `CAS editing/morph` branches
 - there is now also a bounded edge-family packet for `CAS/Sim` authority instead of leaving every narrow family under one generic fallback story
+- creator-facing object transparency is now also better split than before:
+  - `GlassForObjectsTranslucent` is a stronger semantic home for object glass than `SimGlass`
+  - threshold/cutout transparency via `AlphaMap` plus `AlphaMaskThreshold` is separate
+  - `AlphaBlended` object content is separate again
 - но он всё ещё support-oriented, а не full authoritative contract
 
 Уточнение по самым узким текущим gaps:
@@ -80,6 +88,46 @@ Detailed current authority notes now also live in:
 - `NextFloorLightMapXform` strongest semantic home сейчас уже выглядит как `GenerateSpotLightmap`, а `SimGhostGlassCAS` скорее как weak carry-through case.
 - `CASHotSpotAtlas` теперь уже не выглядит как missing diffuse-like map; его базовая identity как `UV1`-mapped CAS hotspot atlas уже подтверждена, а open gap сузился до его carry-through в render/profile metadata.
 - editing/morph branch for `CASHotSpotAtlas` is now clearer: `CASHotSpotAtlas -> HotSpotControl -> SimModifier -> DMap/BGEO/BOND -> GEOM deformation`
+- object-side glass no longer belongs under one amorphous transparency question; the narrower remaining gap is a named live TS4 fixture proving whether a concrete object uses object-glass, threshold/cutout, or blended transparency semantics
+- `Build/Buy SimGlass` survey presence is now also bounded more tightly:
+  - `tmp/probe_all_buildbuy_summary_full.json` with `"SimGlass": 5` is aggregate-only evidence
+  - it keeps the branch alive as a search target
+  - it does not yet prove that any concrete transparent `Build/Buy` fixture belongs under character-side `SimGlass`
+- the next closure burden is now narrower than “find a transparent object”:
+  - the first reopened `Build/Buy` candidate must explicitly defeat object-glass, threshold/cutout, and `AlphaBlended`
+  - otherwise it stays outside the `SimGlass` row even if it remains transparently classified
+- the next recording burden is also narrower than before:
+  - the first true `Build/Buy SimGlass` win must document why those stronger branches lost
+  - the first transparent reopen that fails that burden should now be treated as a clean `SimGlass` disqualification, not as a fuzzy near-win
+- the next positive burden is now narrower too:
+  - `SimGlass` must keep at least one branch-positive signal alive
+  - it can no longer survive only as “none of the others fit perfectly”
+- the remaining middle-state gap is now narrower too:
+  - provisional `Build/Buy SimGlass` candidates must be documented with explicit blockers
+  - mixed `SimGlass` signals must resolve into a stricter provisional-or-loss outcome instead of fuzzy “almost `SimGlass`” wording
+- the current `EP10` transparent-decor cluster is now also classification-bounded:
+  - it remains a good transparent-object search route
+  - it is no longer safe to treat it as implicitly `SimGlass`
+  - the next reopened fixture must first be classified against object-side glass/transparency
+- the current classification signals are now also narrowed:
+  - explicit object-glass shader naming outranks generic transparent naming
+  - threshold/cutout helpers outrank generic “glass-like” appearance
+  - explicit `AlphaBlended` outranks generic alpha interpretation
+  - `SimGlass` is currently a last-choice branch for `Build/Buy` transparent fixtures
+- the current fallback order is now also narrowed:
+  - named object-side branches first
+  - only then last-choice `SimGlass`
+  - generic transparent provisional reading only after stronger named branches are documented as insufficient
+- mixed-signal handling is now also bounded:
+  - mixed signals should preserve winning and losing branches explicitly
+  - they should not collapse back into generic transparency wording
+- the first reopened transparent-object fixture now also has a bounded evidence checklist:
+  - identity
+  - stable reopen
+  - companion bundle
+  - winning branch
+  - contradictory signals
+  - promotion status
 
 ## 2. Authoritative CAS and Sim material linkage
 
@@ -109,8 +157,11 @@ Detailed current authority notes now also live in:
   - modern TS4 creator-tooling evidence now also supports `MTNF` as behaviorally relevant payload rather than dead chunk metadata: broken MTNF shader-size handling can lead to save/game issues
   - TS4 creator-facing shader practice now also supports preserving GEOM-side shader identity itself: `SimGlass`, `SimSkin`, `SimEyes`, and `SimAlphaBlended` are all used as visible family-level choices, not just internal names
   - local external `TS4SimRipper` code now also supports that separation structurally: `SimGlass` is treated as its own grouped/exported path rather than just another `SimSkin` alias
-  - local precompiled shader corpus now adds a first relative-weight hint: `SimSkin`-adjacent names are common in the current snapshot, while `SimGlass` is present but narrow
-  - that evidence mix is now strong enough for a bounded implementation-priority hint, but not yet for a final authority table
+- local precompiled shader corpus now adds a first relative-weight hint: `SimSkin`-adjacent names are common in the current snapshot, while `SimGlass` is present but narrow
+- direct package-derived `CASPart -> GEOM -> shader family` counts now add a much stronger floor:
+  - `SimSkin = 280983` across `401` packages by reachable `CASPart` rows
+  - `SimGlass = 6048` across `189` packages by reachable `CASPart` rows
+- that evidence mix is now strong enough for a bounded implementation-priority hint, but not yet for a final authority table
   - the `P1` packet is now also internally narrower: `SimSkin` is the current safe baseline skin-family seam, while `SimSkinMask` is better bounded as adjacent auxiliary skin-family semantics rather than a proven standalone `GEOM` authority root
   - local repo code also currently fits that bounded reading better than the stronger alternatives: current CAS and Sim paths materialize `ApproximateCas` floors from `CASP` texture refs, geometry companions, region maps, and skintone routing, but do not expose a dedicated `SimSkinMask` authority branch
   - local sample assets now strengthen the asymmetry further: bundled `TS4SimRipper` body/head/waist `.simgeom` files check `9/9` for `SimSkin` shader hash, while no peer asset-level `SimSkinMask` geometry branch has been found in the current repo snapshots
@@ -131,6 +182,8 @@ Detailed current authority notes now also live in:
 - how the shared contract should rank GEOM-side shader-family identity against decoded `MTNF` params and higher-level `CASP` routing when they point in different directions
 - how much current local corpus prevalence should influence implementation priority without being overpromoted into an in-game truth claim
 - whether any wider live-asset evidence outside the current local/sample/tool corpus ever justifies promoting `SimSkinMask` from adjacent Sim-skin semantics into a standalone `GEOM` or material-authority branch
+- how much the current direct `SimSkin` / `SimGlass` family floor shifts after parser expansion or residual geometry-key auditing
+- how representative the current reachable-subset family floor is relative to the `230713` raw `CASPart` rows still outside the structured parser boundary
 - насколько representative этот `9/9` local sample hint для реальных live shell families в более широком corpus
 - насколько часто live body/head shell families вообще приходят с non-zero embedded `MTNF`
 - как должен выглядеть authority order после появления real repo-side `MTNF` decoding, а не только format-level recognition
@@ -169,6 +222,9 @@ Detailed current authority notes now also live in:
   - builds region-map-aware skintone targets
   - applies routing to merged canonical materials
   - but still does not claim exact in-game blend parity
+  - `CompositionMethod` now has a direct whole-install package census
+  - `SortLayer` already has a direct shard-backed census
+  - the remaining gap is no longer existence or prevalence, but exact value semantics and cache repopulation
 - `TS4 Skininator`, `TS4 Skin Converter`, and local `TS4SimRipper` code now provide stronger corroboration for:
   - normal/tanned/burned skin-state structure
   - burn masks
@@ -194,6 +250,7 @@ Detailed current authority notes now also live in:
 
 - `CompositionMethod` is real and compositor-relevant
 - `SortLayer` is real and compositor-relevant
+- `sort_layer` now also has a direct whole-index count layer through `cas_part_facts`
 - community/reference code consistently treats some values differently:
   - `0` direct overlay-like
   - `1` often used as a tattoo-oriented default in creator tooling
@@ -206,10 +263,14 @@ Detailed current authority notes now also live in:
 - exact authoritative meaning of every integer value across all categories and patches
 - whether `1` and any rarer values have stable meanings across all categories rather than only common creator practice
 - category-specific exceptions
+- the dominant `composition=0` lane is still partially hidden behind large mixed `BodyType` buckets
+- whether the large packed `BodyType` values are exactly `BodyType + AdditionalTextureSpace` in the way some creator-facing research now suggests
 
 Что бы это закрыло:
 
 - curated table from live assets plus tool behavior plus visual fixture comparison
+- translation of the biggest mixed `BodyType` buckets before treating readable slot rows as the whole compositor story
+- one explicit proof or falsification pass for the `AdditionalTextureSpace` hypothesis on the biggest high-byte families
 
 ## 5. Per-family UV routing and transform coverage
 
@@ -257,8 +318,20 @@ Detailed current authority notes now also live in:
 - `MODL -> MLOD` is the strongest documented object mesh path
 - `MLOD` binds group -> `VRTF`/`VBUF`/`IBUF`/`SKIN`/`MATD or MTST`
 - `Object Definition -> Model/Model LOD -> Material Set -> Material Definition` is now the best-supported base authority order
+- creator-facing object workflows now also narrow one family split inside that authority path:
+  - object-glass (`GlassForObjectsTranslucent`)
+  - threshold/cutout transparency (`AlphaMap` plus `AlphaMaskThreshold`)
+  - blended object transparency (`AlphaBlended`)
 - that base chain is now also split into its own companion doc:
   - [Build/Buy Material Authority Matrix](../../../workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+- the strongest unfinished object-side seam is now also split out:
+  - [Build/Buy Stateful Material-Set Seam](../../../workflows/material-pipeline/buildbuy-stateful-material-set-seam.md)
+- that seam now also has one first live boundary packet:
+  - [Build/Buy MTST Default-State Boundary](../../../workflows/material-pipeline/live-proof-packets/buildbuy-mtst-default-state-boundary.md)
+- that seam now also has a stronger second live boundary packet:
+  - [Build/Buy MTST Portable-State Delta](../../../workflows/material-pipeline/live-proof-packets/buildbuy-mtst-portable-state-delta.md)
+- that seam now also has a structural selector packet:
+  - [Build/Buy MTST State-Selector Structure](../../../workflows/material-pipeline/live-proof-packets/buildbuy-mtst-state-selector-structure.md)
 - current external object-side packet is also tighter now:
   - `COBJ` is the catalogue-facing side
   - `OBJD` links `Model`, `Rig`, `Slot`, and `Footprint`
@@ -276,6 +349,9 @@ Detailed current authority notes now also live in:
   - this narrows the next glass-family search boundary instead of leaving it diffuse
 - the current glass-family boundary is now narrower on both the external and local sides:
   - creator-facing TS4 guidance ties `SimGlass` more strongly to transparent layered clothing, glasses, hair, and lashes than to generic architectural windows
+  - creator-facing tooling now also keeps `SimAlphaBlended` in view as a separate transparency-capable family rather than collapsing all character transparency into `SimGlass`
+  - current safe ordering is now narrower too: `SimGlass` has the stronger packet, `SimAlphaBlended` remains a named secondary branch, and generic alpha wording should stay provisional
+  - one neighboring edge is still intentionally open: `SimEyes` is preserved as a neighboring special family, but is not yet proved strongly enough to enter the same closed transparency order
   - a broader `EP10` transparent-decor cluster is now isolated for the next Build/Buy pass:
     - `fishBowl_EP10GENmarimo -> 01661233:00000000:FAE0318F3711431D`
     - `shelfFloor2x1_EP10TEAdisplayShelf -> 01661233:00000000:E779C31F25406B73`
@@ -290,10 +366,24 @@ Detailed current authority notes now also live in:
 - exact deviations from the now-stable base authority order across all Build/Buy families
 - which object categories need more than the basic static-object path
 - when `VPXY` or other graph helpers materially affect practical scene reconstruction for specific linked-object ecosystems
+- for the `MTST` / stateful-material branch specifically:
+  - one model-rooted default-state boundary is now documented for `01661233:00000000:002211BA8D2EE539`
+  - one stronger model-rooted texture-bearing portable-state boundary is now documented for `01661233:00000000:05773EECEE557829`
+  - one structural selector packet now proves repeated `stateHash -> MATD` mapping across those fixtures and a repeated paired `unknown0=0x00000000` versus `0xC3867C32` split in `002211...`
+  - the next stronger closure is now a swatch-level or clearer runtime-state fixture, not a re-proof that `MTST` exists, that one `MaterialSet` material can carry textures, or that the current hashes repeat structurally
+  - exact state semantics and the meaning of `unknown0=0xC3867C32` remain open
 - complete family-specific authority/fallback coverage for all major CAS and Sim layer types
 - for the `SimGlass` branch specifically:
+  - exact live-family boundary between `SimGlass` and `SimAlphaBlended` on real CAS assets
+  - exact family-order placement of `SimEyes` relative to `SimGlass`, `SimAlphaBlended`, and generic character alpha
   - which broader Build/Buy family, if any, preserves the same transparent-layered reading strongly enough to serve as the first stable row-level fixture
-  - whether one of the narrowed `EP10` transparent-decor roots can be reopened cleanly, or whether the next packet must widen to another package slice
+  - when, if ever, a reopened `Build/Buy` fixture actually defeats the stronger object-side transparent branches strongly enough to remain under `SimGlass`
+  - the `EP10` transparent-decor route is now narrower than before:
+    - `displayShelf` and `shopDisplayTileable` preserve full transformed companion bundles (`Model`, `Rig`, `Slot`, `Footprint`)
+    - `mirror` preserves `Model`, `Rig`, and `Footprint`
+    - `lantern` preserves `Model` plus `Footprint`
+    - `fishBowl` currently preserves only the transformed `Model` root
+  - whether one of those narrowed roots can be reopened cleanly, or whether the next packet must widen to another package slice
 
 Что бы это закрыло:
 

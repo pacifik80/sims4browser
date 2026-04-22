@@ -13,6 +13,20 @@ Every active plan in this file must include:
 
 The plan must be updated during the same user request, not only at session closeout.
 
+Status-reporting rule for this research track:
+
+- use only progress-bearing docs in the user-facing status snapshot:
+  - deep dives with explicit numeric status
+  - family sheets with explicit numeric status
+  - live-proof packets with explicit numeric status
+- exclude core guides, hubs, tracking docs, and source-layer census docs from the percentage status view
+- show status rows as:
+  - colored square
+  - document name
+  - current percent
+  - optional delta only if the current iteration changed that doc, for example `(+12%)`
+- close the snapshot with one overall catalog-fill percentage computed from the shown docs only
+
 ## TS4 Material Research Restart Contract
 
 If the active work is the external-first TS4 material, texture, shader, and UV research track, start here:
@@ -24,14 +38,2839 @@ This restart contract overrides the common failure mode for that task:
 - external sources, creator tooling, and local snapshots of external tools are the truth layer
 - local corpus and precompiled summaries are candidate-target hints only
 - current repo code is implementation boundary and failure evidence only, not TS4 truth
-- each run should advance the next bounded packet, then update the queue, matrix, and plan
-- each run should close with the compact tree-style status report defined in the restart guide
+- each normal run should work as an autonomous long batch and advance multiple bounded packets when the next step is already clear from the docs
+- each packet should still update the queue, matrix, and plan before the batch moves on
+- stop a batch only at a real blocker, a context-safety boundary, or a natural integration checkpoint
+- recovery heartbeat runs are insurance against interruption, not the primary work cadence
+- each run should close with the compact report defined in the restart guide, including explicit trust-boundary separation
 
 ## Active Task
 
 Status: `In Progress`
 
+### Current Request Addendum (`2026-04-22`, browser-facing pass filtering contract)
+
+#### Problem
+
+The RenderDoc handoff already improved scene/pass truth, but the main catalog still lacked one browser-facing rule set that said how package-side candidates should actually be filtered against that new pass evidence.
+
+#### Chosen Approach
+
+- turn the external GPU pass-family layer into a concrete package-matching contract
+- bind that contract into the shared guide and both major authority matrices
+- treat this as a TЗ-layer improvement, not only as another research note
+
+#### Actions
+
+- [x] Add `docs/workflows/material-pipeline/package-material-pass-filtering-contract.md`.
+- [x] Rebind the contract into:
+  - `shared-ts4-material-texture-pipeline.md`
+  - `buildbuy-material-authority-matrix.md`
+  - `cas-sim-material-authority-matrix.md`
+  - `documentation-status-catalog.md`
+  - `current-plan.md`
+
+#### Restart Hints
+
+- Safe strengthened reading to preserve:
+  - the browser now has a written first-pass filtering contract for package-material matching
+  - `SceneDomain` and `PassClass` are now explicit hard filters, not just good ideas
+  - `CompositorOrUi` and `DepthOnly` are now explicitly excluded from normal final visible-material ownership
+  - the next implementation-facing move is to mirror this contract in matching logic and diagnostics
+
+### Current Request Addendum (`2026-04-22`, RenderDoc handoff ingestion)
+
+#### Problem
+
+The research track already had stronger package-side carrier logic and stronger live DX11 runtime-interface logic, but scene/pass truth was still the weakest side of the global bridge. A new RenderDoc handoff now supplies external GPU-capture evidence that could strengthen that side immediately.
+
+#### Chosen Approach
+
+- treat the RenderDoc handoff as a new external scene/pass baseline, not as a replacement for runtime or package evidence
+- bind it into the bridge docs and queue as positive/negative pass-family evidence
+- avoid overclaiming exact hash closure, because RenderDoc replay hashes still do not match the live DX11 catalog identity space
+
+#### Actions
+
+- [x] Read `satellites/ts4-dx11-introspection/docs/ts4-renderdoc-handoff.md` and the checked-in capture summaries.
+- [x] Add `docs/workflows/material-pipeline/external-gpu-scene-pass-baseline.md`.
+- [x] Rebind the new scene/pass layer into the runtime baseline, bridge boundary, queue, status catalog, and current plan.
+
+#### Restart Hints
+
+- Safe strengthened reading to preserve:
+  - external GPU capture now gives real `SceneDomain` and `PassClass` truth
+  - repeated compositor-style `tex[0]/tex[1]` plus screen inputs is now strong exclusion evidence
+  - repeated `texture0..N` plus depth-adjacent large geometry passes is now strong positive material-like evidence
+  - exact RenderDoc-to-live shader-hash closure is still open and must stay a separate bridge task
+
+### Current Request Addendum (`2026-04-22`, helper-family carrier plausibility matrix)
+
+#### Problem
+
+The helper-family boundary docs now constrained ownership more honestly, but the offline route still lacked one compact row-by-row comparison layer. That kept the next offline step too verbal: plausible versus premature carrier claims still had to be reconstructed across several docs.
+
+#### Chosen Approach
+
+- add one matrix-style synthesis doc instead of another generic boundary note
+- compare the three narrowed helper-family rows against the shared carrier order
+- record not only what is plausible now, but also what exact evidence would promote the next claim
+
+#### Actions
+
+- [x] Add `docs/workflows/material-pipeline/helper-family-carrier-plausibility-matrix.md`.
+- [x] Rebind the matrix into the three weak helper-family sheets, shader family registry, queue, status catalog, and current plan.
+
+#### Restart Hints
+
+- Safe strengthened reading to preserve:
+  - the current offline helper-family route now has a compact row-by-row matrix
+  - each row now explicitly separates:
+    - narrowed runtime candidate
+    - plausible carrier reading
+    - premature claim
+    - promotion trigger
+  - the next offline step should build from this matrix, not reopen the same generic carrier-order argument
+
+### Current Request Addendum (`2026-04-22`, helper-family package-boundary propagation)
+
+#### Problem
+
+The offline bridge docs now bounded helper-family carrier ownership more honestly, but that stronger wording still lived mostly in bridge/boundary docs instead of the weak family sheets and family registry rows that users actually read first.
+
+#### Chosen Approach
+
+- do not create another abstract helper-family note
+- push the new package-side carrier boundary directly into the weak family sheets and the family registry
+- raise maturity only where the family docs themselves become stronger
+
+#### Actions
+
+- [x] Rebind helper-family package-carrier limits into:
+  - `ShaderDayNightParameters`
+  - `Projection, Reveal, And Lightmap Families`
+  - `GenerateSpotLightmap And NextFloorLightMapXform`
+  - `Shader Family Registry`
+- [x] Rebind the new reading into the queue, status catalog, and current plan.
+
+#### Restart Hints
+
+- Safe strengthened reading to preserve:
+  - helper-family sheets now explicitly carry package-side carrier order
+  - helper-family sheets now explicitly separate "carrier plausibility" from "carrier closure"
+  - the strongest current offline move is no longer another abstract boundary doc
+  - the strongest current offline move is pushing narrowed carrier plausibility into the family rows while keeping the final package-to-runtime-to-scene join open
+
+### Current Request Addendum (`2026-04-22`, projection-reveal runtime-cluster narrowing)
+
+#### Problem
+
+After `ShaderDayNightParameters` narrowed to `F04` and generated-light narrowed to `F03`, the umbrella still had one weak middle branch: the remaining projection/reveal helper packet inside the broader runtime corpus.
+
+#### Chosen Approach
+
+- stay inside the checked-in DX11 runtime corpus
+- isolate the stable `srctex` packet inside `F04`
+- promote only the narrowest honest middle-branch conclusion
+
+#### Actions
+
+- [x] Freeze the projection/reveal runtime-candidate snapshot in `tmp/projection_reveal_runtime_cluster_candidates_2026-04-22.json`.
+- [x] Add `docs/workflows/material-pipeline/live-proof-packets/projection-reveal-runtime-cluster-candidate-floor.md`.
+- [x] Rebind the `F04` `srctex + tex` reading into the umbrella sheet, runtime helper-family clustering floor, packet index, status catalog, and current plan.
+
+#### Restart Hints
+
+- The projection/reveal runtime-candidate snapshot is now:
+  - `tmp/projection_reveal_runtime_cluster_candidates_2026-04-22.json`
+- Safe strengthened reading to preserve:
+  - the remaining projection/reveal branch should now start from the stable `F04` `srctex + tex` packet
+  - the leading variable packet is:
+    - `fsize`
+    - `offset`
+    - `scolor`
+    - `srctexscale`
+    - `texscale`
+  - this middle branch no longer needs to start from a broad `F03/F04/F05` bucket
+
+### Current Request Addendum (`2026-04-22`, projection-reveal runtime context-gap closure)
+
+#### Problem
+
+The remaining projection/reveal helper branch was already narrowed to one stable `F04` `srctex + tex` packet, but the docs still left one ambiguity open: whether the current checked-in broad runtime captures already separated that packet by scene/context enough to promote a stronger family claim without another tagged capture run.
+
+#### Chosen Approach
+
+- stay inside the checked-in DX11 runtime corpus
+- compare representative `srctex` packet hashes across the same broad sessions already used for helper-family narrowing
+- promote only the honest blocker conclusion:
+  - the narrowed packet persists across the broad sessions
+  - the current manifests are still not scene-tagged enough for family-context closure
+
+#### Actions
+
+- [x] Freeze the broad-capture parity snapshot in `tmp/projection_reveal_runtime_context_gap_snapshot_2026-04-22.json`.
+- [x] Add `docs/workflows/material-pipeline/live-proof-packets/projection-reveal-runtime-context-gap.md`.
+- [x] Rebind the context-gap result into the umbrella family sheet, runtime helper-family clustering floor, packet index, status catalog, and current plan.
+
+#### Restart Hints
+
+- The context-gap snapshot is now:
+  - `tmp/projection_reveal_runtime_context_gap_snapshot_2026-04-22.json`
+- Safe strengthened reading to preserve:
+  - representative `F04` `srctex + tex` hashes survive across all current broad checked-in captures
+  - current session manifests still do not carry scene/context labels strong enough for projection/reveal family-context closure
+  - the next honest move is no longer “inspect more of the same broad captures”
+  - the next honest move is one context-tagged projection/reveal or refraction-adjacent capture
+
+### Current Request Addendum (`2026-04-22`, generated-light runtime-cluster narrowing)
+
+#### Problem
+
+The generated-light row already had a carry-through packet, but the runtime side still sat inside one broad helper-family bucket. That left `GenerateSpotLightmap / NextFloorLightMapXform` with a weaker next step than the neighboring `ShaderDayNight` lane.
+
+#### Chosen Approach
+
+- stay inside the checked-in DX11 runtime corpus
+- promote only the narrowest honest generated-light runtime bridge
+- prefer the stable `maptex` packet over a broader `F04/F05` first pass
+
+#### Actions
+
+- [x] Freeze the generated-light runtime-candidate snapshot in `tmp/generated_light_runtime_cluster_candidates_2026-04-22.json`.
+- [x] Add `docs/workflows/material-pipeline/live-proof-packets/generated-light-runtime-cluster-candidate-floor.md`.
+- [x] Rebind the `F03`-first reading into the generated-light family sheet, umbrella sheet, runtime helper-family clustering floor, queue row, packet index, status catalog, and current plan.
+
+#### Restart Hints
+
+- The generated-light runtime-candidate snapshot is now:
+  - `tmp/generated_light_runtime_cluster_candidates_2026-04-22.json`
+- Safe strengthened reading to preserve:
+  - generated-light should now start from `F03`
+  - the leading runtime packet is:
+    - `maptex + tex + Constants`
+    - `compx`
+    - `compy`
+    - `mapScale`
+    - `scale`
+  - `F04` remains the broader comparator, not the first generated-light runtime target
+
+### Current Request Addendum (`2026-04-22`, generated-light runtime context-gap closure)
+
+#### Problem
+
+The generated-light helper branch was already narrowed to one stable `F03` `maptex + tex` packet, but the docs still left one ambiguity open: whether the current checked-in broad runtime captures already separated that packet by scene/context enough to promote a stronger family claim without another tagged capture run.
+
+#### Chosen Approach
+
+- stay inside the checked-in DX11 runtime corpus
+- compare representative `maptex` packet hashes across the same broad sessions already used for helper-family narrowing
+- promote only the honest blocker conclusion:
+  - the narrowed packet persists across the broad sessions
+  - the current manifests are still not scene-tagged enough for family-context closure
+
+#### Actions
+
+- [x] Freeze the broad-capture parity snapshot in `tmp/generated_light_runtime_context_gap_snapshot_2026-04-22.json`.
+- [x] Add `docs/workflows/material-pipeline/live-proof-packets/generated-light-runtime-context-gap.md`.
+- [x] Rebind the context-gap result into the generated-light family sheet, runtime helper-family clustering floor, queue row, packet index, status catalog, and current plan.
+
+#### Restart Hints
+
+- The context-gap snapshot is now:
+  - `tmp/generated_light_runtime_context_gap_snapshot_2026-04-22.json`
+- Safe strengthened reading to preserve:
+  - representative `F03` `maptex + tex` hashes survive across all current broad checked-in captures
+  - current session manifests still do not carry scene/context labels strong enough for generated-light family-context closure
+  - the next honest move is no longer “inspect more of the same broad captures”
+  - the next honest move is one lighting-heavy context-tagged capture
+
+### Current Request Addendum (`2026-04-22`, context-tagged capture contract)
+
+#### Problem
+
+The weak helper-family rows now all agree on the same blocker: current broad DX11 sessions are useful enough to narrow candidates, but not tagged enough to promote family ownership. Without a concrete capture contract, “run a tagged capture” is still too vague to be restart-safe.
+
+#### Chosen Approach
+
+- define one explicit capture-labeling contract in the DX11 satellite track
+- allow a temporary manual sidecar instead of waiting for manifest-schema code changes
+- rebind that contract into the main queue and restart docs as the next honest data-gathering step
+
+#### Actions
+
+- [x] Add `satellites/ts4-dx11-introspection/docs/context-tagged-capture-contract.md`.
+- [x] Add `satellites/ts4-dx11-introspection/schemas/context-tag.schema.json`.
+- [x] Rebind the contract into the DX11 README, research restart guide, runtime helper-family clustering floor, P1 queue, and current plan.
+
+#### Restart Hints
+
+- The operational contract is now:
+  - `satellites/ts4-dx11-introspection/docs/context-tagged-capture-contract.md`
+- The temporary sidecar schema is now:
+  - `satellites/ts4-dx11-introspection/schemas/context-tag.schema.json`
+- Safe strengthened reading to preserve:
+  - helper-family progress no longer blocks on immediate manifest-tooling changes
+  - `run-live-capture.ps1` can now write `context-tags.json` directly through context-tag parameters
+  - a manual `context-tags.json` sidecar is still an accepted temporary truth layer for scene labels
+  - the next honest capture set is:
+    - one `shader-daynight` tagged session
+    - one `generated-light` tagged session
+    - one `projection-reveal` tagged session
+
+### Current Request Addendum (`2026-04-22`, helper preset capture recipes)
+
+#### Problem
+
+The helper-family blocker was already operationalized at the schema level, but the next batch still required too much manual field assembly. That made the tagged-capture step restart-safe in theory, but still clumsy in practice.
+
+#### Chosen Approach
+
+- add helper presets to the standard runner
+- add one recipe doc with exact runnable commands for the three minimum helper-family sessions
+- rebind that recipe layer into the main research docs so the next step is procedural rather than free-form
+
+#### Actions
+
+- [x] Extend `satellites/ts4-dx11-introspection/scripts/run-live-capture.ps1` with `-HelperPreset`.
+- [x] Add `satellites/ts4-dx11-introspection/docs/context-tagged-capture-recipes.md`.
+- [x] Rebind the recipe layer into the DX11 README, research restart guide, runtime helper-family clustering floor, P1 queue, and current plan.
+
+#### Restart Hints
+
+- The runner now accepts:
+  - `-HelperPreset ShaderDayNight`
+  - `-HelperPreset GeneratedLight`
+  - `-HelperPreset ProjectionReveal`
+- Each preset now fills:
+  - `WorldMode`
+  - `FamilyFocus`
+  - `SceneClass`
+  - `ExpectedCandidateClusters`
+- The caller still must supply:
+  - `SceneLabel`
+  - `TargetAssetsOrEffects`
+  - `Notes`
+- The exact runnable commands now live in:
+  - `satellites/ts4-dx11-introspection/docs/context-tagged-capture-recipes.md`
+
+### Current Request Addendum (`2026-04-22`, tagged helper compare workflow)
+
+#### Problem
+
+The tagged-capture step was now runnable, but the next post-capture action was still underdefined. Without a standard compare path, one tagged session could still be overread in isolation.
+
+#### Chosen Approach
+
+- add one wrapper script for tagged helper-session comparison
+- define one small analysis workflow doc that forces target-vs-control reading
+- rebind that workflow into the DX11 and material-pipeline docs
+
+#### Actions
+
+- [x] Add `satellites/ts4-dx11-introspection/scripts/compare-tagged-helper-captures.ps1`.
+- [x] Add `satellites/ts4-dx11-introspection/docs/context-tagged-capture-analysis-workflow.md`.
+- [x] Rebind the workflow into the DX11 README, runtime helper-family clustering floor, P1 queue, research restart guide, and current plan.
+
+#### Restart Hints
+
+- Tagged helper-session comparison now has one standard wrapper:
+  - `satellites/ts4-dx11-introspection/scripts/compare-tagged-helper-captures.ps1`
+- The wrapper now:
+  - resolves target/control capture paths
+  - requires `context-tags.json` on the target side
+  - chooses `compare` or `compare-groups` automatically
+- The interpretation rule now lives in:
+  - `satellites/ts4-dx11-introspection/docs/context-tagged-capture-analysis-workflow.md`
+- Safe reading to preserve:
+  - one tagged session alone is not a helper-family uplift
+  - the next honest runtime promotion requires target-vs-control comparison
+  - target and control should keep the same helper-family focus and differ mainly by scene emphasis
+
+### Current Request Addendum (`2026-04-22`, updated shader spec synthesis)
+
+#### Problem
+
+The updated DX11 shader spec now carries more than reflection tables. It also has an explicit package-side carrier layer and executable-linked disassembly signals, but the main research docs were still describing the runtime spec mostly as a reflection-only unlock.
+
+#### Chosen Approach
+
+- absorb only the parts that genuinely change the research picture
+- keep the main blocker wording honest
+- avoid pretending that the new spec already closes family ownership or pass truth
+
+#### Actions
+
+- [x] Re-read the updated `TS4 Material Shader Spec`.
+- [x] Rebind the useful additions into `Runtime Shader Interface Baseline`.
+- [x] Keep the global blocker wording at the three-way bridge:
+  - package carrier
+  - runtime shader family
+  - scene/pass context
+
+#### Restart Hints
+
+- The useful new spec additions are:
+  - explicit package-side carrier priority:
+    - `MATD` first
+    - `MTST` second
+    - `Geometry` / `Model` / `ModelLOD` kept in the same bridge path
+  - executable-linked disassembly signals:
+    - texture sampling
+    - `sample_l`
+    - loops
+    - dynamic constant-buffer indexing
+- Safe strengthened reading to preserve:
+  - this narrows the runtime-to-package bridge
+  - it does not yet close family ownership
+  - it does not yet close draw/pass truth
+
+### Current Request Addendum (`2026-04-22`, explicit bridge-boundary document)
+
+#### Problem
+
+The main blocker had become clearer in the running commentary, but it still was not isolated as its own durable boundary doc. That made it too easy to fall back to vague wording like "we need more research" instead of naming the missing join precisely.
+
+#### Chosen Approach
+
+- add one narrow bridge-boundary doc
+- phrase the blocker as the missing three-way join:
+  - package-side carrier
+  - runtime shader cluster/family
+  - scene/pass context
+- link that boundary back into the runtime baseline and queue
+
+#### Actions
+
+- [x] Add `docs/workflows/material-pipeline/package-runtime-scene-bridge-boundary.md`.
+- [x] Rebind it into `Runtime Shader Interface Baseline`, `P1 Live-Proof Queue`, and `current-plan`.
+
+#### Restart Hints
+
+- The strongest current blocker wording is now isolated in:
+  - `docs/workflows/material-pipeline/package-runtime-scene-bridge-boundary.md`
+- Safe reading to preserve:
+  - package-side carrier priority is materially better now
+  - runtime interface evidence is materially better now
+  - helper-family clustering is materially better now
+  - the missing join is still:
+    - package carrier -> runtime family/cluster -> scene/pass context
+
+### Current Request Addendum (`2026-04-22`, helper-family package-carrier boundary)
+
+#### Problem
+
+The bridge blocker was now explicit, but the offline route was still too vague. Without a helper-family carrier-boundary doc, package-side work could still drift into overclaiming `MATD` or `MTST` ownership for weak helper rows.
+
+#### Chosen Approach
+
+- add one narrow package-carrier boundary doc for helper-family rows
+- keep the result at ownership-boundary wording only
+- rebind it into the global bridge doc and queue as the honest offline route
+
+#### Actions
+
+- [x] Add `docs/workflows/material-pipeline/helper-family-package-carrier-boundary.md`.
+- [x] Rebind it into `Package, Runtime, And Scene Bridge Boundary`, `P1 Live-Proof Queue`, and `current-plan`.
+
+#### Restart Hints
+
+- The current offline bridge companion is now:
+  - `docs/workflows/material-pipeline/helper-family-package-carrier-boundary.md`
+- Safe reading to preserve:
+  - `MATD` and `MTST` are better constrained than before
+  - they still do not close helper-family ownership by themselves
+  - the offline route is now:
+    - compare narrowed runtime helper candidates against package-side carrier expectations
+    - stop at ownership-boundary wording
+
+### Current Request Addendum (`2026-04-22`, ShaderDayNight runtime context-gap closure)
+
+#### Problem
+
+The `ShaderDayNightParameters` runtime route was already narrowed to `F04` first and `F05` second, but the docs still left one ambiguity open: whether the checked-in broad runtime captures already separated those candidates by scene/context enough to promote a stronger claim without another capture run.
+
+#### Chosen Approach
+
+- stay inside the checked-in DX11 runtime corpus
+- compare representative `F04` and `F05` hashes across the current broad sessions
+- promote only the honest blocker conclusion:
+  - both candidate clusters persist across all broad captures
+  - the captures are not scene-tagged enough to separate them
+
+#### Actions
+
+- [x] Freeze the broad-capture parity snapshot in `tmp/shaderdaynight_runtime_context_gap_snapshot_2026-04-22.json`.
+- [x] Add `docs/workflows/material-pipeline/live-proof-packets/shader-daynight-runtime-context-gap.md`.
+- [x] Rebind the context-gap result into the family sheet, runtime helper-family clustering floor, queue row, packet index, status catalog, and current plan.
+
+#### Restart Hints
+
+- The context-gap snapshot is now:
+  - `tmp/shaderdaynight_runtime_context_gap_snapshot_2026-04-22.json`
+- Safe strengthened reading to preserve:
+  - representative `F04` and `F05` hashes survive across all current broad checked-in captures
+  - current session manifests do not carry scene/context labels strong enough for family-context closure
+  - the next honest move is no longer “inspect more of the same broad captures”
+  - the next honest move is:
+    - keep the visible-root packet
+    - keep the `F04`-first candidate packet
+    - run one context-tagged capture before promoting stronger scene-bound ownership
+
+### Current Request Addendum (`2026-04-21` continued again, ShaderDayNight runtime-cluster narrowing)
+
+#### Problem
+
+The helper-family runtime route was no longer empty, but `ShaderDayNightParameters` still sat inside one broad `F03/F04/F05` clustering bucket. That was enough to suggest a direction, but not enough to tell the next autonomous batch where to start.
+
+#### Chosen Approach
+
+- keep the work bounded inside the checked-in DX11 runtime corpus
+- compare concrete seeded `F04` and `F05` members instead of reopening broad name hunting
+- promote only the narrowest honest conclusion:
+  - `F04` is the leading runtime cluster candidate
+  - `F05` is the nearest color-aware sibling comparator
+
+#### Actions
+
+- [x] Freeze the representative `F04` and `F05` packet in `tmp/shaderdaynight_runtime_cluster_candidates_2026-04-21.json`.
+- [x] Add `docs/workflows/material-pipeline/live-proof-packets/shader-daynight-runtime-cluster-candidate-floor.md`.
+- [x] Rebind the narrowed `F04`-first reading into the family sheet, runtime helper-family clustering floor, packet index, queue row, and status catalog.
+
+#### Restart Hints
+
+- The narrowed runtime-cluster snapshot is now:
+  - `tmp/shaderdaynight_runtime_cluster_candidates_2026-04-21.json`
+- Safe strengthened reading to preserve:
+  - `F04` is now the strongest current runtime cluster candidate for `ShaderDayNightParameters`
+  - `F05` stays the nearest color-aware sibling comparator
+  - the best next step is no longer broad `F03/F04/F05` clustering first
+  - the best next step is:
+    - keep the visible-root packet
+    - run context-tagged capture against `F04`
+    - compare against `F05` before widening farther
+
+### Current Request Addendum (`2026-04-21` continued again, runtime shader-interface baseline integration)
+
+#### Problem
+
+The new `TS4 Material Shader Spec` created a strong live-runtime shader-interface corpus, but the main material research docs still treated the biggest global blocker as if we had almost no runtime contract layer. Without integration, that evidence would remain siloed in the satellite track and would not change the main queue, registry, or status surfaces.
+
+#### Chosen Approach
+
+- treat the new spec as a runtime-interface baseline, not as a final family or package-material truth layer
+- add one explicit material-pipeline doc that explains:
+  - what the new runtime corpus closes
+  - what it still does not close
+  - how it changes the next research steps
+- only raise statuses where the new runtime corpus genuinely narrows the blocker:
+  - shader-family registry
+  - weak helper-family handoff wording
+  - queue guidance
+  - status catalog
+
+#### Actions
+
+- [x] Read the new `TS4 Material Shader Spec` and its raw interface summary.
+- [x] Add a `Runtime Shader Interface Baseline` doc under the main material-pipeline workflow set.
+- [x] Rebind the new runtime-interface layer into the shader-family registry, queue guidance, status catalog, and current plan.
+- [x] Add the first helper-family clustering floor from the runtime corpus for the weakest helper-family rows.
+- [ ] Next follow-up: use `F03`, `F04`, and `F05` plus context-tagged captures to narrow one helper-family row further.
+
+#### Restart Hints
+
+- New baseline doc:
+  - `docs/workflows/material-pipeline/runtime-shader-interface-baseline.md`
+- Safe strengthened reading to preserve:
+  - runtime shader inventory is now real at the hash/interface layer:
+    - `1922` unique shaders
+    - `1043` pixel shaders
+    - `879` vertex shaders
+    - `364` executable-linked
+  - the largest global blocker narrowed:
+    - we no longer lack runtime shader-interface truth in general
+    - we now mainly lack family clustering and package-field ownership
+  - weak helper-family rows now have a better next path:
+    - family-local clustering over runtime interfaces first
+    - package ownership mapping second
+    - more narrative name-hunting only if clustering stalls
+  - the first helper-family clustering floor is now checked in:
+    - `docs/workflows/material-pipeline/runtime-helper-family-clustering-floor.md`
+    - strongest current bridge clues are `F03`, `F04`, `F05` plus `srctex`, `dsttex`, `maptex`, `alphatex`, `texscale`, `offset`, `scolor`, `srctexscale`, and `texgen`
+
+### Current Request Addendum (`2026-04-21` continued again, compositor same-layer boundary floor)
+
+#### Problem
+
+The compositor-order surfaces were already structurally strong, but `CompositionMethod` and `SortLayer` still leaned on separate baselines plus local external tooling instead of one compact same-layer query floor. That left the next character-side compositor handoff more prose-heavy than the sibling shell and worn-slot surfaces.
+
+#### Chosen Approach
+
+- keep the work inside the existing character-side compositor lane:
+  - no new family search
+  - no new runtime math claim
+  - no return to `SimSkinMask`
+- generate one narrow joint snapshot from `cas_part_facts` for:
+  - overall `CompositionMethod + SortLayer` pairs
+  - readable shell/worn-slot rows
+  - ordinary low-value overlay rows
+  - mixed high-byte comparison rows
+- sync only the compositor boundary, overlay/detail table, status catalog, and current plan
+
+#### Actions
+
+- [x] Query the top same-layer `CompositionMethod + SortLayer` pairs from `cas_part_facts`.
+- [x] Query readable shell/worn-slot pairs and low-value overlay/detail pairs from the same layer.
+- [x] Freeze the result in `tmp/composition_sortlayer_boundary_snapshot_2026-04-21.json`.
+- [x] Rebind the new floor into the boundary doc, overlay/detail table, status catalog, and current plan.
+
+#### Restart Hints
+
+- The same-layer compositor snapshot is now:
+  - `tmp/composition_sortlayer_boundary_snapshot_2026-04-21.json`
+- Safe strengthened reading to preserve:
+  - overall top pairs are now directly visible in one layer:
+    - `0 | 0 = 18668`
+    - `32 | 65536 = 12212`
+    - `0 | 16000 = 8970`
+  - readable shell/worn-slot rows still keep different dominant pairs than ordinary overlay rows:
+    - `Head -> 0 | 1000 = 88`
+    - `Hair -> 0 | 12000 = 5771`
+    - `Full Body -> 32 | 65536 = 3437`
+  - ordinary low-value overlay rows stay cleaner than mixed high-byte families:
+    - `Lipstick -> 4 | 5500 = 496`
+    - `Eyeshadow -> 4 | 5200 = 304`
+    - `0x41000000 -> 0 | 0 = 806`, `255 | 0 = 214`
+  - the `Overlay-Detail Priority After High-Byte Stack` packet now also carries this same-layer floor directly
+  - the next honest handoff stays inside narrow compositor interpretation, not back into census plumbing
+
+### Current Request Addendum (`2026-04-21` continued again, body-head shell direct floor)
+
+#### Problem
+
+The `SimSkin` body/head shell packet and body/head authority table were already strong in synthesis, but they still leaned more on external identity plus implementation boundary than on one compact direct local shell-floor snapshot. That made the character-side shell lane less restart-safe than the sibling worn-slot table.
+
+#### Chosen Approach
+
+- keep the packet inside the existing character-side authority lane:
+  - no new family search
+  - no new shader claim
+  - no return to `SimSkinMask`
+- generate one narrow direct shell-floor snapshot from:
+  - `cas_part_facts`
+  - `sim_template_body_parts`
+  - `sim_archetype_body_shell_audit_fresh.json`
+- sync only the packet, body/head table, `CAS/Sim` matrix, queue row, status catalog, and current plan
+
+#### Actions
+
+- [x] Query direct `cas_part_facts` rows for `Head`, `Full Body`, `Top`, `Bottom`, and `Shoes`.
+- [x] Query `sim_template_body_parts` for the current exact head-template lane.
+- [x] Freeze the result in `tmp/body_head_shell_authority_snapshot_2026-04-21.json`.
+- [x] Rebind the direct floor into the live-proof packet, body/head table, `CAS/Sim` matrix, queue row, status catalog, and current plan.
+
+#### Restart Hints
+
+- The direct shell-floor snapshot is now:
+  - `tmp/body_head_shell_authority_snapshot_2026-04-21.json`
+- Safe strengthened reading to preserve:
+  - `Head` currently stays narrow and exact on the parsed layer:
+    - `90` rows
+    - `composition=0 = 88`
+  - the body-driving shell lane stays broader through:
+    - `Full Body = 6276`
+    - `Top = 9287`
+    - `Bottom = 6191`
+  - the graph-backed archetype audit still keeps:
+    - `FullBodyShell = 23`
+    - `SplitBodyLayers = 12`
+  - this strengthens the current authority order:
+    - body shell anchors assembly
+    - head shell merges as a sibling branch
+    - compositor-order follow-up is now a cleaner next handoff than another `SimSkinMask` pass
+
+### Current Request Addendum (`2026-04-21` continued again, SimSkinMask direct-census negative floor)
+
+#### Problem
+
+The earlier bounded `SimSkinMask` refresh already proved that the public and local sample lanes stayed negative, but the restart-safe docs still did not capture the stronger new fact that the completed direct `CASPart -> GEOM -> family` floor also fails to surface any `SimSkinMask` family row.
+
+#### Chosen Approach
+
+- keep the packet bounded instead of widening the search again:
+  - verify the checked-in fullscan plus per-package result shards directly
+  - record one small public reinforcement only where it sharpens the same semantic split:
+    - public `TS4SimRipper`
+    - public `Sims 4: CASPFlags`
+- sync only the `SimSkinMask` packet, family sheet, queue row, matrix row, status catalog, and current plan
+
+#### Actions
+
+- [x] Verify that the checked-in direct `CASPart -> GEOM -> family` fullscan currently surfaces `SimSkin` and `SimGlass`, but no `SimSkinMask`.
+- [x] Verify that the `414` per-package result shards under `tmp/caspart_geom_shader_census_run/package-results` also stay negative for `SimSkinMask`.
+- [x] Re-check the local checked-in wrapper/export packet and the bounded public packet for the same semantic split.
+- [x] Rebind the stronger negative floor into the live-proof packet, family sheet, queue row, matrix row, status catalog, and current plan.
+
+#### Restart Hints
+
+- Safe strengthened reading to preserve:
+  - `SimSkinMask` is now bounded negative across four local layers:
+    - bundled or mirrored `.simgeom` samples
+    - profile archaeology
+    - direct `CASPart -> GEOM -> family` census
+    - checked-in external wrapper and export snapshots
+  - the bounded public refresh still stops at:
+    - `TS4SimRipper` exposing `SimSkin` and `SimGlass`
+    - `Sims 4: CASPFlags` exposing `SkinOverlay`
+  - the next honest proof burden is still one genuinely new external or live sample, not another repo-local grep batch
+
+### Current Request Addendum (`2026-04-21` continued again, documentation readiness plus SimSkinMask bounded refresh)
+
+#### Problem
+
+After the transparent-object quartet was frozen, the next request needed two things at once: an honest status readout of documentation readiness, and a continuation into the next unfinished Tier A lane without drifting back into already-closed quartet work.
+
+#### Chosen Approach
+
+- report readiness directly from the checked-in status surfaces:
+  - `documentation-status-catalog`
+  - `P1` queue
+  - family sheets
+- continue from the queue handoff instead of reopening the frozen quartet:
+  - run one bounded external-first refresh on `SimSkin` versus `SimSkinMask`
+  - stop if no genuinely new peer-geometry or export sample appears
+
+#### Actions
+
+- [x] Re-read the current status surfaces for deep dives, family sheets, and live-proof packets.
+- [x] Re-open the current `SimSkin` versus `SimSkinMask` packet and family sheet.
+- [x] Run one bounded local/public refresh to check whether a genuinely new peer `SimSkinMask` sample surfaced.
+- [x] Tighten the `SimSkinMask` docs only enough to record that the public refresh stayed negative.
+
+#### Restart Hints
+
+- Safe readiness summary to preserve:
+  - `Build/Buy` object authority and object-transparency docs are now among the strongest surfaces, with the widened quartet frozen at the current layer
+  - `CAS/Sim` authority is strong but still less closed than the best `Build/Buy` seams
+  - `SimSkin / SimGlass / SimSkinMask` remains a strong family sheet, but `SimSkinMask` is still a bounded negative-result lane rather than a promoted peer branch
+- Safe `SimSkinMask` reading to preserve:
+  - the fresh bounded public refresh on `2026-04-21` still did not surface a peer named `SimSkinMask` geometry/export branch
+  - the next honest proof burden is still one genuinely new live or exported sample outside the mirrored `TS4SimRipper` packet
+
+### Current Request Addendum (`2026-04-21` continued again, Build/Buy curtain route closure and quartet family split)
+
+#### Problem
+
+The window-side transparent-object question was already bounded, but the shared restart surfaces still stopped one step before a stable quartet verdict. After the window structural-cutout floor, the remaining question was whether the surviving curtains really closed through explicit `AlphaBlended` or only through a weaker threshold/cutout route, and whether that was enough to freeze the widened quartet as a family split.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - windows/openings remain on the structural `Model Cutout` / `Cut Info Table` branch
+  - curtains only promote to `AlphaBlended` when that route is explicit
+  - object glass stays separate from both
+- use direct local resource inspection only for the surviving curtains:
+  - `norenShortTileable`
+  - `strawTileable2Tile`
+- stop at the first honest closure:
+  - if explicit `AlphaBlended` does not survive locally, keep the curtain side at weaker threshold/cutout
+  - once both sides are bounded, freeze the widened quartet instead of reopening the same route by inertia
+
+#### Actions
+
+- [x] Re-open the window structural-verdict packet, family sheet, queue row, matrix row, ledger, packet index, status catalog, and current plan.
+- [x] Directly inspect same-instance curtain companions for `norenShortTileable` and `strawTileable2Tile`.
+- [x] Directly inspect both curtain `CutoutInfoTable` resources and confirm the weak companion floor plus missing same-instance `ModelCutout`.
+- [x] Freeze the curtain-side route in `tmp/buildbuy_curtain_route_snapshot_2026-04-21.json`.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/buildbuy-curtain-route-closure.md`.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-quartet-family-split.md`.
+- [x] Rebind the new packets into the queue, matrix, ledger, packet index, status catalog, family sheet, and current plan.
+
+#### Restart Hints
+
+- The curtain-route snapshot is now:
+  - `tmp/buildbuy_curtain_route_snapshot_2026-04-21.json`
+- The current narrow handoff stack is now:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-structural-cutout-verdict-floor.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-curtain-route-closure.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-quartet-family-split.md`
+- Safe reading to preserve:
+  - neither surviving curtain currently closes as explicit `AlphaBlended`
+  - `norenShortTileable` survives only through cutout-leaning transparency
+  - `strawTileable2Tile` stays opaque as the negative control
+  - the widened quartet is now safely frozen as:
+    - windows -> structural cutout/opening first
+    - curtains -> weaker threshold/cutout
+    - object glass not selected
+  - the next highest-priority step is no longer another packet on this same quartet
+  - hand the next autonomous batch to the next unfinished Tier A lane:
+    - `SimSkin` versus `SimSkinMask`
+  - `ProbeAsset` still needs sequential runs here because the shared sqlite probe-cache locks under parallel use
+
+### Current Request Addendum (`2026-04-21` continued again, Build/Buy window structural-cutout verdict floor)
+
+#### Problem
+
+The surviving window pair no longer needed another existence check for structural companions, but the restart-safe docs still stopped one step short of a usable family verdict. After the `CutoutInfoTable` floor, the next question was whether `ModelCutout` also survived on the same model roots and whether that full structural pair was now strong enough to carry the window-side verdict.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - windows/openings stay on the structural `Model Cutout` / `Cut Info Table` branch
+  - object glass stays separate
+  - material cutout hints can remain secondary evidence instead of the main verdict
+- use direct local resource inspection only for the surviving windows:
+  - `sliding2Tile`
+  - `windowBox2Tile`
+- stop at the first honest verdict floor:
+  - same-instance `ModelCutout` closure is enough to close the structural pair
+  - once the pair is closed, the window-side family verdict can move forward even if exact runtime precedence remains open
+
+#### Actions
+
+- [x] Re-open the cutout-info packet, strongest-pair packet, family sheet, queue row, matrix row, ledger, packet index, status catalog, and current plan.
+- [x] Directly confirm same-instance `ModelCutout` on the surviving window pair.
+- [x] Freeze the full structural-pair state in `tmp/buildbuy_window_structural_cutout_snapshot_2026-04-21.json`.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-modelcutout-companion-closure.md`.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-structural-cutout-verdict-floor.md`.
+- [x] Rebind the new packets into the queue, matrix, ledger, packet index, status catalog, family sheet, and current plan.
+
+#### Restart Hints
+
+- The structural-cutout snapshot is now:
+  - `tmp/buildbuy_window_structural_cutout_snapshot_2026-04-21.json`
+- The current narrow handoff stack is now:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-cutoutinfotable-companion-floor.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-modelcutout-companion-closure.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-structural-cutout-verdict-floor.md`
+- Safe reading to preserve:
+  - both surviving windows now have same-instance `ModelCutout + CutoutInfoTable`
+  - both structural companions sit on the exact promoted model roots
+  - the window-side family verdict is now safely structural cutout/opening first, with material cutout hints secondary
+  - exact runtime precedence against `AlphaCutoutMaterialDecodeStrategy` remains open, but no longer blocks verdict wording
+  - the next highest-value question is now curtain-side route closure:
+    - explicit `AlphaBlended`
+    - or weaker threshold/cutout routing
+  - `ProbeAsset` still needs sequential runs here because the shared sqlite probe-cache locks under parallel use
+
+### Current Request Addendum (`2026-04-21` continued again, Build/Buy window cutout-info companion floor)
+
+#### Problem
+
+The strongest-pair packet already showed that the surviving windows were still under structural cutout pressure, but the docs still phrased that pressure as a hypothesis. The next restart-safe question was whether explicit structural companions actually existed on the surviving window pair.
+
+#### Chosen Approach
+
+- keep the packet narrow and external-first:
+  - structural `Model Cutout` / `Cut Info Table` branch for windows/openings
+  - no new widening
+  - no final family relabel yet
+- use direct local resource inspection only for the surviving windows:
+  - `sliding2Tile`
+  - `windowBox2Tile`
+- stop at the first honest companion floor:
+  - explicit `CutoutInfoTable` proof is enough
+  - `ModelCutout` closure and authority order can remain next-step questions
+
+#### Actions
+
+- [x] Re-open the strongest-pair packet, family sheet, queue row, matrix row, ledger, packet index, status catalog, and current plan.
+- [x] Directly locate same-instance `CutoutInfoTable` resources for the surviving window pair.
+- [x] Directly inspect both `CutoutInfoTable` resources and confirm model-root-matching entries plus cutout/portal flags.
+- [x] Freeze the result in `tmp/buildbuy_window_cutoutinfo_companion_snapshot_2026-04-21.json`.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-cutoutinfotable-companion-floor.md`.
+- [x] Rebind the new packet into the queue, matrix, ledger, packet index, status catalog, and current plan.
+
+#### Restart Hints
+
+- The cutout-companion snapshot is now:
+  - `tmp/buildbuy_window_cutoutinfo_companion_snapshot_2026-04-21.json`
+- The current narrow handoff stack is now:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-strongest-pair-material-divergence.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-cutoutinfotable-companion-floor.md`
+- Safe reading to preserve:
+  - both surviving windows now have explicit same-instance `CutoutInfoTable`
+  - both entries point back to the exact promoted model root
+  - both entries carry `flags=0x321` with `IS_PORTAL` plus `USES_CUTOUT`
+  - this is enough to promote a window-side structural companion floor
+  - the next highest-value question is now matching `ModelCutout` closure and authority order versus `AlphaCutout` material hints
+  - `ProbeAsset` still needs sequential runs here because the shared sqlite probe-cache locks under parallel use
+
+### Current Request Addendum (`2026-04-21` continued again, Build/Buy window-curtain strongest-pair divergence)
+
+#### Problem
+
+The widened transparent-object lane no longer needed more route expansion, but the docs still stopped one step before the strongest direct material split. That left the next handoff too broad: it was clear that quartet-wide widening was done, but not yet clear which exact pair should drive the next verdict packet.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - windows/openings still lead with structural `Model Cutout` / `Cut Info Table` pressure
+  - curtains still lead with explicit `AlphaBlended` when it exists, then threshold/cutout if that is the surviving material route
+  - object glass stays separate from both
+- use local probe text only for the strongest direct pair:
+  - strongest window = `sliding2Tile`
+  - strongest curtain = `norenShortTileable`
+- stop at the first honest divergence claim:
+  - do not overpromote a final winning family
+  - do update the docs so the next step becomes window-side cutout-companion inspection
+
+#### Actions
+
+- [x] Re-open the window-curtain verdict boundary packet, family sheet, queue row, matrix row, ledger, packet index, status catalog, and current plan.
+- [x] Reconfirm the strongest current window-side direct packet from local `sliding2Tile` probe output.
+- [x] Reconfirm the strongest current curtain-side direct packet from local `norenShortTileable` probe output.
+- [x] Freeze the pair in `tmp/buildbuy_window_curtain_strongest_pair_snapshot_2026-04-21.json`.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-strongest-pair-material-divergence.md`.
+- [x] Rebind the strongest-pair packet into the queue, matrix, ledger, packet index, status catalog, and current plan.
+
+#### Restart Hints
+
+- The strongest-pair snapshot is now:
+  - `tmp/buildbuy_window_curtain_strongest_pair_snapshot_2026-04-21.json`
+- The current handoff stack is now:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-widening-route.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-family-verdict-boundary.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-strongest-pair-material-divergence.md`
+- Safe reading to preserve:
+  - the widened quartet is still the live floor
+  - the strongest window-side direct packet is `sliding2Tile`
+  - the strongest curtain-side direct packet is `norenShortTileable`
+  - that strongest pair already diverges enough to block one quartet-wide family label
+  - the next highest-value question is now explicit `Model Cutout` / `Cut Info Table` closure on the surviving windows
+  - `ProbeAsset` still needs sequential runs here because the shared sqlite probe-cache locks under parallel use
+
+### Current Request Addendum (`2026-04-21` continued again, Build/Buy window-curtain family-verdict boundary sync)
+
+#### Problem
+
+The restart-safe surfaces drifted after the widened route moved again. The widening packet and local probe artifacts already show that the curtain pair survives to `Partial`, but several queue/status surfaces still describe curtain widening as the next unresolved step.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - object-side glass
+  - threshold/cutout transparency
+  - `AlphaBlended` curtains
+  - structural `Model Cutout` / `Cut Info Table` opening resources
+- use local probe and snapshot artifacts only to freeze the widened quartet floor:
+  - windows first
+  - curtains second
+- stop at the first honest verdict boundary:
+  - do not pretend the winning family is already closed
+  - do update the docs so the next step is family-verdict closure instead of more widening
+
+#### Actions
+
+- [x] Re-open the widened route packet, family sheet, evidence ledger, queue, matrix, packet index, status catalog, and current plan.
+- [x] Reconfirm direct local evidence that both curtain anchors now survive to `Partial`.
+- [x] Reconfirm the external object-side branch split for:
+  - object glass
+  - threshold/cutout transparency
+  - `AlphaBlended` curtains
+  - structural cutout/opening resources
+- [x] Refresh `tmp/buildbuy_window_curtain_widening_snapshot_2026-04-21.json` so the live floor matches the curtain probe outputs.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-family-verdict-boundary.md`.
+- [x] Rebind the new verdict boundary into:
+  - `docs/workflows/material-pipeline/live-proof-packets/README.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/edge-family-matrix.md`
+  - `docs/workflows/material-pipeline/family-sheets/object-glass-and-transparency.md`
+  - `docs/workflows/material-pipeline/object-transparency-evidence-ledger.md`
+  - `docs/workflows/material-pipeline/buildbuy-material-authority-matrix.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+  - `docs/planning/current-plan.md`
+
+#### Restart Hints
+
+- The widened-route snapshot now matches the real four-fixture live floor:
+  - `tmp/buildbuy_window_curtain_widening_snapshot_2026-04-21.json`
+- The widening and handoff packets are now:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-widening-route.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-family-verdict-boundary.md`
+- Safe reading to preserve:
+  - the transparent-decor route stays stalled and should not be reopened by inertia
+  - the widened quartet is now live:
+    - `sliding2Tile`
+    - `windowBox2Tile`
+    - `strawTileable2Tile`
+    - `norenShortTileable`
+  - the next gap is family-verdict closure across the quartet, not more widening
+  - external object-side evidence now keeps windows/openings and curtains under different leading hypotheses inside the same widened route
+  - `ProbeAsset` still needs sequential runs here because the shared sqlite probe-cache locks under parallel use
+  - family classification remains frozen:
+    - object-glass first only when that branch is actually shown
+    - threshold/cutout next when the fixture proves it
+    - `AlphaBlended` stays the leading curtain-side hypothesis
+    - `SimGlass` stays last-choice only
+
+### Current Request Addendum (`2026-04-21` continued again, CASHotSpotAtlas control-bridge clarification)
+
+#### Problem
+
+The `CASHotSpotAtlas` docs already kept the family out of ordinary render-slot logic, but the external identity chain was still underspecified. The stronger creator packet already says more than “atlas plus hotspot plus modifiers,” and that sharper control-bridge wording was not restart-safe in the docs.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - `CASHotSpotAtlas`
+  - `UV1`
+  - atlas color values
+  - `HotSpotControl`
+  - `SimModifier`
+- use the local `TS4SimRipper` snapshot only for the downstream bridge:
+  - `SimModifier -> SMOD -> BGEO/DMap/BOND`
+- stop before inventing runtime render semantics:
+  - tighten the control chain
+  - keep direct surface-slot claims out
+
+#### Actions
+
+- [x] Re-open the `CASHotSpotAtlas` family sheet, live-proof packet, queue row, edge-family matrix row, packet index, status catalog, and current plan.
+- [x] Reconfirm the strongest external creator-facing packet for:
+  - `CASHotSpotAtlas -> color value -> HotSpotControl -> SimModifier`
+  - slider-direction and viewing-angle routing
+- [x] Keep the local `TS4SimRipper` packet explicitly downstream-only.
+- [x] Tighten:
+  - `docs/workflows/material-pipeline/family-sheets/cas-hotspot-atlas.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/cas-hotspotatlas-carry-through.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/edge-family-matrix.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/README.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+  - `docs/planning/current-plan.md`
+
+#### Restart Hints
+
+- Safe reading to preserve:
+  - the strongest current external identity chain is now:
+    - `CASHotSpotAtlas -> color value -> HotSpotControl -> SimModifier`
+  - the strongest local external bridge still starts later:
+    - `SimModifier -> SMOD -> BGEO/DMap/BOND`
+  - the docs now say explicitly that `HotSpotControl` carries slider-direction and viewing-angle routing in the external packet
+  - none of this upgrades `CASHotSpotAtlas` into an ordinary runtime surface slot
+
+### Current Request Addendum (`2026-04-21` continued again, Build/Buy window-curtain bridge and fixture pass)
+
+#### Problem
+
+The bounded window/curtain route was already frozen, but the real reopen status was stale. The docs still stopped at an `ObjectDefinition`-rooted geometry bridge gap even though the same-package `swap32` `Model` lane had not been honestly tested inside the current probe path.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - object-side glass/transparency split
+  - creator-facing `Model Cutout` / `Cut Info Table` workflow for windows, doors, and archways
+- use local survey/candidate-resolution artifacts only to preserve widened-route order:
+  - full-bundle windows first
+  - weaker curtain anchors second
+- use current repo code only as tooling boundary:
+  - inspect why `ProbeAsset` still stayed on `ObjectDefinition`
+  - unblock same-package `swap32` model promotion without turning current decoder behavior into TS4 truth
+- use live probes only to record bounded fixture results:
+  - first on `sliding2Tile`
+  - then on `windowBox2Tile`
+
+#### Actions
+
+- [x] Re-open the transparent-object route, negative-control, stall, and authority docs after the exhausted decor cluster.
+- [x] Re-open external creator-facing sources for object-side cutouts and transparency.
+- [x] Re-query current survey/candidate-resolution artifacts for widened window/curtain anchors.
+- [x] Attempt direct `ProbeAsset` reopen on the strongest widened transformed model roots and record the ceiling honestly.
+- [x] Reopen the strongest widened `set1` `ObjectDefinition` roots and record the exact identity-root outcome.
+- [x] Compare raw versus `swap32` model-reference inspection for the widened route.
+- [x] Inspect the local `AssetServices` / `ProbeAsset` path around `ObjectDefinition -> swap32 Model` promotion.
+- [x] Add a bounded local fix so same-package `swap32` model promotion no longer depends on `indexStore` presence.
+- [x] Record the new live floor:
+  - `sliding2Tile -> Partial`
+  - `windowBox2Tile -> Partial`
+- [x] Refresh `tmp/buildbuy_window_curtain_widening_snapshot_2026-04-21.json`.
+- [x] Update `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-widening-route.md`.
+- [x] Rebind the stronger result into:
+  - `docs/workflows/material-pipeline/family-sheets/object-glass-and-transparency.md`
+  - `docs/workflows/material-pipeline/object-transparency-evidence-ledger.md`
+  - `docs/workflows/material-pipeline/buildbuy-material-authority-matrix.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/edge-family-matrix.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/README.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+  - `docs/planning/current-plan.md`
+
+#### Restart Hints
+
+- The refreshed widened-route snapshot is:
+  - `tmp/buildbuy_window_curtain_widening_snapshot_2026-04-21.json`
+- The widening packet remains:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-curtain-widening-route.md`
+- Safe reading to preserve:
+  - the stalled decor cluster stays exhausted and should not be retried without a stronger inspection layer
+  - the next transparent-object widening phase is now a bounded window/curtain route, not one vague “window-heavy” sweep
+  - `window2X1_EP10GENsliding2Tile` and `window2X1_EP10TRADwindowBox2Tile` are the strongest widened anchors because they preserve full `Model/Rig/Slot/Footprint` bundles
+  - the real widened-route entry lane is now the exact `ObjectDefinition` identity roots, not the transformed model roots
+  - the current leading window pair now survives to real `Partial` scenes through same-package `swap32` model promotion plus embedded `MLOD`
+  - the next gap is curtain widening plus transparent-family verdict closure, not basic identity-root recovery
+  - `ProbeAsset` currently needs sequential runs for this packet because the shared sqlite probe-cache locks under parallel use
+  - family classification remains frozen:
+    - object-glass first
+    - threshold/cutout second
+    - `AlphaBlended` third
+    - `SimGlass` only last-choice
+
+### Current Request Addendum (`2026-04-21` continued again, Tier A SimSkinMask boundary pass)
+
+#### Problem
+
+After the new worn-slot sibling table, the next highest-priority character-side gap was `SimSkin` versus `SimSkinMask`. The old packet was still honest, but it left too much ambiguity about whether the workspace might still hide a local counterexample rather than only profile-level mask vocabulary.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - lineage `SimSkin`
+  - creator-facing skintone/overlay/mask workflows
+- use local external tooling as the geometry/export truth layer:
+  - `Enums.cs`
+  - `ColladaDAE.cs`
+  - `GEOM.cs`
+  - bundled `.simgeom` resources
+- use local profile archaeology only to tighten the bounded negative result:
+  - `precomp_sblk_inventory`
+  - `precomp_shader_profiles`
+  - workspace-wide `.simgeom` inventory
+- stop at the first honest integration checkpoint if the workspace search closes without a new non-mirrored sample
+
+#### Actions
+
+- [x] Re-open the current `SimSkin` / `SimSkinMask` packet, family sheet, queue row, and edge-family seam.
+- [x] Re-open external creator-facing sources for skintone, overlays, masks, and lineage `SimSkin`.
+- [x] Re-open local `TS4SimRipper` enum/export/geometry snapshots for `SimSkin`.
+- [x] Search the workspace for `SimSkinMask` code/tool branches and `.simgeom` samples.
+- [x] Create `tmp/simskin_vs_simskinmask_snapshot_2026-04-21.json`.
+- [x] Tighten:
+  - `docs/workflows/material-pipeline/live-proof-packets/simskin-vs-simskinmask.md`
+  - `docs/workflows/material-pipeline/family-sheets/simskin-simglass-simskinmask.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/edge-family-matrix.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+  - `docs/planning/current-plan.md`
+
+#### Restart Hints
+
+- The new bounded local snapshot is:
+  - `tmp/simskin_vs_simskinmask_snapshot_2026-04-21.json`
+- Safe reading to preserve:
+  - `SimSkin` remains the only current enum/export/geometry-positive branch in the local external tooling packet
+  - `SimSkinMask` still survives in local profile archaeology, but only as a weaker fractured packet:
+    - `12` profile rows
+    - `6` packed-type variants
+  - the current workspace `.simgeom` inventory no longer suggests a hidden local counterexample:
+    - the only wider files beyond the checked-in `TS4SimRipper` resources are a mirrored `tmp/research/TS4SimRipper` copy
+  - the next proof burden is now a genuinely new live or external sample, not another pass over mirrored local resources
+
+### Current Request Addendum (`2026-04-21` continued, Tier A worn-slot sibling table)
+
+#### Problem
+
+The overlay/detail precedence packet closed the compositor bridge, but the next implementation-facing sibling gap was still open: there was no explicit restart-safe table for how `Hair`, `Accessory`, and `Shoes` should sit under the `SimSkin` shell packet without collapsing back into shell identity, skintone routing, or generic clothing-like compositor prose.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - `CAS Parts`
+  - body-type slot vocabulary
+  - `CASP -> GEOM -> RegionMap` linkage
+- use local external tooling only as the structure layer for:
+  - `CASP` fields
+  - footwear `RegionMap` layering
+  - `CompositionMethod` / `SortLayer` handling
+- use local shard-backed counts only as a bounded pair-pattern floor, not as the meaning layer
+- bind the result into one sibling authority table and sync the queue, matrix, status catalog, and plan before reopening another packet
+
+#### Actions
+
+- [x] Re-open the current shell, overlay/detail, queue, and status docs around the `Hair` / `Accessory` / `Shoes` gap.
+- [x] Re-open external creator-facing sources for `CAS Parts`, body types, `GEOM`, and `RegionMap`.
+- [x] Re-open local `TS4SimRipper` snapshots for `CASP`, `PreviewControl`, `TONE`, and `SkinBlender`.
+- [x] Re-open the current repo implementation boundary in `AssetServices.cs` for exact part-link versus footwear body-assembly handling.
+- [x] Create `tmp/hair_accessory_shoes_authority_snapshot_2026-04-21.json`.
+- [x] Create `docs/workflows/material-pipeline/hair-accessory-shoes-authority-table.md`.
+- [x] Rebind the new table into:
+  - `docs/workflows/material-pipeline/cas-sim-material-authority-matrix.md`
+  - `docs/workflows/material-pipeline/overlay-detail-family-authority-table.md`
+  - `docs/workflows/material-pipeline/skintone-and-overlay-compositor.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+  - `docs/planning/current-plan.md`
+
+#### Restart Hints
+
+- The new sibling authority table is:
+  - `docs/workflows/material-pipeline/hair-accessory-shoes-authority-table.md`
+- The local bounded snapshot is:
+  - `tmp/hair_accessory_shoes_authority_snapshot_2026-04-21.json`
+- Safe reading to preserve:
+  - `Hair` and `Accessory` stay in exact worn-slot authority first
+  - `Shoes` stay a real worn slot, but inside footwear/body-assembly overlay logic rather than shell identity
+  - `CASP -> GEOM -> material candidates` remains the post-selection chain for all three
+  - skintone routing remains bounded away from these worn slots
+  - the next highest-priority live-proof packet is now `SimSkin` versus `SimSkinMask`, not a drift back into Tier B or Tier C
+
+### Current Request Addendum (`2026-04-21` long-batch resume, Tier B evidence pass)
+
+#### Problem
+
+The top addendum in this file is stale for the current restart point: `0x52` and `0x80` are already closed, the `EP10` transparent-object route is already stalled at its current reopen layer, and the next safe documentation batch is to tighten the unfinished Tier B external-first packets without pretending they outrank the still-open Tier A compositor-authority work.
+
+#### Chosen Approach
+
+- Rebuild context from the restart/process docs before touching any packet.
+- Keep the priority split explicit:
+  - Tier A still owns the next implementation-facing step.
+  - this batch only strengthens Tier B packet floors and restart safety.
+- Advance multiple bounded documentation packets in sequence in one run:
+  - `CASHotSpotAtlas` carry-through
+  - `ShaderDayNightParameters` visible-pass proof
+  - `GenerateSpotLightmap` / `NextFloorLightMapXform`
+- Fold only the proved parts back into the queue, matrix, packet index, status catalog, and current plan.
+
+#### Actions
+
+- [x] Re-read the restart guide, current plan, source map, shared guide, family priority, shader registry, edge-family matrix, queue, packet index, status catalog, and multi-agent workflow for the discovery-phase contract.
+- [x] Reconfirm that the `0x52` / `0x80` packet stack is already closed and should not be reopened by inertia.
+- [x] Reconfirm that the `EP10` transparent-decor route is already stalled at the current inspection layer and should not silently drive the queue.
+- [x] Re-open external creator-facing evidence for:
+  - `CASHotSpotAtlas`
+  - `RevealMap`
+  - `GenerateSpotLightmap`
+  - `NextFloorLightMapXform`
+- [x] Re-open local external tooling snapshots and local artifact evidence for the same packets.
+- [x] Tighten the `CASHotSpotAtlas` family sheet and live-proof packet with explicit local external snapshot boundaries.
+- [x] Tighten the `ShaderDayNightParameters` family sheet, evidence ledger, and live-proof packet with exact local helper counts and visible-root anchors.
+- [x] Tighten the `GenerateSpotLightmap` / `NextFloorLightMapXform` family sheet, evidence ledger, and live-proof packet with exact local carry-through counts and the current adjacent-root boundary.
+- [x] Rebind the proved result into:
+  - `docs/workflows/material-pipeline/live-proof-packets/README.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/edge-family-matrix.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+  - `docs/planning/current-plan.md`
+- [x] Keep the next highest-priority step honest: Tier A overlay/detail or broader compositor-authority follow-up still outranks new Tier B or Tier C deepening.
+
+#### Restart Hints
+
+- This batch did not reopen the completed high-byte `BodyType` packets.
+- This batch did not reopen the stalled `EP10` transparent-decor route.
+- The tightened Tier B packet stack now lives in:
+  - `docs/workflows/material-pipeline/family-sheets/cas-hotspot-atlas.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/cas-hotspotatlas-carry-through.md`
+  - `docs/workflows/material-pipeline/family-sheets/shader-daynight-parameters.md`
+  - `docs/workflows/material-pipeline/shader-daynight-evidence-ledger.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/shader-daynight-visible-pass.md`
+  - `docs/workflows/material-pipeline/family-sheets/generate-spotlightmap-nextfloorlightmapxform.md`
+  - `docs/workflows/material-pipeline/generated-light-evidence-ledger.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/generate-spotlightmap-nextfloorlightmapxform.md`
+- Safe reading to preserve:
+  - `CASHotSpotAtlas` stays grounded first in the creator-side `UV1 -> HotSpotControl -> SimModifier` packet.
+  - the local `TS4SimRipper` snapshot strengthens the downstream `SimModifier -> SMOD -> BGEO/DMap/BOND` chain, but does not supply a local `CASHotSpotAtlas` parser/use path.
+  - `ShaderDayNightParameters` now has a stronger local helper packet with `occurrences = 5`, `LightsAnimLookupMap = 94`, and `samplerRevealMap = 32`, plus three visible-root anchors.
+  - `GenerateSpotLightmap` now has a stronger local helper packet with `occurrences = 6` and `NextFloorLightMapXform = 14`, while the weaker `NextFloorLightMapXform = 3` carry-through remains secondary.
+  - the next implementation-facing step is still Tier A:
+    - revisit overlay/detail and broader `CAS/Sim` compositor authority under the `SimSkin` shell packet.
+
+### Current Request Addendum (`2026-04-21` continued, Tier A overlay/detail precedence pass)
+
+#### Problem
+
+The next highest-priority character-side gap after the closed high-byte `BodyType` packet stack was no longer another family translation packet. The missing bridge was one stricter overlay/detail precedence packet that keeps ordinary low-value overlay rows and skintone-carried overlays above the mixed high-byte families in compositor reasoning.
+
+#### Chosen Approach
+
+- keep the packet external-first:
+  - `CompositionMethod`
+  - `SortLayer`
+  - `CAS Parts` versus `Skin Tones`
+  - `TONE` overlay structure
+- use the local `TS4SimRipper` snapshot only as the structure packet for `CompositionMethod`, `SortLayer`, and skintone-carried overlay handling
+- use direct shard-backed counts to compare:
+  - low-value overlay/detail rows
+  - mixed high-byte families
+  - `0x6D` and `0x6F` cosmetic-heavy comparison subrows
+- bind the result into one bounded Tier A packet instead of widening the queue back out to Tier B
+
+#### Actions
+
+- [x] Re-read the shell/compositor and overlay/detail docs after the high-byte family closure.
+- [x] Re-open external creator-facing sources for `CompositionMethod`, `SortLayer`, `CAS Parts`, `Skin Tones`, and `TONE` overlays.
+- [x] Re-open the local `TS4SimRipper` `PreviewControl.cs`, `TONE.cs`, and `SkinBlender.cs` packet for compositor structure.
+- [x] Query the shard cache directly for low-value overlay rows versus the mixed high-byte families.
+- [x] Create `tmp/overlay_detail_priority_snapshot_2026-04-21.json`.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/overlay-detail-priority-after-highbyte-stack.md`.
+- [x] Rebind the new packet into:
+  - `docs/workflows/material-pipeline/overlay-detail-family-authority-table.md`
+  - `docs/workflows/material-pipeline/cas-sim-material-authority-matrix.md`
+  - `docs/workflows/material-pipeline/skintone-and-overlay-compositor.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/README.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+  - `docs/planning/current-plan.md`
+
+#### Restart Hints
+
+- The new Tier A compositor-order packet is:
+  - `docs/workflows/material-pipeline/live-proof-packets/overlay-detail-priority-after-highbyte-stack.md`
+- The direct comparison artifact is:
+  - `tmp/overlay_detail_priority_snapshot_2026-04-21.json`
+- Safe reading to preserve:
+  - the closed high-byte family stack narrows interpretation, but does not replace ordinary overlay/detail precedence anchors
+  - low-value overlay/detail rows still provide the cleanest direct compositor anchors where pair patterns are stable
+  - the `TONE` overlay branch stays separate from ordinary `CASPart` overlay/detail rows
+  - `0x6D` and `0x6F` are now explicit comparison packets showing how mixed high-byte families can echo cosmetic lanes without replacing them
+  - the next highest-priority sibling packet after this pass is `Hair` / `Accessory` / `Shoes` authority, not a return to Tier B by momentum
+
+### Current Request Addendum (`2026-04-21` long-batch resume, continued again)
+
+#### Problem
+
+The `SimSkin` shell/compositor lane is still the highest unfinished character-side priority. `0x44`, `0x41`, `0x6D`, and `0x6F` are now closed as family packets, and the next unfinished mixed `BodyType` families are `0x52` and `0x80` before overlay/detail ordering is revisited.
+
+#### Chosen Approach
+
+- Rebuild context from the restart/process docs before touching any packet.
+- Use external creator-facing references and local external snapshots first, with shard-backed corpus facts only as candidate-isolation evidence.
+- Advance multiple bounded packets in sequence in one run:
+  - tighten `0x52`
+  - tighten `0x80`
+- Fold only the proved parts back into the translation boundary, queue, matrix, registry, restart, and status layers.
+
+#### Actions
+
+- [x] Re-read the restart guide, current plan, source map, shader registry, edge-family matrix, queue, packet index, and status catalog for the discovery-phase working contract.
+- [x] Reconfirm that the current safe next lane is the character-side `BodyType` high-byte translation track under the `SimSkin` authority packet.
+- [x] Re-open the external-first source stack for `AdditionalTextureSpace` / `UniqueTextureSpace` and current `BodyType` vocabulary.
+- [x] Tighten the `0x44` family into one bounded packet or boundary pass with explicit external anchors, local snapshot evidence, and safe reading.
+- [x] Tighten the `0x41` family into the next bounded packet or boundary pass with the same trust split.
+- [x] Tighten the `0x52` family into the next bounded packet or boundary pass with explicit external anchors, local snapshot evidence, and safe reading.
+- [x] Tighten the `0x80` family into the next bounded packet or boundary pass with the same trust split or an honest weaker-boundary reading if direct external vocabulary still fails.
+- [x] Rebind the proved result into:
+  - `docs/workflows/material-pipeline/bodytype-translation-boundary.md`
+  - `docs/workflows/material-pipeline/p1-live-proof-queue.md`
+  - `docs/workflows/material-pipeline/edge-family-matrix.md`
+  - `docs/workflows/material-pipeline/shader-family-registry.md`
+  - `docs/workflows/material-pipeline/research-restart-guide.md`
+  - `docs/workflows/material-pipeline/documentation-status-catalog.md`
+- [x] Close the run with the restart-guide report split:
+  - externally confirmed
+  - local snapshots of external tooling
+  - bounded synthesis
+  - blockers
+  - next highest-priority step
+
+#### Restart Hints
+
+- This run resumes from the existing character-side authority stack:
+  - `docs/workflows/material-pipeline/live-proof-packets/simskin-body-head-shell-authority.md`
+  - `docs/workflows/material-pipeline/body-head-shell-authority-table.md`
+  - `docs/workflows/material-pipeline/compositionmethod-sortlayer-boundary.md`
+  - `docs/workflows/material-pipeline/overlay-detail-family-authority-table.md`
+  - `docs/workflows/material-pipeline/bodytype-translation-boundary.md`
+- The next bounded families for this batch are:
+  - `0x52`
+  - `0x80`
+- Preserve the trust boundary:
+  - external creator-facing references and local external tooling snapshots define the meaning layer
+  - shard-backed counts define only prevalence and candidate isolation
+  - current repo code remains implementation boundary only
+- Safe reading to preserve on resume:
+  - `0x44` now has its own packet:
+    - `docs/workflows/material-pipeline/live-proof-packets/bodytype-0x44-family-boundary.md`
+  - `0x41` now also has its own packet:
+    - `docs/workflows/material-pipeline/live-proof-packets/bodytype-0x41-family-boundary.md`
+  - `0x6D` now also has its own packet:
+    - `docs/workflows/material-pipeline/live-proof-packets/bodytype-0x6d-family-boundary.md`
+  - `0x6F` now also has its own packet:
+    - `docs/workflows/material-pipeline/live-proof-packets/bodytype-0x6f-family-boundary.md`
+  - `0x41` now also freezes the first clothing-like `composition=32 | sort=65536` sub-lane inside the mixed family
+  - `0x6D` is now closed as the strongest current counterexample to naive low-byte decoding
+  - `0x6F` is now closed as the mixed head-decoration / horse-tail-adjacent special-content family packet
+  - `0x52` is now closed as the concentrated bottom-heavy family with `BodyScarArmLeft` vocabulary overlap
+  - `0x80` is now closed as the honest weaker sign-bit family packet with no direct external vocabulary anchor yet
+  - the low byte is still not a safe standalone decoder for any of these high-byte families
+  - the leading external hypothesis remains a secondary texture-space or `AdditionalTextureSpace` layer rather than a flat hidden-slot enum
+  - the next packet should revisit overlay/detail priority against the now-frozen high-byte packet stack before reopening narrower `SimGlass`, `RefractionMap`, or pack-local transparent-object lanes
+
 ### Current Request Addendum
+
+#### Problem
+
+The finished character-side `CASPart -> GEOM -> shader family` census now makes `SimSkin` the dominant direct family floor, but the docs still lacked one restart-safe packet that converts that prevalence into body/head shell authority and skintone/compositor ordering guidance.
+
+#### Chosen Approach
+
+- Re-read the `SimSkin` family sheet, shell/compositor deep dives, queue, and local `TS4SimRipper` skintone snapshots.
+- Create one bounded live-proof packet for `SimSkin` body/head shell authority.
+- Sync that packet into the queue, matrix, restart, source-map, and status surfaces.
+
+#### Actions
+
+- [x] Re-read the current `SimSkin` family, shell-authority, and skintone/compositor docs.
+- [x] Re-open the local `TS4SimRipper` `TONE.cs` and `SkinBlender.cs` snapshots as the current compositor-structure packet.
+- [x] Create `docs/workflows/material-pipeline/live-proof-packets/simskin-body-head-shell-authority.md`.
+- [x] Rebind the queue, matrix, restart, packet index, source map, and status catalog around that packet.
+- [x] Build the first explicit body-shell versus head-shell authority table from the new packet.
+- [x] Add one narrow boundary document for `CompositionMethod` and `SortLayer` so layer ordering stays separate from shell selection.
+- [x] Extend the same explicit table style to one overlay/detail family.
+- [x] Add one direct whole-index `sort_layer` census layer and record the current `CompositionMethod` parser/index gap.
+- [x] Extend the parser/index layer so `CompositionMethod` can be counted directly alongside `sort_layer`.
+- [x] Add the first direct whole-install `CompositionMethod` census plus `CompositionMethod + SortLayer` pair counts.
+- [x] Rebind the compositor-side docs around the new direct `CompositionMethod` floor.
+- [x] Backfill the shard set so `composition_method` becomes queryable in `cas_part_facts`.
+- [x] Record the new cache-backed `CompositionMethod` state in the baseline, boundary, restart, and source-map layers.
+- [x] Translate the first batch of largest unresolved `Body Type` buckets into one boundary document that separates direct enum matches from mixed high-bit buckets.
+- [x] Record the repeated high-byte family structure for the largest unresolved `Body Type` values.
+- [x] Record the first family-level profiles and priority order for `0x44`, `0x41`, `0x6D`, `0x6F`, `0x52`, and `0x80`.
+- [x] Add the new external `AdditionalTextureSpace` lead and align it with the current high-byte families.
+- [ ] Continue translating the remaining large mixed `Body Type` families before over-reading slot-local compositor patterns.
+
+#### Restart Hints
+
+- The new character-side shell packet is:
+  - `docs/workflows/material-pipeline/live-proof-packets/simskin-body-head-shell-authority.md`
+- The new companion docs that continue that packet are:
+  - `docs/workflows/material-pipeline/body-head-shell-authority-table.md`
+  - `docs/workflows/material-pipeline/compositionmethod-sortlayer-boundary.md`
+  - `docs/workflows/material-pipeline/compositionmethod-census-baseline.md`
+  - `docs/workflows/material-pipeline/overlay-detail-family-authority-table.md`
+  - `docs/workflows/material-pipeline/sortlayer-census-baseline.md`
+- Safe reading to preserve:
+  - `SimSkin` now has both external family identity and direct package-derived prevalence strength
+  - body shell stays the assembly anchor and head shell stays a mergeable sibling branch
+  - skintone and overlay/detail logic stay in post-selection compositor authority, not alternate shell identity
+  - `CompositionMethod` and `SortLayer` belong to layer ordering after shell selection, not to shell choice itself
+  - overlay/detail families now also have their own explicit authority table instead of being only a prose boundary
+  - `sort_layer` now has a direct whole-index count layer from `cas_part_facts`
+  - `CompositionMethod` now also has a direct whole-install package census layer
+  - `composition_method` is now queryable in `cas_part_facts` across all four shard databases
+  - the new translation boundary is:
+    - `docs/workflows/material-pipeline/bodytype-translation-boundary.md`
+  - low-value rows like `10` and `28` now align directly with the external enum names `Earrings` and `FacialHair`
+  - the largest rows such as `1140850688`, `1090519040`, and `1090519046` still behave as mixed high-bit buckets rather than ordinary slots
+  - the unresolved space now also shows repeated high-byte families:
+    - `0x44`
+    - `0x41`
+    - `0x52`
+    - `0x6D`
+    - `0x6F`
+    - `0x80`
+  - the low byte is not a safe standalone decoder for those families
+  - the first safe family-level priority is now:
+    - `0x44`
+    - `0x41`
+    - `0x6D`
+    - `0x6F`
+    - `0x52`
+    - `0x80`
+  - the leading external hypothesis for those families is now:
+    - a secondary texture-space or `AdditionalTextureSpace` layer
+    - not a flat hidden-slot enum
+  - `composition=32 | sort=65536` is now a counted clothing-like compositor lane, not just a tooling suspicion
+  - exact `MTNF` versus `CASP` versus explicit material-definition order is still open
+
+#### Problem
+
+The earlier census numbers were stale and incomplete. A previous "full scan" was still capped at `2000` package files and was being overread as if it were a whole-game corpus result. That is not acceptable for corpus-wide shader/material prioritization.
+
+#### Chosen Approach
+
+- Run a true full filesystem profile-index pass across all `.package` files under `C:\GAMES\The Sims 4`.
+- Reconcile the resulting shard set instead of reading only `index.sqlite`.
+- Replace the old partial census numbers in the corpus-wide census docs.
+- Treat any scan-integrity mismatch explicitly as an open blocker rather than smoothing it over.
+
+#### Actions
+
+- [x] Count real `.package` files on disk before rerunning the scan.
+- [x] Run `ProbeAsset --profile-index` with a high enough limit to include the full install.
+- [x] Reconcile `index.sqlite` plus `index.shard*.sqlite` instead of reading only the main DB.
+- [x] Compute fresh whole-corpus package/resource/asset totals from the full shard set.
+- [x] Record the two currently missing `EP18` package paths as an explicit integrity gap.
+- [x] Replace the old census baseline in the material docs.
+- [ ] Add a direct whole-corpus family-count layer on top of the new full scan.
+- [x] Add the first direct object-side shader-profile count layer on top of the new full scan.
+- [x] Add the first direct graph-backed `Sim`-side carrier-count layer on top of the same full scan.
+- [x] Add the broader direct whole-`CAS` slot/fact carrier-count layer on top of the same full scan.
+- [x] Add the deeper direct `CAS`/`GEOM` linkage-count layer on top of the same full scan.
+- [x] Add the first direct character-side `CASPart -> GEOM -> shader family` count layer on top of the same full scan.
+- [x] Record the current `CASPart` parser/failure boundary and the residual `GEOM` key-index boundary as the current integrity blockers for the character-side census stack.
+- [x] Rebind the priority, queue, restart, and status docs from the completed cross-package character-side family census.
+
+#### Restart Hints
+
+- The fresh full-scan log is:
+  - `tmp/profile_index_fullscan_2026-04-20.log`
+- The fresh shard set is:
+  - `tmp/profile-index-cache/cache/index.sqlite`
+  - `tmp/profile-index-cache/cache/index.shard01.sqlite`
+  - `tmp/profile-index-cache/cache/index.shard02.sqlite`
+  - `tmp/profile-index-cache/cache/index.shard03.sqlite`
+- Current counted whole-corpus totals from the full shard set:
+  - `indexed package paths = 4963`
+  - `indexed resources = 4789589`
+  - `indexed assets = 743150`
+  - `asset-bearing package paths = 603`
+  - `Cas = 530507`
+  - `BuildBuy = 142941`
+  - `General3D = 68158`
+  - `Sim = 1544`
+- Current integrity gap to preserve:
+  - the scan selected `4965` filesystem package files, but only `4963` package rows persisted
+  - the missing paths are:
+    - `C:\GAMES\The Sims 4\EP18\ClientFullBuild0.package`
+    - `C:\GAMES\The Sims 4\EP18\SimulationFullBuild0.package`
+- Do not fall back to the older `1240 / 161303 / 1125911` live-cache layer as if it were the current whole-game census.
+- The first direct object-side shader-profile census now lives in:
+  - `docs/workflows/material-pipeline/matd-shader-census-baseline.md`
+  - `tmp/matd_shader_census_fullscan.json`
+- The first direct graph-backed character-side carrier census now lives in:
+  - `docs/workflows/material-pipeline/sim-archetype-material-carrier-census.md`
+  - `tmp/sim_material_carrier_census.json`
+- The first broad whole-`CAS` slot/fact census now lives in:
+  - `docs/workflows/material-pipeline/cas-carrier-census-baseline.md`
+  - `tmp/cas_carrier_census_fullscan.json`
+- The first direct package-derived `CASPart` linkage census now lives in:
+  - `docs/workflows/material-pipeline/caspart-linkage-census-baseline.md`
+  - `tmp/caspart_linkage_census_fullscan.json`
+- The first direct package-derived character-side `CASPart -> GEOM -> shader family` census now lives in:
+  - `docs/workflows/material-pipeline/caspart-geom-shader-census-baseline.md`
+  - `tmp/caspart_geom_shader_census_fullscan.json`
+- The resumable runner and safe-point root for that census are:
+  - `tmp/caspart_geom_shader_census_resumable.ps1`
+  - `tmp/caspart_geom_shader_census_run/`
+- The current integrity ceilings for that character-side stack now also live in:
+  - `docs/workflows/material-pipeline/caspart-parser-boundary.md`
+  - `docs/workflows/material-pipeline/caspart-geom-resolution-boundary.md`
+- Current direct `MATD` census totals to preserve:
+  - `MaterialDefinitionResources = 28225`
+  - `DecodedResources = 28201`
+  - `EmptyResources = 24`
+  - `Failures = 0`
+- Current direct character-side `GEOM` family totals to preserve:
+  - `RowsWithResolvedGeometryShader = 281271`
+  - `RowsWithUnknownGeometryShader = 32`
+  - `GeometryResolvedFromExternalPackage = 12911`
+  - `SimSkin = 280983` across `401` packages by `CASPart` rows
+  - `SimGlass = 6048` across `189` packages by `CASPart` rows
+  - `SimSkin = 86697` across `147` packages by unique linked `GEOM`
+  - `SimGlass = 645` across `47` packages by unique linked `GEOM`
+- Safe reading to preserve:
+  - this is a real package-derived object-side shader-profile count layer
+  - it is not yet a whole-game family census
+  - the new `Sim archetype` carrier census is the first direct character-side prevalence layer
+  - the new whole-`CAS` census is a strong slot/fact prevalence layer, but not yet by itself a `GEOM`/material-linkage layer
+  - the new `CASPart` linkage census is the first direct package-derived `GEOM`/texture/`region_map` linkage layer on the character side
+  - the new `CASPart -> GEOM -> shader family` census is the completed current direct package-derived character-side family-count layer
+  - its GEOM-side names must prefer the external `TS4SimRipper` enum packet over cross-domain `precomp` guesses
+  - the all-zero `CAS` asset carrier booleans are still an index boundary, not a semantic result
+  - the current deeper integrity blocker is now the large `CASPart` structured-parser gap:
+    - `ParsedResources = 299028`
+    - `TotalFailures = 230713`
+  - a second direct-resolution boundary now also matters:
+    - cross-package `GEOM` resolution is now already present through the shard set
+    - the current residual geometry-resolution gap is `GeometryKeyNotIndexed = 531`
+  - the current direct linkage floor was recovered through reflection scripts over the already-built assemblies because `dotnet build` for `ProbeAsset` is blocked by workload resolver errors in `tmp/probeasset_build_diag.txt`
+
+#### Problem
+
+The wide-priority companion existed, but it still mixed true counted coverage with weaker derived family hints. Without a separate census baseline, future restarts could still overread hint layers as real popularity measurements.
+
+#### Chosen Approach
+
+- Create one separate corpus-wide census baseline companion.
+- Separate three things explicitly:
+  - live index corpus totals
+  - counted package-slice prevalence
+  - derived family hints
+- Sync that baseline into restart, queue, source-map, deep-dive index, and priority docs.
+
+#### Actions
+
+- [x] Inspect the live SQLite index for package, asset, and resource totals.
+- [x] Re-open the existing package-derived family survey summaries.
+- [x] Create one `corpus-wide-family-census-baseline.md` companion.
+- [x] Sync that baseline into the wide-priority and restart layers.
+
+#### Restart Hints
+
+- The new census baseline is:
+  - `docs/workflows/material-pipeline/corpus-wide-family-census-baseline.md`
+- Safe reading to preserve:
+  - whole-corpus totals are now counted from the live index
+  - current family popularity for rows like `RefractionMap` and `SimGlass` is still only partially counted
+  - package-derived `Build/Buy` survey counts are real, but still domain-limited
+  - `precomp_sblk_inventory.json` remains a derived hint layer, not a direct census
+
+#### Problem
+
+The corpus-wide framing rule had been written into the restart contract, but it still did not exist as its own durable working companion. Without that, a later restart could still treat the rule as a one-off warning instead of as an operational ranking layer that sits above the queue.
+
+#### Chosen Approach
+
+- Create one dedicated whole-game family-priority companion.
+- Base it on three bounded inputs:
+  - externally confirmed family identity
+  - local corpus-wide prevalence hints
+  - implementation-spec leverage
+- Sync it into the restart guide, shader registry, queue, source map, deep-dive index, and plan.
+
+#### Actions
+
+- [x] Re-open the registry, queue, source-map, and current local prevalence hints.
+- [x] Create one dedicated `corpus-wide-family-priority.md` companion.
+- [x] Sync that companion into the restart and navigation layers.
+
+#### Restart Hints
+
+- The new durable wide-priority companion is:
+  - `docs/workflows/material-pipeline/corpus-wide-family-priority.md`
+- Safe reading to preserve:
+  - `SimSkin`/character foundation, object-side transparency, and CAS/Sim compositor authority stay above narrow pack-local lanes
+  - `CASHotSpotAtlas`, `ShaderDayNightParameters`, and generated-light helpers remain whole-game rows with strong enough evidence to stay in the main queue
+  - `RefractionMap` and `SimGlass` remain real rows, but should not dominate by recent route momentum alone
+
+#### Problem
+
+The research track had started to drift into pack-local priority, especially through repeated `EP10`-centric live-proof lanes. That was still acceptable as bounded evidence work, but it is not the real task goal. Without a correction in the foundational docs, future restarts could keep mistaking one convenient package slice for the main queue driver.
+
+#### Chosen Approach
+
+- Re-center the task framing on corpus-wide shader/material prioritization across the whole game.
+- Freeze package-specific lanes as secondary validation/evidence layers only.
+- Update the foundational restart, shared-guide, deep-dive index, queue, and plan wording so restarts rebuild the wide priority before choosing any narrow fixture route.
+
+#### Actions
+
+- [x] Re-read the foundational restart and queue docs that currently drive this research track.
+- [x] Patch the restart contract so whole-game family priority outranks package-local convenience.
+- [x] Patch the shared guide and deep-dive index so the same rule appears outside the restart doc.
+- [x] Patch the live-proof queue so pack-specific routes are read as secondary validation layers rather than main-priority drivers.
+- [x] Record the correction in the live plan so the change survives restarts.
+
+#### Restart Hints
+
+- Safe reading to preserve:
+  - the task is about TS4 materials across the whole corpus, not about one pack such as `EP10`
+  - main priority must be driven by whole-game family prevalence, rendering importance, external evidence strength, cross-domain coverage, and implementation-spec value
+  - pack-specific lanes remain useful, but only as secondary validation/evidence layers after the wider family priority is already set
+  - current `EP10` transparent-decor and refraction lanes stay bounded as already-exhausted or already-bounded evidence routes, not as default next work by themselves
+  - the durable whole-game priority companion now lives in `docs/workflows/material-pipeline/corpus-wide-family-priority.md`
+
+#### Problem
+
+The transparent-object branch had already handed off from the exhausted top-anchor pair to `mirror`, but it still lacked one packet for the lower-anchor reopen results and one packet that formally marked the full `EP10` decor cluster as stalled. Without those, a restart could still reopen `mirror`, `lantern`, or `fishBowl` again or hesitate between “still active route” and “ready to widen”.
+
+#### Chosen Approach
+
+- Keep this as a real route-stall closure pass, not as a fake family-classification pass.
+- Use the existing `ProbeAsset` binary to attempt direct reopen on `mirror`, `lantern`, and `fishBowl`.
+- Create one packet freezing the lower-anchor negative reopen ceiling.
+- Create one packet freezing the full-route stall and widening handoff.
+- Sync both into the route, route-stall, window-heavy negative control, queue, matrix, restart guide, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current transparent-object handoff packet, route-stall packet, negative-control packet, and the exact lower-anchor target list.
+- [x] Run direct reopen attempts on `mirror`, `lantern`, and `fishBowl` through the existing `ProbeAsset` binary.
+- [x] Create one lower-anchor negative-reopen packet.
+- [x] Create one full-route stall packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-lower-anchor-negative-reopen.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-full-route-stall.md`
+- Safe reading to preserve:
+  - `mirror`, `lantern`, and `fishBowl` now share the same first real reopen ceiling as the top-anchor pair
+  - the full `EP10` transparent-decor cluster is now stalled at the present inspection layer
+  - the next honest move is widening to the window-heavy negative control or another transparent-object slice, not retrying the same five roots
+
+#### Problem
+
+The transparent-object branch had already bounded the strongest peer anchor pair structurally, but it still lacked one packet for their first shared real reopen result and one formal handoff packet showing where the route goes next. Without those, a restart could still either retry `displayShelf`/`shopDisplayTileable` aimlessly or widen too early.
+
+#### Chosen Approach
+
+- Keep this as a real reopen boundary pass, not as a fake family-classification pass.
+- Use the existing `ProbeAsset` binary to attempt direct reopen on `displayShelf` and `shopDisplayTileable`.
+- Create one packet freezing their shared negative reopen ceiling.
+- Create one packet freezing the post-top-anchor handoff to `mirror`.
+- Sync both into the route, priority, survey-vs-reopen boundary, route-stall boundary, queue, matrix, packet index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current transparent-object route stack, target-priority packet, survey-vs-reopen packet, route-stall packet, and the exact `displayShelf` / `shopDisplayTileable` anchor files.
+- [x] Run direct reopen attempts on `displayShelf` and `shopDisplayTileable` through the existing `ProbeAsset` binary.
+- [x] Create one top-anchor negative-reopen packet.
+- [x] Create one post-top-anchor handoff packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-top-anchor-negative-reopen.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-post-top-anchor-handoff.md`
+- Safe reading to preserve:
+  - `displayShelf` and `shopDisplayTileable` now share the same first real reopen ceiling: `Build/Buy asset not found`
+  - that does not stall the whole transparent-decor route
+  - it does mean the next honest target inside the same route is now `mirror`
+
+#### Problem
+
+The transparent-object branch now had two strongest peer anchors, but it still lacked one hard boundary preventing premature widening to `mirror`, `lantern`, and `fishBowl`. Without that, a restart could still skip the strongest pair too early after one weak pass.
+
+#### Chosen Approach
+
+- Keep this as a top-tier exhaustion pass, not as a fake reopen or classification pass.
+- Create one packet freezing the rule that both strongest anchors must be exhausted before weaker anchors are allowed to take over.
+- Sync that boundary into the target-priority, queue, packet index, matrix, and plan docs.
+
+#### Actions
+
+- [x] Re-open the top-anchor tiebreak packet, the route-stall packet, the target-priority packet, and the current queue wording.
+- [x] Create one top-anchor exhaustion-boundary packet.
+- [x] Sync that packet into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packet is:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-top-anchor-exhaustion-boundary.md`
+- Safe reading to preserve:
+  - the route must not widen below `displayShelf` and `shopDisplayTileable` until both are honestly exhausted
+  - `mirror`, `lantern`, and `fishBowl` remain real targets, but only after the strongest peer pair is spent
+
+#### Problem
+
+The transparent-object branch now had one strongest first-target anchor, but the top of the route was still too easy to read as either arbitrary or semantically ranked. The docs still needed one peer anchor packet for `shopDisplayTileable` and one explicit tiebreak packet explaining why it remains second without implying weaker family relevance.
+
+#### Chosen Approach
+
+- Keep this as a strongest-anchor refinement pass, not as a fake reopen or family-classification pass.
+- Create one packet freezing `shopDisplayTileable` as the second strongest exact survey-backed anchor.
+- Create one packet freezing the current non-semantic tiebreak between `displayShelf` and `shopDisplayTileable`.
+- Sync both into the route, priority, queue, packet index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the `displayShelf` anchor packet, the target-priority packet, and the `shopDisplayTileable` survey/candidate-resolution slices.
+- [x] Create one `shopDisplayTileable` anchor packet.
+- [x] Create one top-anchor tiebreak packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-shopdisplay-anchor.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-top-anchor-tiebreak.md`
+- Safe reading to preserve:
+  - `shopDisplayTileable` is now a peer strongest anchor, not just the next name in the list
+  - `displayShelf -> shopDisplayTileable` is now an explicit structural tiebreak, not a semantic-family ranking
+
+#### Problem
+
+The transparent-decor branch already had route, priority, and checklist packets, but it still lacked one exact first-target identity anchor and one explicit ceiling between survey/candidate-resolution evidence and a true reopened fixture. Without those, the next batch could still overread route quality as near-fixture closure.
+
+#### Chosen Approach
+
+- Keep this as a pre-reopen anchor pass, not as a fake fixture pass.
+- Create one packet freezing `displayShelf` as the strongest exact survey-backed first target.
+- Create one packet freezing the survey-versus-reopen boundary for the whole transparent-decor cluster.
+- Sync both into the route, packet index, queue, matrix, and plan docs.
+
+#### Actions
+
+- [x] Re-open the transparent-object route packet, target-priority packet, reopen checklist, and the EP10 survey/candidate-resolution artifacts.
+- [x] Create one `displayShelf` anchor packet.
+- [x] Create one survey-versus-reopen boundary packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-displayshelf-anchor.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-survey-vs-reopen-boundary.md`
+- Safe reading to preserve:
+  - `displayShelf` is now the strongest exact survey-backed first target, not only a narrative preference
+  - the transparent-decor cluster is still route-grade rather than fixture-grade until one real reopen fills the checklist
+
+#### Problem
+
+`0389...` was already the next clean refraction route, but the docs still lacked one explicit ceiling packet and one explicit exit/handoff rule. Without those, a restart could keep looping on route-only refraction wording even after the current evidence had stopped getting stronger.
+
+#### Chosen Approach
+
+- Keep this as an anti-loop and handoff pass, not a new refraction-semantics pass.
+- Create one packet that freezes the current `0389...` no-upgrade ceiling against the named `lilyPad` floor.
+- Create one packet that freezes the post-`0389` handoff boundary to the next unfinished family track.
+- Sync both into the refraction live-proof packet, packet index, queue, matrix, restart guide, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `0389...` clean-route packet, identity-gap packet, floor-comparison packet, and route-order packet.
+- [x] Create one `0389...` no-signal-upgrade packet.
+- [x] Create one post-`0389` handoff-boundary packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-0389-no-signal-upgrade.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-post-0389-handoff-boundary.md`
+- Safe reading to preserve:
+  - `0389...` is now bounded not only as a clean route, but also as a no-upgrade ceiling relative to `lilyPad`
+  - if no stronger inspection layer appears, refraction should now hand off cleanly to the next unfinished family track instead of absorbing more route-only prose
+
+#### Problem
+
+`0389...` now has a clean-route baseline, but it was still too easy to overread it as almost the same thing as the named `lilyPad` fixture. The docs still needed one explicit identity-gap packet and one explicit floor-comparison packet.
+
+#### Chosen Approach
+
+- Keep this as a route-clarification pass, not a new refraction-semantics pass.
+- Create one packet for the current `0389...` identity gap against named-fixture status.
+- Create one packet comparing `0389...` to the current `lilyPad` floor.
+- Sync both into the refraction live-proof packet, packet index, queue, matrix, restart guide, source-map layer, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `0389...` coverage packet, the current `lilyPad` floor packet, and the narrower `0124...` control packet.
+- [x] Create one `0389...` identity-gap packet.
+- [x] Create one `0389...` versus `lilyPad` floor-comparison packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-0389-identity-gap.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-0389-vs-lilypad-floor.md`
+- Safe reading to preserve:
+  - `0389...` now has a stronger restart-safe packet than before, but it is still not a named object/material fixture
+  - `0389...` currently matches the `lilyPad` projective floor shape, not the stronger named seam/identity packet
+
+#### Problem
+
+The post-`lilyPad` pivot is now in place, but the route order still depended too much on raw `tmp` reading. Without route-specific packets, a restart could still blur `0389...` and `0124...` back into one generic “other projective roots” bucket.
+
+#### Chosen Approach
+
+- Keep this as a route-baseline pass, not a new refraction-semantics pass.
+- Create one packet for `0389...` as the next clean route baseline.
+- Create one packet for `0124...` as the mixed/control floor.
+- Sync both into the refraction live-proof packet, packet index, queue, matrix, restart guide, source-map layer, and plan docs.
+
+#### Actions
+
+- [x] Re-open the sampled coverage packet for `0389...` and the narrower probe packet for `0124...`.
+- [x] Create one `0389...` clean-route baseline packet.
+- [x] Create one `0124...` mixed/control floor packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-0389-clean-route-baseline.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-0124-mixed-control-floor.md`
+- Safe reading to preserve:
+  - `0389A352F5EDFD45` is no longer only a promising line in sampled coverage; it is now the current clean-route baseline
+  - `0124E3B8AC7BEE62` is no longer only a vague boundary note; it is now explicitly frozen as the mixed/control route
+
+#### Problem
+
+The named `lilyPad` refraction fixture is now honestly bounded, but the continuation path after that ceiling was still implicit. A restart could still drift back into deepening the same root or promote the noisier `0124...` control route too early.
+
+#### Chosen Approach
+
+- Keep this as a post-`lilyPad` route-pivot pass, not a new refraction-semantics pass.
+- Create one packet that freezes `lilyPad` as a bounded floor/ceiling reference rather than the whole refraction track.
+- Create one packet that fixes the next-route order after that pivot, with `0389...` as the next clean route and `0124...` as the mixed/control route.
+- Sync both into the refraction live-proof packet, packet index, queue, matrix, source-map layer, and plan docs.
+
+#### Actions
+
+- [x] Re-open the restart stack, refraction packet stack, and local coverage artifacts around `00F643...`, `0124...`, and `0389...`.
+- [x] Create one post-`lilyPad` pivot packet.
+- [x] Create one next-route priority packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-post-lilypad-pivot.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-next-route-priority.md`
+- Safe reading to preserve:
+  - `lilyPad -> 00F643...` remains the named refraction floor/ceiling reference
+  - `0389A352F5EDFD45` is now the next clean route
+  - `0124E3B8AC7BEE62` stays the mixed/control route unless `0389...` fails cleanly
+
+#### Problem
+
+The `lilyPad` seam now had a positive floor result, but the docs still did not freeze the equally important negative result: the current probe still does not surface direct family-local `RefractionMap`, `tex1`, or `samplerRefractionMap`. Without that, the fixture could keep absorbing effort indefinitely.
+
+#### Chosen Approach
+
+- Keep this as a ceiling/escalation pass, not a new semantics pass.
+- Create one packet for the current no-direct-family-surface negative result.
+- Create one escalation-boundary packet so `lilyPad` stops cleanly at the right point if no stronger family-local surfacing appears.
+- Sync both into the refraction live-proof stack, packet index, queue, matrix, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `00F643` probe output and refraction packet stack.
+- [x] Create one no-direct-family-surface packet for `lilyPad`.
+- [x] Create one escalation-boundary packet for `lilyPad`.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-lilypad-no-direct-family-surface.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-lilypad-escalation-boundary.md`
+- Safe reading to preserve:
+  - the current `lilyPad` probe still does not surface direct `RefractionMap`, `tex1`, or `samplerRefractionMap`
+  - if repeated deeper passes keep yielding only the same projective/material floor, the fixture should remain a bounded floor/ceiling packet and not absorb the entire refraction track
+
+#### Problem
+
+The `lilyPad` refraction fixture now had inspection discipline, but the docs still lacked one honest current-result packet. A later restart could still talk only about “next inspection” even though the existing probe output already shows a direct embedded `MATD` floor and a stable `WorldToDepthMapSpaceMatrix` projective floor.
+
+#### Chosen Approach
+
+- Keep this as a fixture-result pass, not a new semantic-closure pass.
+- Create one packet for the current direct embedded `MATD` floor on `lilyPad`.
+- Create one packet for the current projective floor boundary on the same fixture.
+- Sync both into the refraction live-proof stack, packet index, queue, matrix, `Build/Buy` authority matrix, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `00F643` probe output and the refraction/boundary packet stack.
+- [x] Create one direct-`MATD` floor packet for `lilyPad`.
+- [x] Create one projective-floor boundary packet for `lilyPad`.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-lilypad-direct-matd-floor.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-lilypad-projective-floor-boundary.md`
+- Safe reading to preserve:
+  - the current `lilyPad` seam already proves a direct embedded `MATD` floor
+  - the current surfaced family at that floor is still `WorldToDepthMapSpaceMatrix` / `ProjectiveMaterialDecodeStrategy`
+  - that is still not direct `RefractionMap` slot closure
+
+#### Problem
+
+The named `lilyPad` refraction fixture now had an outcome ladder and checklist, but one ambiguity still remained at the next inspection step: the docs did not yet freeze how to record direct `MATD` versus meaningful `MTST`, and they still lacked one explicit guard against overreading adjacent projective helpers as direct refraction closure.
+
+#### Chosen Approach
+
+- Keep this as an inspection-discipline pass, not a new family-semantics pass.
+- Create one `MATD`-versus-`MTST` boundary packet for the `lilyPad` seam.
+- Create one adjacent-helper boundary packet for the same seam.
+- Sync both into the refraction live-proof packet, packet index, queue, matrix, stateful-material seam, source-map layer, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current refraction live-proof packet, bridge boundary, and `Build/Buy` material/state seam docs.
+- [x] Create one refraction companion `MATD`-versus-`MTST` boundary packet.
+- [x] Create one refraction adjacent-helper boundary packet.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-companion-matd-vs-mtst-boundary.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-adjacent-helper-boundary.md`
+- Safe reading to preserve:
+  - the next `lilyPad` inspection must not assume `MTST` just because the broader `Build/Buy` chain allows it
+  - adjacent projective helpers remain boundary evidence, not direct refraction-family closure
+
+#### Problem
+
+The named `lilyPad` refraction bridge fixture was now restart-safe, but the next companion-material inspection step still had no explicit outcome discipline. A later run could still skip from “valid bridge” to “almost closed refraction slot semantics” without recording what actually surfaced at the `MATD/MTST` seam.
+
+#### Chosen Approach
+
+- Keep this as an inspection-discipline pass, not a new semantic-closure pass.
+- Create one outcome-ladder packet for the `lilyPad` companion-material seam.
+- Create one evidence checklist packet for the same seam.
+- Sync both into the refraction live-proof packet, packet index, queue, matrix, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current refraction bridge packet, bridge boundary, and `Build/Buy` material/state seam docs.
+- [x] Create one refraction companion-material outcome ladder.
+- [x] Create one refraction companion-material checklist.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-companion-material-outcome-ladder.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/refraction-companion-material-checklist.md`
+- Safe reading to preserve:
+  - the next `lilyPad` inspection must end as direct `MATD`, meaningful `MTST`, adjacent helper seam only, or still unresolved
+  - no refraction fixture should jump from named bridge status straight to exact slot closure without the checklist being filled
+
+#### Problem
+
+The refraction branch already had a strong live-proof packet, but it still mixed three different claim levels too closely: external family identity, survey-level/local bridge evidence, and exact slot closure. That made the named lily-pad fixture easier to overread than it should be.
+
+#### Chosen Approach
+
+- Keep this as a trust-boundary and fixture-boundary pass, not a new slot-closure pass.
+- Create one `RefractionMap` evidence ledger.
+- Create one named bridge-fixture boundary companion for the lily-pad seam.
+- Sync both into the family sheet, live-proof packet, registry, matrix, queue, source-map layer, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `RefractionMap` live-proof packet, umbrella family sheet, queue, matrix, and source-map notes.
+- [x] Create one `RefractionMap` evidence ledger.
+- [x] Create one named bridge-fixture boundary companion.
+- [x] Sync both companions into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new companions are:
+  - `docs/workflows/material-pipeline/refraction-evidence-ledger.md`
+  - `docs/workflows/material-pipeline/refraction-bridge-fixture-boundary.md`
+- Safe reading to preserve:
+  - external refraction family identity is now clearly separated from local survey and bridge-root evidence
+  - `sculptFountainSurface3x3_EP10GENlilyPad -> 00F643B0FDD2F1F7` is a valid named inspection bridge, not a closed slot-semantics proof
+
+#### Problem
+
+The projection/reveal/lightmap umbrella was already narrowed semantically, but the docs still mixed external corroboration, local carry-through, and bounded synthesis for two unfinished rows: `ShaderDayNightParameters` and `GenerateSpotLightmap` / `NextFloorLightMapXform`. That made the family packet easy to overread and the umbrella sheet too easy to flatten.
+
+#### Chosen Approach
+
+- Keep this as a trust-boundary batch, not as a new live-fixture batch.
+- Create one evidence ledger for `ShaderDayNightParameters`.
+- Create one evidence ledger for `GenerateSpotLightmap` / `NextFloorLightMapXform`.
+- Create one short boundary companion keeping refraction, reveal/day-night, and generated-light as parallel rows under the same umbrella.
+- Sync all three into the relevant family sheets, registry, matrix, queue, source-map layer, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current reveal/day-night sheet, generated-light sheet, umbrella packet, matrix, queue, and source-map notes.
+- [x] Create one `ShaderDayNight` evidence ledger.
+- [x] Create one generated-light evidence ledger.
+- [x] Create one projection/reveal/generated-light boundary companion.
+- [x] Sync all three companions into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new companions are:
+  - `docs/workflows/material-pipeline/shader-daynight-evidence-ledger.md`
+  - `docs/workflows/material-pipeline/generated-light-evidence-ledger.md`
+  - `docs/workflows/material-pipeline/projection-reveal-generated-light-boundary.md`
+- Safe reading to preserve:
+  - `ShaderDayNightParameters` now has explicit external-vs-local-vs-synthesis separation
+  - `GenerateSpotLightmap` / `NextFloorLightMapXform` now has explicit external-vs-local-vs-synthesis separation
+  - the umbrella `Projection / Reveal / Lightmap` packet should no longer blur refraction, reveal/day-night, and generated-light into one semantic row
+
+#### Problem
+
+The research process had drifted into user-driven micro-iterations where each small packet waited for another manual "continue". That is too fragile for a long-running knowledge-build task and too dependent on uninterrupted chat context.
+
+#### Chosen Approach
+
+- Make autonomous long batches the primary operating mode.
+- Use the restart docs as the durable state instead of relying on conversational continuity.
+- Keep heartbeat automation only as recovery insurance for interruptions, not as the main driver of work.
+
+#### Actions
+
+- [x] Re-open the restart and plan docs that define how this research track resumes.
+- [x] Document long-batch execution as the default mode for normal runs.
+- [x] Document recovery heartbeat behavior as fallback-only, not as the main cadence.
+
+#### Restart Hints
+
+- Primary mode is now "autonomous long batch".
+- Recovery mode must rebuild context from:
+  - `docs/workflows/material-pipeline/research-restart-guide.md`
+  - `docs/planning/current-plan.md`
+  - the queue / matrix / source-map stack
+- The thread heartbeat named `TS4 Research Recovery` is recovery insurance only; normal runs should still keep going across multiple bounded packets before stopping.
+
+#### Problem
+
+The object-side transparency branch already had strong semantic splits and operational packets, but it still did not clearly separate direct external confirmation from local package evidence and from bounded synthesis. That made the branch harder to trust and harder to restart cleanly.
+
+#### Chosen Approach
+
+- Keep this as an evidence-labeling pass, not a new fixture packet.
+- Create one object-transparency evidence ledger.
+- Sync that ledger into the object family sheet, transparent-object signals/authority companions, source map, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current object-side transparency family sheet, signal packet, authority companion, and source-map notes.
+- [x] Create one evidence-ledger companion separating external confirmation, local package evidence, bounded synthesis, and open gaps.
+- [x] Sync that ledger into the supporting workflow and reference docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/object-transparency-evidence-ledger.md`.
+- Safe reading to preserve:
+  - externally confirmed means creator-facing or lineage sources directly support the branch
+  - local package evidence is only for candidate selection and fixture routing
+  - bounded synthesis is the current decision order, not quote-level proof
+
+#### Problem
+
+The character-transparency packet had become denser, but it still forced the reader to infer which points were externally confirmed and which points were only bounded synthesis. That made the packet look more speculative than it should.
+
+#### Chosen Approach
+
+- Keep this as an evidence-labeling pass, not a new semantic-family pass.
+- Create one character-transparency evidence ledger.
+- Sync that ledger into the active transparency companions and source-map layer.
+
+#### Actions
+
+- [x] Re-open the current character-transparency companions and the external source packet used in this pass.
+- [x] Create one evidence-ledger companion separating external confirmation, local external snapshot, bounded synthesis, and open gaps.
+- [x] Sync that ledger into the supporting workflow and reference docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/character-transparency-evidence-ledger.md`.
+- Safe reading to preserve:
+  - `externally confirmed` means directly supported by external sources
+  - `local snapshot of external tooling` means checked-in copies of outside tools, not repo truth
+  - `bounded Codex synthesis` means a conclusion I assembled from the evidence and it should be read as inference, not quote-level proof
+
+#### Problem
+
+The new character-transparency order closed the main `SimGlass` versus generic alpha ambiguity, but one neighboring edge was still too easy to overread. A later restart could still pull `SimEyes` into the same closed order without actually having a comparably strong packet in hand.
+
+#### Chosen Approach
+
+- Keep this as a bounded open-edge pass, not a new family-closure pass.
+- Create one character-transparency open-edge companion.
+- Sync that companion into the registry, matrix, source map, open questions, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current character-transparency order and check the local external snapshot for peer `SimAlphaBlended` / `SimEyes` branches.
+- [x] Create one character-transparency open-edge companion.
+- [x] Sync that companion into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/character-transparency-open-edge.md`.
+- Safe reading to preserve:
+  - `SimGlass` still has the strongest packet
+  - `SimAlphaBlended` remains preserved but weaker
+  - `SimEyes` is still an unresolved neighboring family here, not a closed member of the same order
+
+#### Problem
+
+The new character-transparency boundary kept `SimGlass` and `SimAlphaBlended` apart, but a later restart could still read them as an unordered pair and fall back to vague "transparent sim family" wording. That still left too much room to skip from a named family packet straight to generic alpha language.
+
+#### Chosen Approach
+
+- Keep this as an external-first family-order pass, not a new live-asset pass.
+- Create one `SimGlass` character-transparency order companion.
+- Sync that companion into the family sheet, registry, edge-family matrix, queue, source map, open questions, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` character-transparency packet and the surrounding queue/matrix wording.
+- [x] Create one `SimGlass` character-transparency order companion.
+- [x] Sync that companion into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/simglass-character-transparency-order.md`.
+- Safe reading to preserve:
+  - `SimGlass` currently has the strongest character-transparency packet
+  - `SimAlphaBlended` remains a named secondary branch, not generic alpha noise
+  - generic character alpha should stay provisional fallback wording only
+
+#### Problem
+
+The `SimGlass` branch already had stronger cross-domain continuity, but character-side transparency semantics were still too easy to overflatten into one generic alpha bucket. A later restart could still read `SimGlass` and `SimAlphaBlended` as basically the same thing just because both are transparency-capable names.
+
+#### Chosen Approach
+
+- Keep this as an external-first character-transparency pass, not a package-evidence pass.
+- Create one `SimGlass` character-transparency boundary companion.
+- Sync that companion into the family sheet, family registry, `CAS/Sim` matrix, shared guide, source map, open questions, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` family sheet, registry wording, and source-map evidence packet.
+- [x] Create one `SimGlass` character-transparency boundary companion.
+- [x] Sync that companion into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/simglass-character-transparency-boundary.md`.
+- Safe reading to preserve:
+  - `SimGlass` is not just generic character alpha
+  - `SimAlphaBlended` is also a named transparency-capable family, not just noise
+  - current evidence is strong enough to keep those names separate in provenance, but not yet to claim full slot-level closure
+
+#### Problem
+
+The `Build/Buy SimGlass` branch already had an evidence-order companion, but the docs still did not freeze one stricter cross-domain rule high enough in the stack: a later restart could still read `Build/Buy` as almost a co-equal semantic home for `SimGlass`, instead of keeping `CAS/Sim` as the family home and `Build/Buy` as bounded carry-over evidence.
+
+#### Chosen Approach
+
+- Keep this as a cross-domain continuity pass, not a new live-proof packet pass.
+- Create one `SimGlass` domain-home boundary companion.
+- Sync that companion into the family sheet, `CAS/Sim` matrix, source map, shared guide, shader registry, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` family sheet, registry, shared guide, and source-map wording.
+- [x] Create one `SimGlass` domain-home boundary companion.
+- [x] Sync that companion into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/simglass-domain-home-boundary.md`.
+- Safe reading to preserve:
+  - `CAS/Sim` is the current semantic home for `SimGlass`
+  - `Build/Buy` is only a bounded carry-over evidence domain
+  - one shared shader/material contract still applies after authoritative inputs are chosen
+
+#### Problem
+
+The `Build/Buy SimGlass` branch was already almost fully specified inside the live-proof packet stack, but that continuity still lived mostly below the family-sheet layer. Without one higher-level evidence-order companion, a future restart could still read `SimGlass` carry-over logic only through packet internals instead of from one stable summary.
+
+#### Chosen Approach
+
+- Keep this as a continuity-summary pass, not a new packet pass.
+- Create one `Build/Buy SimGlass` evidence-order companion outside the packet stack.
+- Sync that companion into the family sheet, source map, edge-family matrix, restart guide, and plan docs.
+
+#### Actions
+
+- [x] Re-open the `SimGlass` family sheet, source-map packet, and live-proof continuity.
+- [x] Create one `Build/Buy SimGlass` evidence-order companion.
+- [x] Sync that companion into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/simglass-buildbuy-evidence-order.md`.
+- Safe reading to preserve:
+  - survey keeps the branch alive
+  - route ranks the next fixture
+  - reopen decides the branch
+  - family-sheet continuity for `SimGlass` no longer depends only on packet-stack archaeology
+
+#### Problem
+
+The `SimGlass` branch now had strict win/loss/verdict rules, but it still lacked one explicit handling layer for the middle of the ladder:
+- how to document a real provisional `SimGlass` candidate without fuzzy near-win language
+- how to resolve mixed `SimGlass` versus object-side signals without borrowing only the generic transparent-object tie-break packet
+
+#### Chosen Approach
+
+- Keep this as a branch-middle-state pass, not a new route pass.
+- Create one provisional-candidate checklist packet and one `SimGlass`-specific mixed-signal packet.
+- Sync both into queue, matrix, restart, open-question, packet index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` outcome ladder, winning-signal packet, and mixed-signal context.
+- [x] Create one provisional-candidate checklist packet for `Build/Buy SimGlass`.
+- [x] Create one mixed-signal resolution packet for `Build/Buy SimGlass`.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-provisional-candidate-checklist.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-mixed-signal-resolution.md`
+- Safe reading to preserve:
+  - provisional `SimGlass` is now a bounded non-win state with explicit blockers
+  - mixed `SimGlass` cases now have a branch-specific tie-break, not only the generic transparent-object one
+  - reopened cases should no longer drift into fuzzy “almost `SimGlass`” wording
+
+#### Problem
+
+The `SimGlass` branch now had explicit ceiling, gate, disqualifiers, and win-recording burden, but one ambiguity still remained on the positive side: a later run could still let `SimGlass` survive by pure elimination, and it could still report reopened cases with fuzzy verdicts like “almost `SimGlass`” or “probably `SimGlass`”. That was too loose for the first real branch decision.
+
+#### Chosen Approach
+
+- Keep this as a denser branch-decision pass, not a new route pass.
+- Create one positive-signals packet and one outcome-ladder packet for `Build/Buy SimGlass`.
+- Sync both into queue, matrix, restart, open-question, packet index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` family sheet, baseline packet, and mixed-signal context.
+- [x] Create one positive-signals packet for `Build/Buy SimGlass`.
+- [x] Create one outcome-ladder packet for `Build/Buy SimGlass`.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-winning-signals.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-outcome-ladder.md`
+- Safe reading to preserve:
+  - `SimGlass` now has a positive burden, not only a negative one
+  - `SimGlass` cannot win by elimination alone
+  - reopened cases should now end only as a stronger object-side win, generic transparent provisional boundary, provisional `SimGlass` candidate, or winning `SimGlass` fixture
+
+#### Problem
+
+The `SimGlass` branch now has an evidence ceiling and a promotion gate, but the next real reopen could still be documented too loosely in either direction:
+- a weak case could linger as a fuzzy near-win instead of a clean disqualification
+- a real win could be recorded with only a generic transparent-object checklist instead of a branch-specific `SimGlass` record
+
+#### Chosen Approach
+
+- Keep this as a denser branch-operational pass, not a new search-route pass.
+- Create one disqualifier packet and one winning-fixture checklist packet for `Build/Buy SimGlass`.
+- Sync both into queue, matrix, restart, open-question, packet index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` promotion gate and transparent-object operational companions.
+- [x] Create one disqualifier packet for `Build/Buy SimGlass`.
+- [x] Create one winning-fixture checklist packet for `Build/Buy SimGlass`.
+- [x] Sync both packets into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-disqualifiers.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-winning-fixture-checklist.md`
+- Safe reading to preserve:
+  - stronger object-side transparent branches now produce clean `SimGlass` losses
+  - the first valid `Build/Buy SimGlass` win now has a branch-specific checklist, not only a generic transparent-object record
+  - weak reopened transparent objects should now end as explicit disqualifications or provisional transparent-object results, not as fuzzy `SimGlass` near-wins
+
+#### Problem
+
+The new `SimGlass` evidence-limit packet now stops summary-grade overread, but it still left one operational ambiguity: the next successful reopen could still be overpromoted just because it survives classification longer than the others. Without an explicit winning-branch rule, a future run could still turn “reopened transparent object with weak `SimGlass` plausibility” into “first `Build/Buy SimGlass` fixture”.
+
+#### Chosen Approach
+
+- Keep this as a promotion-gate pass, not a new search-route pass.
+- Create one `SimGlass` `Build/Buy` promotion-gate packet.
+- Sync that gate into queue, matrix, restart, open-question, packet index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` evidence-limit, route, and transparent-object classification docs.
+- [x] Create one winning-branch promotion-gate packet for `Build/Buy SimGlass`.
+- [x] Sync that gate into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-promotion-gate.md`.
+- Safe reading to preserve:
+  - the first reopened transparent object is not enough
+  - `SimGlass` is the last surviving named branch, not the default label
+  - the first valid `Build/Buy SimGlass` promotion must explicitly beat object-glass, threshold/cutout, and `AlphaBlended`
+
+#### Problem
+
+The `SimGlass` branch already had a real external identity and a narrowed `Build/Buy` search route, but it still lacked one explicit ceiling on how the current local `Build/Buy` evidence may be read. Without that limit, a later run could quietly overpromote `tmp/probe_all_buildbuy_summary_full.json` with `"SimGlass": 5` or the transparent-decor anchor cluster into near-proof instead of treating them as summary-grade route evidence.
+
+#### Chosen Approach
+
+- Keep this as an evidence-limit pass, not a new family-semantics pass.
+- Create one `SimGlass` `Build/Buy` evidence-limit packet.
+- Sync that ceiling into the queue, edge-family matrix, restart guide, open-question wording, packet index, and plan.
+
+#### Actions
+
+- [x] Re-open the current `SimGlass` baseline, route, queue, and restart docs.
+- [x] Create one `Build/Buy` evidence-limit packet for `SimGlass`.
+- [x] Sync that ceiling into the supporting workflow and continuity docs.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/simglass-buildbuy-evidence-limit.md`.
+- Safe reading to preserve:
+  - `SimGlass = 5` in the Build/Buy survey keeps the branch alive
+  - it does not yet prove a `Build/Buy SimGlass` fixture
+  - it does not outrank the object-side transparent split
+  - only a reopenable classified fixture may promote `Build/Buy` content back under the `SimGlass` row
+
+#### Problem
+
+The transparent-object authority companion now fixes where family choice sits in the object-side chain, but the branch still lacked one explicit fallback order for weak or contradictory reopened evidence. Without that, a later run could still degrade too quickly to generic transparency or bounce too early into `SimGlass`.
+
+#### Chosen Approach
+
+- Keep this as a fallback-order pass, not a new route pass.
+- Create one transparent-object fallback ladder companion.
+- Sync that ladder into authority, queue, restart, source-map, open-question, and plan docs.
+
+#### Actions
+
+- [x] Re-open the transparent-object authority and signal docs.
+- [x] Create one fallback ladder companion.
+- [x] Sync that ladder into the supporting workflow and reference docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/buildbuy-transparent-object-fallback-ladder.md`.
+- Safe reading to preserve:
+  - do not drop to generic transparency too early
+  - do not jump from weak object-side evidence to `SimGlass`
+  - degrade through the documented transparent-object branches first
+
+#### Problem
+
+The transparent-object branch is now operationally complete on the packet side, but its authority reading still remained distributed across the main Build/Buy matrix and several live-proof packets. That was workable, but not restart-efficient: the next real fixture pass still had to reconstruct where transparent-family choice actually sits inside the object-side authority chain.
+
+#### Chosen Approach
+
+- Keep this as an authority-companion pass, not a new packet-family pass.
+- Create one transparent-object authority-order companion.
+- Sync that companion into the matrix, queue, restart guide, workflow index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the Build/Buy matrix and the current transparent-object packet stack.
+- [x] Create one transparent-object authority-order companion.
+- [x] Sync that authority summary into the relevant workflow and restart docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/buildbuy-transparent-object-authority-order.md`.
+- Safe reading to preserve:
+  - transparent-family choice happens after object-side reopen and material-candidate inspection
+  - transparent-family choice happens before stable fixture promotion
+  - it is an authority step, not a renderer-specific branch
+
+#### Problem
+
+The transparent-object branch now has a full path toward a stable fixture, but it still lacked one explicit exit condition for the primary route itself. Without that, the next run could widen back out to windows too early or, наоборот, оставаться в decor-cluster слишком долго без формального stop rule.
+
+#### Chosen Approach
+
+- Keep this as a route-exit packet, not a new classification packet.
+- Freeze one explicit stall boundary for the transparent-decor route.
+- Sync that boundary into queue, restart guide, packet index, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current route, lifecycle, and negative-control packets.
+- [x] Create one route-stall boundary packet.
+- [x] Sync the stall rule into queue, restart guide, packet index, and current plan.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-route-stall-boundary.md`.
+- Safe reading to preserve:
+  - one failed reopen is not a stalled route
+  - the route stalls only after the full prioritized cluster is exhausted without a stable or still-promising provisional fixture
+
+#### Problem
+
+The transparent-object branch is now nearly fully operationalized, but one small lifecycle ambiguity remained: the docs still described route, reopen, checklist, and promotion, yet they did not name the intermediate states a candidate passes through. That left a small risk that future runs would skip a state conceptually even while following the right files.
+
+#### Chosen Approach
+
+- Keep this as a lifecycle packet, not a new semantic packet.
+- Define one candidate-state ladder from `search anchor` to `stable fixture`.
+- Sync that ladder into queue, packet index, restart, matrix, and plan docs.
+
+#### Actions
+
+- [x] Re-open the current transparent-object operational packets.
+- [x] Create one candidate-state ladder packet.
+- [x] Sync the lifecycle ladder into queue, restart guide, packet index, matrix, and current plan.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-candidate-state-ladder.md`.
+- Safe reading to preserve:
+  - do not jump from search anchor straight to stable fixture
+  - move through reopen, classification, provisional fixture, then promotion
+
+#### Problem
+
+The transparent-object route is now almost fully structured, but the next real reopen could still fail in two practical ways:
+- it might surface mixed signals
+- or it might be documented too loosely to stay restart-safe
+
+That makes the remaining bounded gap operational rather than semantic.
+
+#### Chosen Approach
+
+- Keep this as a denser operational pass inside the same transparent-object rubric.
+- Add one mixed-signal resolution packet and one reopen-checklist packet.
+- Sync both into queue, restart, packet index, matrix, authority, source-map, open-question, and plan docs.
+
+#### Actions
+
+- [x] Re-open the signal-level transparent-object docs and current promotion boundary.
+- [x] Create one mixed-signal resolution packet.
+- [x] Create one reopen-checklist packet.
+- [x] Sync both packets into the supporting docs so the next reopen can be documented decision-grade and restart-safe.
+
+#### Restart Hints
+
+- The new packets are:
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-mixed-signal-resolution.md`
+  - `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-reopen-checklist.md`
+- Safe reading to preserve:
+  - mixed signals do not justify falling back to “generic transparency”
+  - the first reopened fixture must record both winning and losing signals
+  - the first reopened fixture now has a minimum evidence checklist before promotion
+
+#### Problem
+
+The transparent-object route now has a reopen threshold, but the current docs still spread the actual classification signals across the family sheet and packet notes. That is enough to continue, but still too loose for an intensive pass: the next reopen needs one explicit decision table saying which externally backed signals promote the fixture into object-glass, threshold/cutout, `AlphaBlended`, or only last-choice `SimGlass`.
+
+#### Chosen Approach
+
+- Keep this as a signal-layer pass, not a new route pass.
+- Create one transparent-object classification-signal companion.
+- Sync that signal order into authority, queue, restart, source-map, open-question, and matrix docs.
+
+#### Actions
+
+- [x] Re-open the object-transparent family sheet and current fixture-promotion packet.
+- [x] Create one signal-level companion doc for transparent-object classification.
+- [x] Sync the decision order into queue, matrix, authority, restart, source-map, open-question, and plan docs.
+
+#### Restart Hints
+
+- The new companion is `docs/workflows/material-pipeline/buildbuy-transparent-object-classification-signals.md`.
+- Safe reading to preserve:
+  - explicit object-glass signals outrank generic transparent naming
+  - threshold/cutout signals outrank generic “looks like glass”
+  - explicit `AlphaBlended` outranks generic alpha interpretation
+  - `SimGlass` is currently last-choice for `Build/Buy` transparent fixtures
+
+#### Problem
+
+The transparent-object rubric now has a route, an order, and a negative control, but it still lacked one explicit threshold for when a reopened candidate stops being only route evidence and becomes the first stable transparent-object fixture. Without that, the next run could still overpromote a weak reopen or keep a strong reopen in limbo.
+
+#### Chosen Approach
+
+- Keep this as a fixture-promotion packet, not a new semantic packet.
+- Freeze the minimum promotion threshold for the first stable transparent-object fixture.
+- Sync that threshold into queue, restart, packet index, and matrix continuity.
+
+#### Actions
+
+- [x] Re-open the transparent-object route, target-priority, and classification packets.
+- [x] Create one fixture-promotion boundary packet.
+- [x] Sync that boundary into queue, matrix, packet index, restart guide, and current plan.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-fixture-promotion-boundary.md`.
+- Safe reading to preserve:
+  - stable reopen alone is not enough
+  - classification alone is not enough
+  - the first stable fixture must satisfy both reopen stability and transparent-family classification
+
+#### Problem
+
+The transparent-object route now has a semantic split, a primary route, and a negative control, but its internal reopen order is still only described informally inside longer packets. That weakens restart continuity because the next run still has to re-read the route packet to reconstruct why `displayShelf` should be tried before `mirror` or `fishBowl`.
+
+#### Chosen Approach
+
+- Keep this as a narrow route-order packet, not a new semantic packet.
+- Freeze one restart-safe internal order for the transparent-decor cluster.
+- Sync queue, restart guide, and packet index so the `Build/Buy` transparent-object rubric gets a concrete completeness increase.
+
+#### Actions
+
+- [x] Re-open the transparent-decor route packet and extract the current structural ranking.
+- [x] Create one target-priority packet for the cluster.
+- [x] Sync that order into queue, restart guide, packet index, and current plan.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-target-priority.md`.
+- Safe reading to preserve:
+  - this is a structural reopen-order packet only
+  - classification still happens after reopen
+  - current order is `displayShelf -> shopDisplayTileable -> mirror -> lantern -> fishBowl`
+
+#### Problem
+
+The transparent-object route is now separated from `SimGlass`, but its negative side is still implicit. Without one explicit window-heavy negative-control packet, a future restart can still waste the next pass on repeated `glass` names before the stronger transparent-decor route is exhausted.
+
+#### Chosen Approach
+
+- Keep this as a route-quality packet inside the transparent-object rubric.
+- Freeze the old window-heavy sweep as a lower-priority negative control.
+- Sync queue and restart wording so the transparent-decor route gains a real completeness increase, not just another link.
+
+#### Actions
+
+- [x] Re-open the transparent-decor route and older window-heavy wording.
+- [x] Create one negative-control packet for the window-heavy transparent sweep.
+- [x] Fold that boundary into queue, matrix, packet index, restart guide, and plan.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-window-heavy-transparent-negative-control.md`.
+- Safe reading to preserve:
+  - repeated `glass` naming is not enough to outrank the transparent-decor route
+  - windows stay a lower-priority transparent-object path until the decor route stalls
+
+#### Problem
+
+The transparent-object classification boundary is now explicit, but the working queue still mostly reads as if the transparent-decor cluster belongs inside the `SimGlass` rubric. That makes progress harder to read and makes restart priority blur the transparent-object branch back into the character-glass branch.
+
+#### Chosen Approach
+
+- Keep this as a queue and packet-routing pass, not a new semantic pass.
+- Promote the `EP10` transparent-decor cluster into its own transparent-object live-proof route.
+- Update queue, matrix, restart, and packet index so progress can be tracked under the refined rubric directly.
+
+#### Actions
+
+- [x] Re-open the current transparent-object boundary and transparent-decor cluster docs.
+- [x] Create one live-proof route packet for the `Build/Buy` transparent-decor branch.
+- [x] Split queue and matrix continuity so transparent-object route progress is visible separately from `SimGlass`.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-decor-route.md`.
+- Safe reading to preserve:
+  - the cluster is the strongest transparent-object route
+  - it is not yet classified
+  - only after reopen and classification should it stay under object-side transparency or move back under `SimGlass`
+
+#### Problem
+
+The new object-transparent family sheet fixes the semantic split, but the existing transparent-decor route is still easy to resume incorrectly. Without one explicit classification-boundary packet, a future run could still reopen `displayShelf`, `mirror`, or `fishBowl` and immediately file it under `SimGlass` before checking object-side glass/transparency first.
+
+#### Chosen Approach
+
+- Keep this as a live-proof continuity packet, not a semantic re-derivation.
+- Reuse the already documented external split as the truth layer.
+- Freeze one honest operational rule:
+  - the `EP10` transparent-decor cluster remains the best transparent-object route
+  - but it is now classification-neutral until a reopened fixture is checked against object-side glass/transparency
+- Sync only the docs that control restart behavior and packet routing.
+
+#### Actions
+
+- [x] Re-open the current transparent-decor route packet and new object-transparent family sheet.
+- [x] Create one live-proof packet that freezes the transparent-object classification boundary.
+- [x] Sync that boundary into the packet index, edge-family matrix, queue, restart guide, and current plan.
+
+#### Restart Hints
+
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-transparent-object-classification-boundary.md`.
+- Safe reading to preserve:
+  - the `EP10` transparent-decor cluster is still a good route
+  - it is no longer safe to treat that route as implicitly `SimGlass`
+  - the first reopened fixture must be classified against object-side glass/transparency first
+
+#### Problem
+
+The current `SimGlass` route work is still easy to misread because the docs had a stronger local search boundary than an external semantic boundary. The next bounded gap is external-first: object-side glass and object-side transparency need their own packet so the project does not reuse character-side `SimGlass` as a generic name for transparent `Build/Buy` content.
+
+#### Chosen Approach
+
+- Keep this as a family-semantics packet, not a local-fixture overclaim.
+- Use external creator-facing sources and Sims-lineage shader vocabulary as the truth layer.
+- Freeze one honest distinction:
+  - `GlassForObjectsTranslucent` is a real object-side glass family
+  - threshold/cutout transparency via `AlphaMap` plus `AlphaMaskThreshold` is a separate path
+  - `AlphaBlended` is a separate blended object-transparency path
+  - none of those should be silently relabeled as character-side `SimGlass`
+- Sync only the docs that need the narrower semantic split for restart continuity.
+
+#### Actions
+
+- [x] Re-open the family registry and existing `SimGlass` documentation context.
+- [x] Pull external creator-facing object-glass and object-transparency sources.
+- [x] Create one external-first family sheet for object glass and transparency.
+- [x] Sync that split into the registry, Build/Buy authority matrix, source map, open questions, and current plan.
+
+#### Restart Hints
+
+- The new semantic packet is `docs/workflows/material-pipeline/family-sheets/object-glass-and-transparency.md`.
+- Safe reading to preserve:
+  - `SimGlass` is the narrow character-side family
+  - `GlassForObjectsTranslucent` is the stronger current semantic home for object glass
+  - threshold/cutout transparency and `AlphaBlended` remain separate object-side branches
+- Use local package survey only to choose the next object fixture after this, not to derive the semantic split itself.
+
+#### Problem
+
+The next bounded evidence gap after the `MTST` structural packet is not another state packet. It is the first stronger `SimGlass` object-side route: the current docs already had a transparent-decor cluster, but they still did not freeze why that cluster is better than the earlier window-heavy sweep. Without that, a future run still has to rediscover from raw survey files that some transformed roots preserve full companion bundles instead of only promising names.
+
+#### Chosen Approach
+
+- Keep this as a narrow `SimGlass` route packet, not a live-fixture overclaim.
+- Use only existing local survey and candidate-resolution artifacts.
+- Promote one honest structural claim:
+  - the `EP10` transparent-decor cluster is stronger than the window-heavy packet because several roots preserve repeated transformed companion bundles
+  - direct reopen still fails, so this remains a route packet rather than a live closure
+- Sync only the docs that need the narrower route ordering for restart continuity.
+
+#### Actions
+
+- [x] Re-open the `SimGlass` baseline packet and current `EP10` survey artifacts.
+- [x] Extract the transformed companion-bundle structure for the transparent-decor cluster.
+- [x] Create one live-proof packet for the narrowed `SimGlass` transparent-decor route.
+- [x] Sync that packet into the edge-family matrix, queue, open questions, restart notes, and current plan.
+
+#### Restart Hints
+
+- Use `tmp/probe_ep10_buildbuy_candidate_resolution_full.json` for transformed root plus companion-type evidence.
+- Use `tmp/probe_ep10_buildbuy_identity_survey_full.json` for the repeated object rows and the contrast with the window-heavy packet.
+- Use `tmp/probe_all_buildbuy.txt` only to confirm root-list presence, not as family truth.
+- Safe reading to preserve: companion-bundle integrity now ranks the next `SimGlass` targets better than obvious `glass` naming.
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/simglass-ep10-transparent-decor-route.md`.
+
+#### Problem
+
+The user explicitly parked the status-catalog/report-shape thread. The next bounded documentation gap is back on the evidence side: the `MTST` branch now has a default-state floor and a portable-state delta packet, but it still lacks one restart-safe note that freezes the repeated selector structure itself. Without that, a future run still has to rediscover from raw probes that the same `stateHash` values and per-state `MATD` mappings repeat structurally across fixtures.
+
+#### Chosen Approach
+
+- Keep this as a narrow live-proof documentation packet, not a reporting or navigation pass.
+- Use only the already captured local probe artifacts for `002211...` and `0577...`.
+- Promote one honest structural claim:
+  - repeated `stateHash -> MATD` mapping is stable enough to preserve
+  - the paired `unknown0=0x00000000` versus `0xC3867C32` split in `002211...` is structurally real
+  - exact state semantics still stay open
+- Sync only the docs that need this new boundary for restart continuity.
+
+#### Actions
+
+- [x] Re-open the two current `MTST` fixture artifacts and extract the repeated selector patterns.
+- [x] Create one live-proof packet for the structural `MTST` selector boundary.
+- [x] Sync that packet into the Build/Buy seam, Build/Buy matrix, packet index, queue, open questions, and restart notes.
+- [x] Fold the narrower continuation hints back into the current plan.
+
+#### Restart Hints
+
+- Use `tmp/probe_002211_after.txt` for the repeated five-state lattice and paired `unknown0` split.
+- Use `tmp/probe_0577_after_heuristic_filter.txt` for the stronger two-state portable material case and the shared `0xF4BD1CE9` selector.
+- Safe reading to preserve: structural selector behavior is now proved; selector semantics are not.
+- The new packet is `docs/workflows/material-pipeline/live-proof-packets/buildbuy-mtst-state-selector-structure.md`.
+- The next `MTST` continuation after this packet should be named swatch/object identity or clearer runtime-state semantics, not another re-proof of repeated selector hashes.
+
+#### Problem
+
+This earlier status-catalog packet is currently parked after the first pass. Its continuity notes are kept below so the work is not lost, but it is not the active direction for the current run.
+
+#### Chosen Approach
+
+- Keep this as a documentation-structure packet, not a new evidence packet.
+- Reuse only status signals already declared inside the docs themselves.
+- Where a doc does not declare a percentage/status block, mark it honestly as `navigation-only`, `tracking-only`, or `source-layer` instead of inventing progress numbers.
+- Add one durable status catalog for the whole material-pipeline documentation set, then link it from the existing hubs.
+
+#### Actions
+
+- [x] Re-open the current material-pipeline doc tree and collect all current status-bearing docs.
+- [x] Create one status-indexed documentation catalog for the whole material-pipeline track.
+- [x] Link that catalog from the material-pipeline hubs and repo knowledge map.
+- [x] Fold the new reporting expectation back into the restart-facing docs and current plan.
+
+#### Restart Hints
+
+- The catalog should cover the whole external-first material-doc stack, not only the docs touched in the latest packet.
+- Use explicit scope-status blocks where the doc already has them.
+- For `README` / map / plan / source docs without a scope block, preserve honest labels like `navigation-only`, `tracking-only`, and `source-layer`.
+- The intended catalog home is `docs/workflows/material-pipeline/documentation-status-catalog.md`.
+- The restart guide now also carries the expanded full-catalog report shape, so future runs should not fall back to change-only status snippets.
+
+#### Problem
+
+The `Build/Buy MTST Default-State Boundary` packet proves one model-rooted stateful-material case, but it still stops short of the next stronger closure. The remaining bounded gap is a stronger stateful fixture: either a named swatch-level `MaterialVariant` case or a texture-bearing/runtime-state case that shows `MTST` changing portable shader properties and not only non-portable control properties.
+
+#### Chosen Approach
+
+- Keep this as a narrow continuation packet, not a broad new matrix.
+- Search local probe artifacts first, because the next step is candidate isolation and fixture promotion rather than new external archaeology.
+- Prefer a fixture that improves one of two axes:
+  - exact object identity through `COBJ/OBJD` or swatch linkage
+  - stronger material-state differentiation than the current default-state-only boundary
+- The current best candidate is now `EP10\\ClientFullBuild0.package | Build/Buy Model 05773EECEE557829`, because its probe artifact shows `source=MaterialSet`, `textures=2`, and state deltas on portable shader properties.
+- Only if that candidate proves weaker on re-read, document the negative result and narrow the next search boundary explicitly.
+
+#### Actions
+
+- [x] Update the live plan before continuing the next stateful-material packet.
+- [x] Search current `tmp/` probe artifacts for a stronger `MTST` fixture than `002211BA8D2EE539`.
+- [x] Promote `05773EECEE557829` into a second live-proof note as a texture-bearing portable-state boundary.
+- [x] Sync the stronger boundary into the seam, matrix, restart, packet index, and open-question docs.
+- [x] Fold the continuation hints back into the current plan.
+
+#### Restart Hints
+
+- The current floor is still `EP01\\ClientDeltaBuild0.package | Build/Buy Model 002211BA8D2EE539` as a model-rooted default-state boundary.
+- The stronger second packet is now `docs/workflows/material-pipeline/live-proof-packets/buildbuy-mtst-portable-state-delta.md`.
+- What makes `0577...` stronger is not object identity but state richness: one `MaterialSet`-sourced material already carries `textures=2` and state deltas on portable shader properties (`AmbientDomeBottom`, `CloudColorWRTHorizonLight1`).
+- The next open gap after this packet is now explicitly narrower: named swatch/object identity or clearer runtime-state semantics, not another generic texture-bearing `MTST` proof.
+
+#### Problem
+
+The new `Build/Buy Stateful Material-Set Seam` narrows the safe authority reading, but it still lacks one concrete fixture-backed packet showing how `MTST` behaves on a real model root. Without that, future work still has to restart from wording instead of from an explicit stateful-material boundary case.
+
+#### Chosen Approach
+
+- Keep this as a narrow live-proof documentation packet, not a broad new matrix.
+- Use the existing external `MTST` / `MaterialVariant` authority reading as the truth layer.
+- Promote the already captured local probe artifact `tmp/probe_002211_after.txt` into one honest fixture-backed packet.
+- Document exactly what this fixture proves and what it still does not prove: a model-rooted default-state boundary, not full swatch/object-state closure.
+
+#### Actions
+
+- [x] Re-open the `MTST` seam doc and inspect local probe artifacts for a viable stateful-material fixture.
+- [x] Create one live-proof packet for the model-rooted `MTST` fixture `01661233:00000000:002211BA8D2EE539`.
+- [x] Link that packet back into the Build/Buy matrix, seam doc, and live-proof index.
+- [x] Narrow the next stateful-object gap so later runs can hunt swatch-level or runtime-state fixtures rather than re-proving the default-state boundary.
+- [x] Fold the continuation hints back into the current plan.
+
+#### Restart Hints
+
+- The candidate fixture is `EP01\\ClientDeltaBuild0.package | Build/Buy Model 002211BA8D2EE539`.
+- This fixture is model-rooted only: current probe says exact `ObjectCatalog/ObjectDefinition` metadata was not found.
+- What it does show clearly is repeated `MTST` presence plus multiple equal-scored state hashes and a preview note that the inferred default state was kept because variants changed only non-portable control properties.
+- Treat it as a default-state boundary packet, not as full swatch/state closure.
+- The next stronger closure should come from either a named swatch-level `MaterialVariant` fixture or a texture-bearing/runtime-state family.
+
+#### Problem
+
+The new `Build/Buy Material Authority Matrix` stabilizes the base object/material chain, but its strongest unfinished seam is still too implicit: `MTST`, `MaterialVariant`, and swatch/state selection are mentioned in several docs without one bounded packet that explains their safest current reading. That keeps the `stateful/material-set` branch broader than necessary and makes future family packets start from scratch.
+
+#### Chosen Approach
+
+- Keep this as an external-first documentation packet, not a fixture-heavy live-proof packet.
+- Use the already collected external object-side sources that talk about `Material Set`, `MLOD`, `MaterialVariant`, Type300 entries, and swatch linkage.
+- Create one narrow companion doc for the `MTST` / stateful-material seam, then link it from the Build/Buy matrix and supporting restart/source/open-question docs.
+- Keep exact live family closure open; this packet should freeze the safe authority reading, not overclaim a solved runtime state model.
+
+#### Actions
+
+- [x] Re-open the current Build/Buy matrix and confirm that the `MTST` seam is still only embedded there.
+- [x] Create a dedicated Build/Buy stateful/material-set companion under `docs/workflows/material-pipeline/`.
+- [x] Link the new seam doc from the Build/Buy matrix and relevant navigation/source/open-question docs.
+- [x] Narrow the remaining stateful-object gap so the next packet can target fixtures instead of rediscovering the same authority reading.
+- [x] Fold the continuation hints back into the current plan.
+
+#### Restart Hints
+
+- This packet is about the safe authority reading for `MTST` and `MaterialVariant`, not about final shader semantics.
+- The current safe reading to preserve is: `COBJ/OBJD` choose the swatch/instance, `OBJD` links to the model root, and `MaterialVariant` selects into object-side material entries or sets inside the `MODL/MLOD` chain.
+- The exact family-specific ranking between `MTST`, `MATD`, and runtime state packets should stay open until fixture-backed object families are documented.
+- The new seam doc is `docs/workflows/material-pipeline/buildbuy-stateful-material-set-seam.md`.
+- The next continuation after this packet should be a fixture-backed stateful/swatch-heavy object family, not another wording pass about `MTST`.
 
 #### Problem
 

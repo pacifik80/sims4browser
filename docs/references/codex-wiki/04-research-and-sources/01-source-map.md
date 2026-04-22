@@ -85,12 +85,103 @@ Companion docs created from this source pack:
 - [Workflows index](../../../workflows/README.md)
 - [Material pipeline deep dives](../../../workflows/material-pipeline/README.md)
 - [Shared TS4 Material, Texture, And UV Pipeline](../../../shared-ts4-material-texture-pipeline.md)
+- [Corpus-Wide Family Priority](../../../workflows/material-pipeline/corpus-wide-family-priority.md)
+- [Corpus-Wide Family Census Baseline](../../../workflows/material-pipeline/corpus-wide-family-census-baseline.md)
+- [MATD Shader Census Baseline](../../../workflows/material-pipeline/matd-shader-census-baseline.md)
+- [Sim Archetype Material Carrier Census](../../../workflows/material-pipeline/sim-archetype-material-carrier-census.md)
+- [CAS Carrier Census Baseline](../../../workflows/material-pipeline/cas-carrier-census-baseline.md)
+- [CASPart Linkage Census Baseline](../../../workflows/material-pipeline/caspart-linkage-census-baseline.md)
+- [CASPart GEOM Shader Census Baseline](../../../workflows/material-pipeline/caspart-geom-shader-census-baseline.md)
+- [CASPart Parser Boundary](../../../workflows/material-pipeline/caspart-parser-boundary.md)
+- [CASPart GEOM Resolution Boundary](../../../workflows/material-pipeline/caspart-geom-resolution-boundary.md)
 - [Build/Buy Material Authority Matrix](../../../workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+- [Build/Buy Transparent Object Fallback Ladder](../../../workflows/material-pipeline/buildbuy-transparent-object-fallback-ladder.md)
+- [Build/Buy Transparent Object Classification Signals](../../../workflows/material-pipeline/buildbuy-transparent-object-classification-signals.md)
+- [Build/Buy Stateful Material-Set Seam](../../../workflows/material-pipeline/buildbuy-stateful-material-set-seam.md)
+- [Documentation Status Catalog](../../../workflows/material-pipeline/documentation-status-catalog.md)
 - [CAS/Sim Material Authority Matrix](../../../workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+- [Body And Head Shell Authority Table](../../../workflows/material-pipeline/body-head-shell-authority-table.md)
+- [BodyType Translation Boundary](../../../workflows/material-pipeline/bodytype-translation-boundary.md)
+- [CompositionMethod And SortLayer Boundary](../../../workflows/material-pipeline/compositionmethod-sortlayer-boundary.md)
+- [CompositionMethod Census Baseline](../../../workflows/material-pipeline/compositionmethod-census-baseline.md)
+- [Overlay And Detail Family Authority Table](../../../workflows/material-pipeline/overlay-detail-family-authority-table.md)
+- [SortLayer Census Baseline](../../../workflows/material-pipeline/sortlayer-census-baseline.md)
+- [SimGlass Build/Buy Evidence Order](../../../workflows/material-pipeline/simglass-buildbuy-evidence-order.md)
+- [SimGlass Domain Home Boundary](../../../workflows/material-pipeline/simglass-domain-home-boundary.md)
+- [SimGlass Character Transparency Boundary](../../../workflows/material-pipeline/simglass-character-transparency-boundary.md)
+- [SimGlass Character Transparency Order](../../../workflows/material-pipeline/simglass-character-transparency-order.md)
+- [Character Transparency Open Edge](../../../workflows/material-pipeline/character-transparency-open-edge.md)
+- [Character Transparency Evidence Ledger](../../../workflows/material-pipeline/character-transparency-evidence-ledger.md)
+- [Object Transparency Evidence Ledger](../../../workflows/material-pipeline/object-transparency-evidence-ledger.md)
+- [ShaderDayNight Evidence Ledger](../../../workflows/material-pipeline/shader-daynight-evidence-ledger.md)
+- [Generated-Light Evidence Ledger](../../../workflows/material-pipeline/generated-light-evidence-ledger.md)
+- [Projection, Reveal, And Generated-Light Boundary](../../../workflows/material-pipeline/projection-reveal-generated-light-boundary.md)
+- [Refraction Evidence Ledger](../../../workflows/material-pipeline/refraction-evidence-ledger.md)
+- [Refraction Bridge Fixture Boundary](../../../workflows/material-pipeline/refraction-bridge-fixture-boundary.md)
+- [Refraction Post-LilyPad Pivot](../../../workflows/material-pipeline/live-proof-packets/refraction-post-lilypad-pivot.md)
+- [Refraction Next-Route Priority](../../../workflows/material-pipeline/live-proof-packets/refraction-next-route-priority.md)
+- [Refraction 0389 Clean-Route Baseline](../../../workflows/material-pipeline/live-proof-packets/refraction-0389-clean-route-baseline.md)
+- [Refraction 0124 Mixed-Control Floor](../../../workflows/material-pipeline/live-proof-packets/refraction-0124-mixed-control-floor.md)
+- [Refraction 0389 Identity Gap](../../../workflows/material-pipeline/live-proof-packets/refraction-0389-identity-gap.md)
+- [Refraction 0389 Versus LilyPad Floor](../../../workflows/material-pipeline/live-proof-packets/refraction-0389-vs-lilypad-floor.md)
+- [Refraction Companion MATD-vs-MTST Boundary](../../../workflows/material-pipeline/live-proof-packets/refraction-companion-matd-vs-mtst-boundary.md)
+- [Refraction Adjacent-Helper Boundary](../../../workflows/material-pipeline/live-proof-packets/refraction-adjacent-helper-boundary.md)
 - [Shader Family Registry](../../../workflows/material-pipeline/shader-family-registry.md)
 - [Skintone And Overlay Compositor](../../../workflows/material-pipeline/skintone-and-overlay-compositor.md)
+- [SimSkin Body/Head Shell Authority](../../../workflows/material-pipeline/live-proof-packets/simskin-body-head-shell-authority.md)
+- [Object Glass And Transparency](../../../workflows/material-pipeline/family-sheets/object-glass-and-transparency.md)
 
 Для общей темы `BuildBuy/CAS/Sim` render pipeline полезно заранее разделять источники не только по trust level, но и по тому, какой кусок пайплайна они реально подтверждают.
+
+### A.5. Whole-install index and direct package-derived census layers
+
+Use for whole-corpus prevalence and ranking baselines, not for semantics:
+
+- live whole-install shard set under `tmp/profile-index-cache/cache/`
+- `tmp/profile_index_fullscan_2026-04-20.log`
+- `tmp/matd_shader_census_fullscan.json`
+- `tmp/sim_material_carrier_census.json`
+- `tmp/cas_carrier_census_fullscan.json`
+- `tmp/caspart_linkage_census_fullscan.json`
+- `tmp/caspart_geom_shader_census_fullscan.json`
+- `tmp/compositionmethod_census_fullscan.json`
+- `tmp/compositionmethod_cache_backfill.json`
+
+What they confirm well:
+
+- real whole-install package/resource/asset totals
+- real object-side `MaterialDefinition` prevalence
+- direct graph-backed `Sim archetype` carrier prevalence
+- direct whole-`CAS` slot/fact prevalence
+- direct package-derived `CASPart -> GEOM/texture/region_map` linkage prevalence for the currently parsable structured subset
+- direct package-derived `CASPart -> linked GEOM -> shader family` prevalence for the currently parsable subset with broad cross-package geometry resolution
+- direct whole-install `CompositionMethod` prevalence and `CompositionMethod + SortLayer` pair prevalence for the currently parsable subset
+- repopulated shard-backed `composition_method` facts for ordinary SQLite queries over `cas_part_facts`
+- direct object-side `MATD` shader-profile counts such as:
+  - `FadeWithIce = 27434`
+  - `g_ssao_ps_apply_params = 480`
+  - `ObjOutlineColorStateTexture = 157`
+- direct character-side `GEOM` family counts such as:
+  - `SimSkin = 280983` by `CASPart` rows
+  - `SimGlass = 6048` by `CASPart` rows
+  - `GeometryResolvedFromExternalPackage = 12911`
+- direct compositor-side counts such as:
+  - `composition=0 = 243517`
+  - `composition=32 = 44619`
+  - `composition=32 | sort=65536 = 44598`
+
+What this layer also needs explicitly:
+
+- known GEOM-side hash-name overrides from the external `TS4SimRipper` enum packet, because local precompiled profile guesses can drift across domains
+
+What they do not confirm by themselves:
+
+- external shader-family semantics
+- whole `CAS/Sim` family prevalence
+- direct `GEOM`/linked material prevalence for `CAS` asset rows
+- full whole-`CAS` linkage prevalence across all raw `CASPart` rows
+- full whole-`CAS` family prevalence across the raw rows still outside the structured parser boundary
+- whole-game family ranking for `SimSkin`, `SimGlass`, `CASHotSpotAtlas`, `RefractionMap`, `ShaderDayNightParameters`
 
 ### A. Resource identity and high-level roles
 
@@ -161,6 +252,7 @@ Companion docs created from this source pack:
 - `CASP` diffuse/shadow/region/normal/specular/emission/mask fields
 - `SharedUVMapSpace` как code-backed field name
 - `ColorShiftMask`
+- separate `CASP` texture-space fields such as `textureSpace` / `UniqueTextureSpace`
 - `Skintone` base + overlay + opacity/colorize fields
 - creator-visible shared CAS atlas behavior
 - body-type slot semantics: one active part per body-type slot, with `Full Body` versus `Upper/Lower Body` incompatibility documented in creator-facing references
@@ -199,7 +291,11 @@ Companion docs created from this source pack:
   - that first local sample hint is now also split into a small matrix: `Body 4/4`, `Head 4/4`, `Waist 1/1`
   - modern TS4 creator-tooling evidence also supports `MTNF` as behaviorally relevant payload: incorrect MTNF shader-size handling is documented as causing save/game issues for `GEOM`s
   - TS4 creator-facing shader practice also supports preserving `GEOM`-side shader identity in the authority model: `SimGlass`, `SimSkin`, `SimEyes`, and `SimAlphaBlended` are all treated as practical mesh/shader choices with visible behavior differences
+  - creator-facing transparency guidance now also narrows the character side of that split further: current evidence keeps `SimGlass` and `SimAlphaBlended` as separate transparency-capable family names rather than one generic alpha bucket
+  - current family ordering is now narrower too: `SimGlass` has the stronger external packet, `SimAlphaBlended` remains a separate named branch, and generic character alpha stays only as provisional fallback wording
+  - that ordering is still intentionally open at one neighboring edge: the current local external snapshot is much stronger for `SimGlass` than for `SimAlphaBlended` or `SimEyes`, so `SimEyes` remains unresolved here rather than silently entering the same closed order
   - local external `TS4SimRipper` code strengthens that further: `SimGlass` meshes are tracked/exported as a separate glass path, while unknown mesh shaders fall back to `SimSkin`
+  - cross-domain reading is now bounded more tightly too: current external evidence keeps `CAS/Sim` as the semantic home for `SimGlass`, while `Build/Buy` is only allowed as a carry-over evidence domain until a fixture-grade object-side case survives reopen
   - local precompiled shader corpus adds a first relative-weight hint: `simskin` / `SimSkinMask` look core in the current snapshot, while `SimGlass` looks real but narrow
   - this is now strong enough for a first implementation-priority split in the docs: `SimSkin`/`SimSkinMask` as core-family work first, `SimGlass` as edge-but-real, and `SimEyes`/`SimAlphaBlended` as preserved special provenance
   - this priority split is still explicitly inference-backed for planning, not a claim that local corpus prevalence equals full in-game frequency
@@ -213,6 +309,11 @@ Companion docs created from this source pack:
   - creator tooling now corroborates that reading from the other side as well: `TS4 Skininator`, `TS4 Skin Converter`, and recent `Sims 4 Studio` notes all keep mask-bearing skin content inside skintone/overlay/image workflows rather than surfacing a peer `SimSkinMask` geometry family
   - a wider workspace sweep still does not surface a broader local live/sample corpus for `SimSkinMask`: outside the mirrored `TS4SimRipper` resources, no extra `.simgeom` packet in the current repo snapshot exposes a peer branch
 - the broader mainstream toolchain packet checked for this pass still points the same way: `TS4CASTools`, `TS4SimRipper`, `Skininator`, and `Sims 4 Studio` expose `SimSkin`, `SimGlass`, `ColorShiftMask`, overlays, and burn-mask semantics, but not a peer named `SimSkinMask` geometry/export/import branch
+- a new external lead for packed `CASP` body-type values:
+  - local external code reads separate `textureSpace` and `bodyType` fields
+  - community documentation lists `AdditionalTextureSpace` with the same vocabulary as `BodyType`
+  - creator-facing analysis now also talks about “Outfit Type” as `BodyType + AdditionalTextureSpce`
+  - this is strong enough to treat `AdditionalTextureSpace` as the leading external candidate for the large high-byte `BodyType` families, but not strong enough to call the exact encoding solved
 - that dense `CAS/Sim` authority packet is now also split out into its own workflow doc so further family-by-family passes can stay local instead of bloating the main cross-domain guide
 - the shader-family packet is now also split out more explicitly:
   - `MaterialDecoding.cs` now defines the current preview-facing strategy buckets
@@ -230,6 +331,7 @@ Companion docs created from this source pack:
 - не всегда formal binary spec
 - часть сведений остаётся tool-centric или community-centric
 - полная in-game shader stack для Sim skin всё ещё собрана не до конца
+- exact packed encoding rule for the large high-byte `BodyType` values seen in the current whole-`CAS` counts
 
 ### D. Community behavior proofs
 
@@ -244,6 +346,10 @@ Companion docs created from this source pack:
   - [Transparency in clothing tutorial](https://maxismatchccworld.tumblr.com/post/645249485712326656/transparency-in-clothing-tutorial)
   - [Semi-Square Eyeglasses](https://kijiko-catfood.com/semi-square-eyeglasses/)
   - [Lashes and hair cc clashing](https://forums.ea.com/discussions/the-sims-4-mods-and-custom-content-en/lashes-and-hair-cc-clashing-pics-included-please-help-/12047424)
+  - [DaraSims glass-object tutorial](https://darasims.com/stati/tutorial/tutor_sims4/2980-urok-po-sozdaniyu-steklyannyh-obektov-pri-pomoschi-programmy-sims-4-studio.html)
+  - [DaraSims object transparency without `AlphaBlended`](https://darasims.com/stati/tutorial/tutor_sims4/3196-dobavlenie-obektam-prozrachnosti-gde-net-parametra-alphablended-v-sims-4-studio.html)
+  - [DaraSims transparent-curtain tutorial](https://darasims.com/stati/tutorial/tutor_sims4/2984-sozdanie-prozrachnyh-shtor-v-sims-4.html)
+  - [Object Material Settings Cheat Sheet](https://staberindesims.wordpress.com/2021/06/05/object-material-settings-cheat-sheet/)
 
 Что они хорошо подтверждают:
 
@@ -256,6 +362,24 @@ Companion docs created from this source pack:
 - то, что `SharedUVMapSpace` влияет на normal/atlas behavior при смене body-part category
 - practical `CASHotSpotAtlas -> HotSpotControl -> SimModifier` behavior in creator-facing morph workflows
 - creator-facing body-type semantics for `Hair`, `Head`, `Full Body`, `Top`, `Bottom`, `Shoes`, and accessory-like slots
+- creator-facing separation between:
+  - character-side `SimGlass`
+  - object-side glass families such as `GlassForObjectsTranslucent`
+  - threshold/cutout transparency via `AlphaMap` plus `AlphaMaskThreshold`
+  - blended object transparency via `AlphaBlended`
+- enough creator-facing signal detail to build a first decision order for reopened transparent `Build/Buy` fixtures:
+  - explicit `GlassForObjectsTranslucent` or glass-family params
+  - threshold/cutout signals such as `AlphaMap` plus `AlphaMaskThreshold`
+  - explicit `AlphaBlended`
+  - only then fallback consideration of `SimGlass`
+- enough creator-facing signal detail to build a first fallback ladder too:
+  - prefer named object-side branches first
+  - keep `SimGlass` as last-choice named branch for `Build/Buy`
+- that object-side packet is now also split more explicitly by evidence layer:
+  - external creator and lineage confirmation for the object-side branches
+  - local package evidence only for candidate selection and route narrowing
+  - bounded synthesis for the current decision order
+  - allow generic transparent provisional reading only after named branches are documented as insufficient
 - practical `CASP -> GEOM -> RegionMapKey` linkage expectations in mesh-edit workflows
 - creator-facing expectation that CAS body types are true slot identities rather than interchangeable material families
 - creator-facing expectation that default/nude CASP flags materially affect whether a part behaves like underwear/default body content
@@ -268,6 +392,12 @@ Companion docs created from this source pack:
   - semi-transparent eyeglass frames are described as requiring `SimGlass`
   - current support/forum guidance describes alpha hair and lashes as using the same "glass" shader family as glasses and other transparent CAS items
 - this makes `SimGlass` safer to search from transparent layered content than from broad architectural window vocabulary alone
+- `Build/Buy` carry-over for `SimGlass` is now weighted explicitly too:
+  - external creator-facing `SimGlass` packet sets the family floor
+  - local external `TS4SimRipper` packet preserves the branch operationally
+  - object-side transparent split remains the stronger competing explanation layer
+  - aggregate survey and narrowed route packets only keep the branch alive and rank reopens
+  - only reopened fixture evidence may decide branch loss, provisional `SimGlass`, or winning `SimGlass`
 - local external code-backed evidence that some GEOM shader families are already treated as separate export/render branches, not just named flags
 - local corpus-backed evidence that shader-family prevalence is uneven and should influence prioritization: `SimSkin`-adjacent families appear much more heavily than `SimGlass` in the current precompiled snapshot
 
@@ -323,6 +453,7 @@ Companion docs created from this source pack:
 - `NextFloorLightMapXform` и `GenerateSpotLightmap` действительно живут в одном lightmap-oriented vocabulary
 - TS4 lightmap surface is materially richer than a single baked-light slot
 - lightmap-generation and lightmap-transform names не стоит насильно трактовать как ordinary material slots
+- `Generated-Light Evidence Ledger` can now treat this thread as the external anchor while keeping local carry-through clearly separate from exact semantics
 
 Чего это не даёт полностью:
 
@@ -366,6 +497,18 @@ Companion docs created from this source pack:
 - `RevealMap` is shown in a concrete shader family (`Painting`), which supports the safer interpretation of `samplerRevealMap` as reveal/mask/helper provenance instead of a normal canonical surface slot
 - refraction-oriented families in the same lineage (`simglass`, water families) already use dedicated refraction semantics such as `index_of_refraction` and `RefractionDistortionScale`
 - this makes it safer to keep `RefractionMap` and `tex1` in the projection/refraction branch until stronger TS4-specific proof appears
+- `Refraction Evidence Ledger` can now treat those lineage references as the external anchor while keeping survey-level presence and named bridge-root evidence clearly separate from slot closure
+- `Refraction Bridge Fixture Boundary` now freezes the distinction between a valid named inspection bridge and exact refraction-slot closure
+- `Refraction Post-LilyPad Pivot` now freezes that the named `lilyPad` fixture is a bounded floor/ceiling reference, not the only remaining refraction route
+- `Refraction Next-Route Priority` now fixes the local post-`lilyPad` order so a restart does not jump back to the same fixture or promote the noisier `0124...` mixed route too early
+- `Refraction 0389 Clean-Route Baseline` now records the first honest coverage-backed packet for the next clean projective/refraction route
+- `Refraction 0124 Mixed-Control Floor` now freezes the narrower reading of `0124...` as a mixed/control route rather than a promoted next clean target
+- `Refraction 0389 Identity Gap` now records that `0389...` is still coverage-backed only and not yet a named object/material fixture like `lilyPad`
+- `Refraction 0389 Versus LilyPad Floor` now freezes the honest comparison: `0389...` currently matches the `lilyPad` floor shape, but not the stronger named seam and negative-ceiling packet
+- `Refraction Companion MATD-vs-MTST Boundary` now freezes one more layer: the named fixture may reach `MATD`, meaningful `MTST`, both, or neither, but none of those should be assumed before inspection
+- `Refraction Adjacent-Helper Boundary` now keeps projective-helper survival separate from direct refraction-family closure
+- `ShaderDayNight Evidence Ledger` can now treat the lineage `RevealMap` packet as the external anchor while keeping local visible-root isolation clearly separate from exact TS4 visible-pass semantics
+- `Projection, Reveal, And Generated-Light Boundary` now uses those same anchors to keep refraction, reveal/day-night, and generated-light rows separate under one umbrella
 
 Чего это не даёт полностью:
 
@@ -393,6 +536,47 @@ Companion docs created from this source pack:
 - exact TS4 `VPXY` structure
 - exact TS4 traversal order
 - proof that current repo scene reconstruction should actively depend on `VPXY` outside specific linked-object ecosystems
+
+### J. Full-corpus local package census
+
+Использовать для ответа на вопрос "каков реальный размер и layout installed TS4 corpus", а не для вывода shader semantics:
+
+- fresh full filesystem profile scan:
+  - `tools/ProbeAsset/bin/Release/net8.0/win-x64/ProbeAsset.exe --profile-index "C:\GAMES\The Sims 4" 6000 16 largest`
+- log:
+  - `tmp/profile_index_fullscan_2026-04-20.log`
+- shard cache:
+  - `tmp/profile-index-cache/cache/index.sqlite`
+  - `tmp/profile-index-cache/cache/index.shard01.sqlite`
+  - `tmp/profile-index-cache/cache/index.shard02.sqlite`
+  - `tmp/profile-index-cache/cache/index.shard03.sqlite`
+
+Что это хорошо подтверждает:
+
+- реальный full-install corpus floor:
+  - `4965` filesystem package files selected
+  - `4963` indexed package rows currently persisted
+  - `4789589` indexed resources
+  - `743150` indexed assets
+  - `603` asset-bearing package paths
+- доменное распределение indexed assets:
+  - `Cas = 530507`
+  - `BuildBuy = 142941`
+  - `General3D = 68158`
+  - `Sim = 1544`
+- реальный layout corpus slices:
+  - огромный хвост `Strings_*`, `ClipHeader`, `magalog`, `thumbnails`, `SimulationPreload`, `Delta`
+  - только небольшое подмножество package paths реально несёт indexed assets
+- почему whole-game priority нельзя выводить из одного pack-local route
+
+Чего это не даёт полностью:
+
+- direct whole-game family counts for rows like `SimGlass`, `RefractionMap`, `ShaderDayNightParameters`
+- shader/material semantics
+- perfect integrity yet:
+  - `EP18\ClientFullBuild0.package`
+  - `EP18\SimulationFullBuild0.package`
+  are currently missing from the persisted shard tables and must stay marked as an explicit census gap
 
 ## Material-pipeline contradictions to keep explicit
 

@@ -8,9 +8,24 @@ Related docs:
 - [Workflows index](../README.md)
 - [Material pipeline deep dives](README.md)
 - [Shared TS4 Material, Texture, And UV Pipeline](../../shared-ts4-material-texture-pipeline.md)
+- [Sim Archetype Material Carrier Census](sim-archetype-material-carrier-census.md)
+- [CAS Carrier Census Baseline](cas-carrier-census-baseline.md)
+- [CASPart Linkage Census Baseline](caspart-linkage-census-baseline.md)
+- [CASPart GEOM Shader Census Baseline](caspart-geom-shader-census-baseline.md)
 - [Shader Family Registry](shader-family-registry.md)
+- [Package-Material Pass Filtering Contract](package-material-pass-filtering-contract.md)
+- [SimGlass Domain Home Boundary](simglass-domain-home-boundary.md)
 - [Edge-Family Matrix](edge-family-matrix.md)
 - [Skintone And Overlay Compositor](skintone-and-overlay-compositor.md)
+- [SimSkin Body/Head Shell Authority](live-proof-packets/simskin-body-head-shell-authority.md)
+- [Body And Head Shell Authority Table](body-head-shell-authority-table.md)
+- [Hair, Accessory, And Shoes Authority Table](hair-accessory-shoes-authority-table.md)
+- [BodyType Translation Boundary](bodytype-translation-boundary.md)
+- [CompositionMethod And SortLayer Boundary](compositionmethod-sortlayer-boundary.md)
+- [CompositionMethod Census Baseline](compositionmethod-census-baseline.md)
+- [Overlay And Detail Family Authority Table](overlay-detail-family-authority-table.md)
+- [Overlay-Detail Priority After High-Byte Stack](live-proof-packets/overlay-detail-priority-after-highbyte-stack.md)
+- [SortLayer Census Baseline](sortlayer-census-baseline.md)
 - [Sim domain roadmap](../../sim-domain-roadmap.md)
 - [Sim body-shell contract](../../sim-body-shell-contract.md)
 - [Full Sim and morph pipeline](../../references/codex-wiki/02-pipelines/03-full-sim-and-morphs.md)
@@ -25,10 +40,10 @@ CAS/Sim Material Authority Matrix
 ├─ Family split ~ 84%
 ├─ Body/head shell authority ~ 80%
 ├─ Shell material truth source ~ 72%
-├─ Hair/accessory/shoes authority ~ 78%
-├─ Overlay/detail family boundary ~ 74%
+├─ Hair/accessory/shoes authority ~ 92%
+├─ Overlay/detail family boundary ~ 80%
 ├─ SimSkin vs SimSkinMask authority seam ~ 74%
-├─ Edge-family authority packet ~ 57%
+├─ Edge-family authority packet ~ 66%
 └─ Full live-asset authority order ~ 43%
 ```
 
@@ -44,6 +59,48 @@ What this doc is not:
 - not a claim that full in-game authority order is solved
 - not a replacement for the shared cross-domain pipeline guide
 - not a definition of `CAS`-specific or `Sim`-specific shader semantics after canonical-material decoding begins
+
+## Current direct prevalence floor
+
+The first direct character-side carrier census now exists in [Sim Archetype Material Carrier Census](sim-archetype-material-carrier-census.md).
+
+Current safe reading:
+
+- `38` graph-backed `Sim archetype` assets were counted directly
+- `15` surface skintone render carriers
+- `10` surface base-texture carriers
+- `10` surface overlays
+- `530507` whole-`CAS` assets and `299028` `cas_part_facts` are now counted directly
+- `530507` raw `CASPart` rows and `299028` parsed linkage rows are now also counted directly below the slot/fact layer
+- those parsed rows already surface:
+  - `281303` geometry candidates
+  - `236668` texture candidates
+  - `108906` `region_map` candidates
+- the parsed-and-resolved `CASPart -> GEOM` subset now also surfaces a completed direct family floor:
+  - `RowsWithResolvedGeometryShader = 281271`
+  - `RowsWithUnknownGeometryShader = 32`
+  - `GeometryResolvedFromExternalPackage = 12911`
+  - `SimSkin = 280983` across `401` packages by `CASPart` rows
+  - `SimGlass = 6048` across `189` packages by `CASPart` rows
+  - `SimSkin = 86697` across `147` packages by unique linked `GEOM`
+  - `SimGlass = 645` across `47` packages by unique linked `GEOM`
+- slot structure such as `Top`, `Bottom`, `Hair`, `Full Body`, `Shoes`, and `Accessory` is now whole-`CAS` prevalence, not just creator intuition
+- this strengthens the authority/compositor track as a Tier A whole-app concern
+- this now makes `SimSkin` versus `SimGlass` urgency less dependent on hints, but it still does not close whole `CAS/Sim` family prevalence or full live-asset authority order
+- the all-zero `CAS` asset carrier booleans in the current index are now clearly an index boundary rather than the deepest available data layer
+- the first direct whole-install `CompositionMethod` floor now also exists:
+  - `RowsWithCompositionMethodZero = 243517`
+  - `RowsWithCompositionMethodNonZero = 55511`
+  - `DistinctCompositionMethods = 59`
+  - `composition=32 = 44619`
+  - `composition=32 | sort=65536 = 44598`
+- the readable slot subset already shows a stable clothing-like compositor lane:
+  - `Full Body`, `Top`, `Bottom`, `Shoes`, and `Accessory` all carry a strong `composition=32 | sort=65536` branch
+- `composition_method` is now also queryable in the shard cache through `cas_part_facts`
+- the next interpretive boundary is now the large mixed `BodyType` layer documented in [BodyType Translation Boundary](bodytype-translation-boundary.md)
+- the current deeper integrity boundary is still:
+  - the large structured-parser gap in the direct `CASPart` linkage census
+  - the residual `GeometryKeyNotIndexed` tail in the current family-floor runner
 
 ## Current strongest shared authority graph
 
@@ -74,6 +131,7 @@ What is already strong enough:
 - explicit `MATD/MTST` is stronger than manifest approximation when it really exists and decodes
 - `CASP` field-routing is real authority input, not a fake fallback
 - `RegionMap`, `SharedUVMapSpace`, `CompositionMethod`, and `SortLayer` are real post-selection modifiers
+- the new direct counts now make `CompositionMethod` prevalence a counted fact rather than only a tooling hint
 - `Skintone` is a Sim-only routing/compositing layer acting on selected material targets, not a replacement renderer
 
 Current implementation boundary:
@@ -88,6 +146,15 @@ Current safe architectural rule:
 - keep manifest approximation and same-instance texture bags as reserve-only paths
 - let `Skintone` and `RegionMap` refine selected materials instead of overwriting the authority model
 - once authoritative inputs are chosen, feed them into the same shared shader/material contract used everywhere else
+
+Current downstream filter rule:
+
+- once `CAS` / `Sim` package-side candidates exist, external GPU pass evidence should currently filter them through:
+  - `SceneDomain = CAS`
+  - `PassClass = MaterialLike`
+- `CompositorOrUi` and `DepthOnly` should currently be treated as exclusion/helper evidence, not final visible ownership
+- the current browser-facing contract for that layer now lives in:
+  - [Package-Material Pass Filtering Contract](package-material-pass-filtering-contract.md)
 
 Current implementation anchors:
 
@@ -131,6 +198,16 @@ Current safe reading:
 - apparel-like full-body content should not silently become the base body
 - skintone is currently shell-scoped, not a universal CAS-material mutation pass
 - this section is about shell input authority, not about inventing shell-only shader semantics
+- the new direct shell-floor snapshot now keeps that reading tied to counted local evidence too:
+  - [body_head_shell_authority_snapshot_2026-04-21.json](../../tmp/body_head_shell_authority_snapshot_2026-04-21.json)
+  - `Head` currently stays narrow at `90` parsed rows
+  - the body-driving shell lane stays broader through `Full Body = 6276`, `Top = 9287`, and `Bottom = 6191`
+  - the graph-backed archetype audit still keeps `FullBodyShell = 23` and `SplitBodyLayers = 12`
+
+Current live-proof companion:
+
+- [SimSkin Body/Head Shell Authority](live-proof-packets/simskin-body-head-shell-authority.md)
+- [Body And Head Shell Authority Table](body-head-shell-authority-table.md)
 
 Current implementation anchors:
 
@@ -160,6 +237,7 @@ Current safe reading:
 - parsed `CASP` field-routing is the current shell-material truth floor when explicit material resources do not materialize
 - embedded `MTNF` stays in the model as a geometry-side candidate, but repo code should not be described as already decoding it
 - all four of those inputs still converge into the shared canonical material path; they do not define a separate shell renderer
+- the new shell-floor snapshot also keeps the body-driving asymmetry visible while those material-source tie-breaks remain open
 
 Current asymmetry:
 
@@ -204,7 +282,12 @@ Current safe reading:
 - `CASP -> linked GEOM` is still the entry into the material graph
 - cross-package geometry companions are valid for these families
 - manifest approximation remains reserve-only after explicit material-definition decoding
+- `Hair` remains the cleanest ordinary worn-slot lane, while `Shoes` and `Accessory` keep a real `composition=32 | sort=65536` branch without becoming shell authority
 - after that point, hair/accessory/shoes still use the same shared shader/material semantics as the rest of the pipeline
+
+Current companion:
+
+- [Hair, Accessory, And Shoes Authority Table](hair-accessory-shoes-authority-table.md)
 
 Current implementation anchors:
 
@@ -227,6 +310,9 @@ Current safe reading:
 - these families are still rooted in selected `CASP`, but their authority picture is dominated more by `CompositionMethod`, `SortLayer`, shared atlas behavior, and skintone interaction than by shell-style body-foundation logic
 - current evidence is good enough to keep them separate from shell and worn-slot authority tables even before their own per-family live-asset tables are built
 - current external tooling also frames skin masks and similar face/body detail content as overlay, burn-mask, or skin-detail image workflows rather than as separate geometry-family roots
+- the closed high-byte `BodyType` packet stack now also gives a sharper boundary:
+  - ordinary low-value overlay/detail rows remain the cleanest direct precedence anchors
+  - mixed high-byte families like `0x6D` and `0x6F` can echo cosmetic lanes without replacing those anchors
 - this is still about authoritative inputs and compositor precedence, not a separate overlay-only shader system
 
 Useful sources:
@@ -239,14 +325,32 @@ Useful sources:
 
 For the denser compositor packet, use [Skintone And Overlay Compositor](skintone-and-overlay-compositor.md).
 
+For the stricter boundary on `CompositionMethod` and `SortLayer`, use [CompositionMethod And SortLayer Boundary](compositionmethod-sortlayer-boundary.md).
+
+For the first explicit overlay/detail ranking table, use [Overlay And Detail Family Authority Table](overlay-detail-family-authority-table.md).
+
+For the stricter post-high-byte precedence packet, use [Overlay-Detail Priority After High-Byte Stack](live-proof-packets/overlay-detail-priority-after-highbyte-stack.md).
+
+For the first direct whole-index `sort_layer` counts, use [SortLayer Census Baseline](sortlayer-census-baseline.md).
+
 ## Edge-family authority packet
 
 The main family split is now no longer the whole story. The repo also has enough bounded evidence to keep a first edge-family matrix instead of leaving all narrow cases under one generic fallback rule.
 
 Use [Edge-Family Matrix](edge-family-matrix.md) for the stricter row-by-row packet. Keep this section as the compact summary layer.
 
+Current cross-domain clarification to preserve:
+
+- `SimGlass` should currently be read as a `CAS/Sim`-rooted family first
+- bounded `Build/Buy` carry-over evidence may keep that family alive outside the Sim domain
+- that carry-over does not make `Build/Buy` a co-equal semantic home for `SimGlass`
+- keep the compact summary in [SimGlass Domain Home Boundary](simglass-domain-home-boundary.md)
+- keep the character-transparency split in [SimGlass Character Transparency Boundary](simglass-character-transparency-boundary.md)
+- keep the unresolved neighboring-family boundary in [Character Transparency Open Edge](character-transparency-open-edge.md)
+
 Current concrete edge-family packets:
 
+- [SimSkin Body/Head Shell Authority](live-proof-packets/simskin-body-head-shell-authority.md)
 - [SimGlass Versus Shell Baseline](live-proof-packets/simglass-vs-shell-baseline.md)
 - [SimSkin Versus SimSkinMask](live-proof-packets/simskin-vs-simskinmask.md)
 - [CASHotSpotAtlas Carry-Through](live-proof-packets/cas-hotspotatlas-carry-through.md)
@@ -320,12 +424,15 @@ Current concrete packet:
 
 ## Recommended next work
 
-1. Find a genuinely new live asset corpus outside the current mirrored `TS4SimRipper` sample set.
-2. Build the first per-family authority table for:
+1. Use the completed character-side family floor to build explicit per-family authority tables for:
    - body shell
    - head shell
-   - hair
-   - accessory
-   - shoes
    - one overlay/detail family
-3. After that, separate “current implementation-safe baseline” from “game-faithful proven order” in a stricter matrix.
+   - then hair/accessory/shoes as the current worn-slot sibling packet
+2. Start that table stack from [SimSkin Body/Head Shell Authority](live-proof-packets/simskin-body-head-shell-authority.md), because `SimSkin` now directly dominates the character-side family floor.
+3. Use [Body And Head Shell Authority Table](body-head-shell-authority-table.md) and [Hair, Accessory, And Shoes Authority Table](hair-accessory-shoes-authority-table.md) as the current explicit shell-versus-worn-slot ranking layer.
+4. Use [CompositionMethod And SortLayer Boundary](compositionmethod-sortlayer-boundary.md) to keep layer ordering separate from shell selection.
+5. Use [Overlay And Detail Family Authority Table](overlay-detail-family-authority-table.md) as the first explicit overlay/detail ranking layer.
+6. Use [SortLayer Census Baseline](sortlayer-census-baseline.md) when direct counts matter more than creator-facing mode labels.
+7. Use [BodyType Translation Boundary](bodytype-translation-boundary.md) before treating the readable slot subset as if it covered the dominant `composition=0` lane.
+8. Return next to [SimSkin Versus SimSkinMask](live-proof-packets/simskin-vs-simskinmask.md) before drifting back into narrower Tier B or Tier C work.

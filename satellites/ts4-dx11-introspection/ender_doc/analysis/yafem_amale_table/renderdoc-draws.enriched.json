@@ -1,0 +1,5223 @@
+[
+  {
+    "actionId": 5,
+    "eventId": 85,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #1 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #1 (1 Targets)",
+    "numIndices": 978,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "b8374a49ad2f13740ba6483f2daad75a393e99596b527b40235fd0a45313a9b4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::434",
+        "1:ResourceId::32030",
+        "2:ResourceId::32029"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 8,
+    "eventId": 145,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #1 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #1 (1 Targets)",
+    "numIndices": 978,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "b8374a49ad2f13740ba6483f2daad75a393e99596b527b40235fd0a45313a9b4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::444",
+        "1:ResourceId::32026",
+        "2:ResourceId::32023"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 11,
+    "eventId": 205,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #1 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #1 (1 Targets)",
+    "numIndices": 978,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "b8374a49ad2f13740ba6483f2daad75a393e99596b527b40235fd0a45313a9b4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::454",
+        "1:ResourceId::32028",
+        "2:ResourceId::32027"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 15,
+    "eventId": 276,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Instanced|Indexed|Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 84,
+    "numInstances": 1,
+    "topology": 2,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "TEXCOORD2",
+      "TEXCOORD3"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "a1cdf27bec3e2295af2f0ef80c217a26f0b1f86545be7db82545394053b18f4f",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer2",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD",
+        "TEXCOORD",
+        "TEXCOORD",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::32566",
+        "1:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "16f3acf292525e958f05fb1591f821cbc4fd275de4a26bccd15e9dc61e36371f",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::298"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::465"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 16,
+    "eventId": 300,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 6,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION",
+      "COLOR",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "2a668c68fa37f3b0abb3b4f4fb3db2a38e0bac425e1b9c3ce952a28203f524a5",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "COLOR",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "17234099c76d62983fcaeef86f26455f206104117dd459f6eca9fbfb06391b77",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::306"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::465"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 17,
+    "eventId": 329,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 9456,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "0a7c2e45fef76153b1039d7219c234347f4e569c6ea0b14d1a68947405bc7958",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 18,
+    "eventId": 338,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 3450,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 19,
+    "eventId": 345,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 9420,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 20,
+    "eventId": 352,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 2982,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 21,
+    "eventId": 359,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 10902,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 22,
+    "eventId": 382,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 9456,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "0a7c2e45fef76153b1039d7219c234347f4e569c6ea0b14d1a68947405bc7958",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 23,
+    "eventId": 391,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 3450,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 24,
+    "eventId": 398,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 9420,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 25,
+    "eventId": 405,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 2982,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 26,
+    "eventId": 412,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #2 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #2 (1 Targets)",
+    "numIndices": 10902,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::464",
+        "1:ResourceId::41082",
+        "2:ResourceId::32568"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": null,
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 33,
+    "eventId": 522,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 18219,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "152410d157b9e8bf895dcaa2e277c7fd0ab2a2f939e0dc85631bdebaa0aed8aa",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32012",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c91ba73b429ce3c25469c84e639dcb18deb1d27f78d8f76915b58008546a1d34",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4"
+      ],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer7"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::298",
+        "1:ResourceId::169",
+        "2:ResourceId::31817",
+        "3:ResourceId::31740",
+        "4:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475",
+        "1:ResourceId::32008"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 34,
+    "eventId": 532,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 18579,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "152410d157b9e8bf895dcaa2e277c7fd0ab2a2f939e0dc85631bdebaa0aed8aa",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32012",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c91ba73b429ce3c25469c84e639dcb18deb1d27f78d8f76915b58008546a1d34",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4"
+      ],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer7"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::298",
+        "1:ResourceId::169",
+        "2:ResourceId::31827",
+        "3:ResourceId::31740",
+        "4:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475",
+        "1:ResourceId::32008"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 35,
+    "eventId": 542,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 6576,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "152410d157b9e8bf895dcaa2e277c7fd0ab2a2f939e0dc85631bdebaa0aed8aa",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32012",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c91ba73b429ce3c25469c84e639dcb18deb1d27f78d8f76915b58008546a1d34",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4"
+      ],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer7"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::298",
+        "1:ResourceId::169",
+        "2:ResourceId::31837",
+        "3:ResourceId::31740",
+        "4:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475",
+        "1:ResourceId::32008"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 36,
+    "eventId": 552,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 9630,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "152410d157b9e8bf895dcaa2e277c7fd0ab2a2f939e0dc85631bdebaa0aed8aa",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32012",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c91ba73b429ce3c25469c84e639dcb18deb1d27f78d8f76915b58008546a1d34",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4"
+      ],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer7"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::298",
+        "1:ResourceId::169",
+        "2:ResourceId::31847",
+        "3:ResourceId::31740",
+        "4:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475",
+        "1:ResourceId::32008"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 37,
+    "eventId": 569,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 3450,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "06a508314174ad6051889e3150172df250c2b874d257bba0fe0737d7992e85e0",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32014",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fd0b8ed626b36fe70549703619e62520d2137c9bc4edf1714b611c3614714f13",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4",
+        "texture5",
+        "texture6",
+        "texture7",
+        "texture8"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::87754",
+        "1:ResourceId::87756",
+        "2:ResourceId::87761",
+        "3:ResourceId::87758",
+        "4:ResourceId::84035",
+        "5:ResourceId::87763",
+        "6:ResourceId::23038",
+        "7:ResourceId::23028",
+        "8:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 38,
+    "eventId": 580,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 9420,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "06a508314174ad6051889e3150172df250c2b874d257bba0fe0737d7992e85e0",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32014",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fd0b8ed626b36fe70549703619e62520d2137c9bc4edf1714b611c3614714f13",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4",
+        "texture5",
+        "texture6",
+        "texture7",
+        "texture8"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::87754",
+        "1:ResourceId::87756",
+        "2:ResourceId::87761",
+        "3:ResourceId::87758",
+        "4:ResourceId::84048",
+        "5:ResourceId::87763",
+        "6:ResourceId::23038",
+        "7:ResourceId::23028",
+        "8:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 39,
+    "eventId": 591,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 2982,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "06a508314174ad6051889e3150172df250c2b874d257bba0fe0737d7992e85e0",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32014",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fd0b8ed626b36fe70549703619e62520d2137c9bc4edf1714b611c3614714f13",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4",
+        "texture5",
+        "texture6",
+        "texture7",
+        "texture8"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::87754",
+        "1:ResourceId::87756",
+        "2:ResourceId::87761",
+        "3:ResourceId::87758",
+        "4:ResourceId::84061",
+        "5:ResourceId::87763",
+        "6:ResourceId::23038",
+        "7:ResourceId::23028",
+        "8:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 40,
+    "eventId": 602,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 10902,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "06a508314174ad6051889e3150172df250c2b874d257bba0fe0737d7992e85e0",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "TANGENT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32014",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fd0b8ed626b36fe70549703619e62520d2137c9bc4edf1714b611c3614714f13",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4",
+        "texture5",
+        "texture6",
+        "texture7",
+        "texture8"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::87754",
+        "1:ResourceId::87756",
+        "2:ResourceId::87761",
+        "3:ResourceId::87758",
+        "4:ResourceId::84074",
+        "5:ResourceId::87763",
+        "6:ResourceId::23038",
+        "7:ResourceId::23028",
+        "8:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 41,
+    "eventId": 617,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 9456,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION0",
+      "NORMAL0",
+      "TEXCOORD0",
+      "TEXCOORD1",
+      "BLENDINDICES",
+      "BLENDWEIGHT",
+      "TANGENT",
+      "COLOR1",
+      "POSITION1",
+      "NORMAL1",
+      "COLOR0"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "6453fa3d3ca1e738efa6b09052e110ea6bf46dbab5da5c2eb2b7b41261607464",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD",
+        "TEXCOORD",
+        "COLOR",
+        "BLENDINDICES",
+        "BLENDWEIGHT",
+        "POSITION",
+        "NORMAL"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32014",
+        "2:ResourceId::32002",
+        "3:ResourceId::32005",
+        "4:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "7e31ac92641282b72df5a195e8ba025eb93d4609b8c5ae791a1f543ef76047d9",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4",
+        "texture5",
+        "texture6",
+        "texture7"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::87754",
+        "1:ResourceId::87756",
+        "2:ResourceId::87761",
+        "3:ResourceId::87758",
+        "4:ResourceId::87763",
+        "5:ResourceId::23038",
+        "6:ResourceId::23028",
+        "7:ResourceId::187"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 42,
+    "eventId": 632,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 972,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION",
+      "NORMAL",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "eae5505589c5720b636094d9c4dbc6b5deeb680a07675581a754d6849dd50d35",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer4"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32014",
+        "2:ResourceId::32005"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "6b010b308f6bcfb6dee526aa35438fc192231728b1ab49c89a558dd30570b421",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31680"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 43,
+    "eventId": 648,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 576,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "b00eff273bad5d7d7933dbdbe926d817aa43b6e59b28a2e3a7e6cfe893f02880",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32019"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "8fa6005d05aea67e49c02b55de8118043121f1ee3de6ec769cbdbd574ce7f39d",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1"
+      ],
+      "constantBlocks": [
+        "cbuffer5"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31580",
+        "1:ResourceId::31594"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 44,
+    "eventId": 660,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "8236e7655059e49ee9f9df62db0e1dba5ff02ded379131626affdf61b5d07772",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32019",
+        "2:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "2081e136b40a138a80379212297f7678d78c03536f9ebca64b76516c91f3476f",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer5"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31597"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 45,
+    "eventId": 678,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 1344,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD",
+      "COLOR"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "0298513c69c5840eb29a62bf5716f139d5c1237f256db1b8d1721b11901b3ca4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer2",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD",
+        "COLOR"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32002",
+        "2:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "f9702b923dcc25f392b595cb8bd4ceedfb14554676efcf8a6f8d4df20b0de728",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31613"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 46,
+    "eventId": 687,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 1344,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD",
+      "COLOR"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "0298513c69c5840eb29a62bf5716f139d5c1237f256db1b8d1721b11901b3ca4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer2",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD",
+        "COLOR"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::474",
+        "1:ResourceId::32002",
+        "2:ResourceId::32006"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "6540a9982bae31e743edf37a8bec1530ca6dec88ef61dc5b696e108b716b09ba",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31613"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::475"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 51,
+    "eventId": 789,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #3 (1 Targets + Depth)"
+    ],
+    "topMarker": "Colour Pass #3 (1 Targets + Depth)",
+    "numIndices": 6,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "POSITION",
+      "NORMAL",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "934dc4c24cd9b16cbf14bd30c6be51164ac0d4838f70d5a641e0bca7f122b8aa",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer1",
+        "cbuffer2",
+        "cbuffer4",
+        "cbuffer5"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "NORMAL",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494",
+        "1:ResourceId::32010",
+        "2:ResourceId::32001",
+        "3:ResourceId::32003",
+        "4:ResourceId::32004"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "5fc7960da5c922f1891f2e9e443b4447374dd808e342bd3d9882a7a015ab0893",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0",
+        "texture1",
+        "texture2"
+      ],
+      "constantBlocks": [
+        "cbuffer0",
+        "cbuffer7"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::298",
+        "1:ResourceId::169",
+        "2:ResourceId::31676"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::495",
+        "1:ResourceId::32007"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 53,
+    "eventId": 806,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "NORMAL",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "ba3cc945e2800735a6700d65977b4a3bfd1189cf9c88ca7942eeb1809c5471d4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "SV_VertexID"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "ba1feabb5023391d5c81f0a701d22257388a5a1ebb9de12b5090b7607ea163dc",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::273"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 54,
+    "eventId": 845,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "4f724fac3ad56a41c24af58854396582efe0d82706e8a28a2e619b316d724ed5",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "37cae81ce2abe3b240bb2b2a63ab6c87164efd7fd0672b9e1908d8b3bbecdd9e",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::284"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::495"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 55,
+    "eventId": 864,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "3a2e5a1cf5200b208b1e250f00b842a674ef39554ec39f59477308dbd1e1fdff",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "2b9aff060ca135b29b5dce20db219f76c11541eaec863442d1a213f13dff9817",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::276"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::495"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 56,
+    "eventId": 879,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "3a2e5a1cf5200b208b1e250f00b842a674ef39554ec39f59477308dbd1e1fdff",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "2b9aff060ca135b29b5dce20db219f76c11541eaec863442d1a213f13dff9817",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::284"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::495"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 57,
+    "eventId": 894,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "3a2e5a1cf5200b208b1e250f00b842a674ef39554ec39f59477308dbd1e1fdff",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "2b9aff060ca135b29b5dce20db219f76c11541eaec863442d1a213f13dff9817",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::276"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::495"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 58,
+    "eventId": 909,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [],
+    "topMarker": null,
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "3a2e5a1cf5200b208b1e250f00b842a674ef39554ec39f59477308dbd1e1fdff",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "2b9aff060ca135b29b5dce20db219f76c11541eaec863442d1a213f13dff9817",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::284"
+      ],
+      "boundConstantBufferIds": [
+        "0:ResourceId::495"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 59,
+    "eventId": 926,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [
+      "Colour Pass #4 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #4 (1 Targets)",
+    "numIndices": 4,
+    "numInstances": 0,
+    "topology": 6,
+    "vertexInputNames": [
+      "POSITION",
+      "TEXCOORD"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "315f9c3eccc12416061fcf9d4916d287171b6757df89b7362e5a86dc95c3fee2",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "cbuffer0"
+      ],
+      "inputSemantics": [
+        "POSITION",
+        "TEXCOORD"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::494"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "1fdc3b1b5902cb7248cbe4a2f3beab962c9d0a1238bcb2732dbfa3fd2a5a5ef6",
+      "entryPoint": "main",
+      "resourceNames": [
+        "texture0"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::276"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 62,
+    "eventId": 996,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "fa885f3261ac4ca25f9012169f54ab9a5b33a39d94b80b5297adcd213b56eeca",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31915",
+        "1:ResourceId::31918"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 63,
+    "eventId": 1000,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "fa885f3261ac4ca25f9012169f54ab9a5b33a39d94b80b5297adcd213b56eeca",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31915",
+        "1:ResourceId::31918"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 64,
+    "eventId": 1011,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 120,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "44ec744dbf3365c90b10d976c7e60ce5de7cad8a7fcd1f340b7b00d99abeab4d",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::3674",
+        "1:ResourceId::3677"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 65,
+    "eventId": 1022,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 150,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "e6fbcbdf63316cdd1975660186b1cf01e818f9ef6c76f55946b641fe89d51c5c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "30a22b2a700647c8ccc104b62092dc1fe23682eeca49a26609b0c383a7a4566d",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31915",
+        "1:ResourceId::31918"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 66,
+    "eventId": 1032,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "bfe7b55a166ab9201b656e8ad4e21384b34f09d4a7f5f28bf2892aa5e0417e08",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31915",
+        "1:ResourceId::31918"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 67,
+    "eventId": 1042,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 60,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "44ec744dbf3365c90b10d976c7e60ce5de7cad8a7fcd1f340b7b00d99abeab4d",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31915",
+        "1:ResourceId::31918"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 68,
+    "eventId": 1052,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 108,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position",
+      "COLOR"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "14caf49355d4ffe3f2d5c14bde573b084b23cfb4446d177cb50dd6f5fe1b53c8",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position",
+        "COLOR"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31915",
+        "1:ResourceId::31918"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 69,
+    "eventId": 1062,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31915",
+        "1:ResourceId::31918"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 70,
+    "eventId": 1073,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "bfe7b55a166ab9201b656e8ad4e21384b34f09d4a7f5f28bf2892aa5e0417e08",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31894",
+        "1:ResourceId::31897"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 71,
+    "eventId": 1084,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 90,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "9ec2c98bd14bef812ca84f75aadfe905a77bfe1228cf218ae5c667e97def0fd7",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "98cab5db514ab9d1a9ec0298d7b7dbb07c796706af6d8eae6af9252882f5392f",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::3306"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 72,
+    "eventId": 1095,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 60,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "44ec744dbf3365c90b10d976c7e60ce5de7cad8a7fcd1f340b7b00d99abeab4d",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31894",
+        "1:ResourceId::31897"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 73,
+    "eventId": 1105,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR0",
+      "COLOR1",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "9a02970f7f14f70e0d91f869c3b5fc13e9faf609783e262e92c96e3b4fdaba17",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "354881ba76f9fa60c56d15120a48279d5ff0c9de16f758144abf1a35c6e86a2d",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 74,
+    "eventId": 1116,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31900",
+        "1:ResourceId::31903"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 75,
+    "eventId": 1123,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31900",
+        "1:ResourceId::31903"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 76,
+    "eventId": 1136,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 6,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "SV_Position",
+      "COLOR"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "ca2f30be78079d08e5ad75017e2df1e4b06df2cec874ffa04fa06a49ae6ff916",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "SV_Position",
+        "COLOR"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "72b2593509ce32a8495d177bf5ba98522a6bb4fee1416821b80d3409211630b2",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::508"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 77,
+    "eventId": 1151,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 6,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "64be0695efa5a0916c219ac2afb74e9bc36dafe0d61c57797333251fc6a60dcd",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "72b2593509ce32a8495d177bf5ba98522a6bb4fee1416821b80d3409211630b2",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::508"
+      ],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 78,
+    "eventId": 1164,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::87715"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 79,
+    "eventId": 1176,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 150,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "e6fbcbdf63316cdd1975660186b1cf01e818f9ef6c76f55946b641fe89d51c5c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "30a22b2a700647c8ccc104b62092dc1fe23682eeca49a26609b0c383a7a4566d",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32093",
+        "1:ResourceId::32096"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 80,
+    "eventId": 1187,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32333"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 81,
+    "eventId": 1198,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 390,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "e6fbcbdf63316cdd1975660186b1cf01e818f9ef6c76f55946b641fe89d51c5c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "30a22b2a700647c8ccc104b62092dc1fe23682eeca49a26609b0c383a7a4566d",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32093",
+        "1:ResourceId::32096"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 82,
+    "eventId": 1209,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::3674",
+        "1:ResourceId::3677"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 83,
+    "eventId": 1220,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 210,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "e6fbcbdf63316cdd1975660186b1cf01e818f9ef6c76f55946b641fe89d51c5c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "30a22b2a700647c8ccc104b62092dc1fe23682eeca49a26609b0c383a7a4566d",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32093",
+        "1:ResourceId::32096"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 84,
+    "eventId": 1231,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "bdbbd45c0a4dd1a62b726c4614465d2b13fda65b4c18d7dae3a9deab21f6afed",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "30a22b2a700647c8ccc104b62092dc1fe23682eeca49a26609b0c383a7a4566d",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 85,
+    "eventId": 1241,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "7af8a46455ff58d450e814f2aea23bfd331aa8a9c747133af953caacae1e50a4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "78485e7005bbf538b45d6f10b58b2a6562c322d8e7dbbe43d345c14e33e5ad1e",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 86,
+    "eventId": 1251,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "bfe7b55a166ab9201b656e8ad4e21384b34f09d4a7f5f28bf2892aa5e0417e08",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 87,
+    "eventId": 1259,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "bfe7b55a166ab9201b656e8ad4e21384b34f09d4a7f5f28bf2892aa5e0417e08",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::3662",
+        "1:ResourceId::3665"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 88,
+    "eventId": 1269,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::3662",
+        "1:ResourceId::3665"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 89,
+    "eventId": 1280,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 60,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "44ec744dbf3365c90b10d976c7e60ce5de7cad8a7fcd1f340b7b00d99abeab4d",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 90,
+    "eventId": 1291,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32051"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 91,
+    "eventId": 1302,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "bfe7b55a166ab9201b656e8ad4e21384b34f09d4a7f5f28bf2892aa5e0417e08",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 92,
+    "eventId": 1312,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 93,
+    "eventId": 1321,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32069"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 94,
+    "eventId": 1329,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32054"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 95,
+    "eventId": 1337,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::40623"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 96,
+    "eventId": 1345,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32060"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 97,
+    "eventId": 1353,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::83808"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 98,
+    "eventId": 1361,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32066"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 99,
+    "eventId": 1370,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "7af8a46455ff58d450e814f2aea23bfd331aa8a9c747133af953caacae1e50a4",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "78485e7005bbf538b45d6f10b58b2a6562c322d8e7dbbe43d345c14e33e5ad1e",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 100,
+    "eventId": 1380,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 60,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "e6fbcbdf63316cdd1975660186b1cf01e818f9ef6c76f55946b641fe89d51c5c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "30a22b2a700647c8ccc104b62092dc1fe23682eeca49a26609b0c383a7a4566d",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32045",
+        "1:ResourceId::32048"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 101,
+    "eventId": 1391,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 108,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position",
+      "COLOR"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "14caf49355d4ffe3f2d5c14bde573b084b23cfb4446d177cb50dd6f5fe1b53c8",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position",
+        "COLOR"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31685",
+        "1:ResourceId::31688"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 102,
+    "eventId": 1401,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 60,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "44ec744dbf3365c90b10d976c7e60ce5de7cad8a7fcd1f340b7b00d99abeab4d",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31685",
+        "1:ResourceId::31688"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 103,
+    "eventId": 1411,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 54,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "bfe7b55a166ab9201b656e8ad4e21384b34f09d4a7f5f28bf2892aa5e0417e08",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31685",
+        "1:ResourceId::31688"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 104,
+    "eventId": 1421,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::31685",
+        "1:ResourceId::31688"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 105,
+    "eventId": 1430,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32072"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 106,
+    "eventId": 1438,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32075"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 107,
+    "eventId": 1446,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32078"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 108,
+    "eventId": 1454,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32081"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 109,
+    "eventId": 1462,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32359"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 110,
+    "eventId": 1470,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::81709"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 111,
+    "eventId": 1478,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 30,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::32090"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 112,
+    "eventId": 1489,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 108,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "TEXCOORD",
+      "SV_Position",
+      "COLOR"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "dec933a50556548ce7a21aea58613a1a2a51f7708b4f882264af9ff6c342af7e",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "TEXCOORD",
+        "SV_Position",
+        "COLOR"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "78485e7005bbf538b45d6f10b58b2a6562c322d8e7dbbe43d345c14e33e5ad1e",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::4357",
+        "1:ResourceId::4360"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  },
+  {
+    "actionId": 113,
+    "eventId": 1499,
+    "name": "<unnamed>",
+    "flags": "ActionFlags.Indexed|Drawcall",
+    "markerPath": [
+      "Colour Pass #5 (1 Targets)"
+    ],
+    "topMarker": "Colour Pass #5 (1 Targets)",
+    "numIndices": 240,
+    "numInstances": 0,
+    "topology": 5,
+    "vertexInputNames": [
+      "COLOR",
+      "SV_Position"
+    ],
+    "outputResources": [],
+    "depthResource": [],
+    "vs": {
+      "hash": "44ec744dbf3365c90b10d976c7e60ce5de7cad8a7fcd1f340b7b00d99abeab4d",
+      "entryPoint": "main",
+      "resourceNames": [],
+      "constantBlocks": [
+        "Constants"
+      ],
+      "inputSemantics": [
+        "COLOR",
+        "SV_Position"
+      ],
+      "boundResourceIds": [],
+      "boundConstantBufferIds": [
+        "0:ResourceId::507"
+      ],
+      "catalogMatch": null
+    },
+    "ps": {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "entryPoint": "main",
+      "resourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ],
+      "constantBlocks": [],
+      "outputSemantics": [
+        "SV_Target"
+      ],
+      "boundResourceIds": [
+        "0:ResourceId::4357",
+        "1:ResourceId::4360"
+      ],
+      "boundConstantBufferIds": [],
+      "catalogMatch": null
+    }
+  }
+]

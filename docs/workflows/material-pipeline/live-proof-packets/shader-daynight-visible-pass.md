@@ -21,9 +21,9 @@ Related docs:
 ShaderDayNightParameters Visible-Pass Proof
 ├─ Externally proved family identity ~ 68%
 ├─ Reveal-helper packet ~ 74%
-├─ Candidate live-root isolation ~ 79%
+├─ Candidate live-root isolation ~ 86%
 ├─ Exact visible-pass contract ~ 36%
-└─ Implementation-diagnostic value ~ 67%
+└─ Implementation-diagnostic value ~ 73%
 ```
 
 ## Externally proved family identity
@@ -46,12 +46,13 @@ Strongest current local roots:
 
 - `tmp/probe_sample_ep06_ep10_coverage.txt`: `ClientFullBuild0.package | 01661233:00000000:0737711577697F1C`
 - `tmp/probe_sample_next24_coverage_after_nonvisual_fix.txt`: `ClientFullBuild0.package | 01661233:00000000:00B6ABED04A8F593`
+- `tmp/sample_payload_batch_after_full5.txt`: `ClientFullBuild0.package | 01661233:00000000:1463BD19EE39DC8C`
 
 Why these roots matter:
 
-- both are already isolated as Build/Buy model roots with explicit `ShaderDayNightParameters=1`
-- both stay in the `textured` payload path rather than a purely non-visual bucket
-- both coexist with a narrow adjacent packet dominated by `WriteDepthMask`, which makes them useful comparison targets instead of diffuse-noise dumps
+- all three are already isolated as Build/Buy model roots with explicit `ShaderDayNightParameters=1`
+- all three stay in the `textured` payload path rather than a purely non-visual bucket
+- all three coexist with a narrow adjacent packet dominated by `WriteDepthMask`, which makes them useful comparison targets instead of diffuse-noise dumps
 
 Representative local evidence:
 
@@ -59,6 +60,8 @@ Representative local evidence:
 - `tmp/probe_sample_ep06_ep10_coverage.txt`: `payload=textured=4`
 - `tmp/probe_sample_next24_coverage_after_nonvisual_fix.txt`: `Material Families: ShaderDayNightParameters=1, WriteDepthMask=1`
 - `tmp/probe_sample_next24_coverage_after_nonvisual_fix.txt`: `payload=textured=2`
+- `tmp/sample_payload_batch_after_full5.txt`: `Material family totals ... ShaderDayNightParameters=2, WriteDepthMask=9`
+- `tmp/sample_payload_batch_after_full5.txt`: `Material payload-by-family totals ... ShaderDayNightParameters/textured=2`
 
 Safe reading:
 
@@ -70,8 +73,9 @@ Safe reading:
 
 Useful local corroboration:
 
-- `tmp/precomp_sblk_inventory.json`: `name_guess = "ShaderDayNightParameters"` with repeated `LightsAnimLookupMap` and `samplerRevealMap` presence
-- the same inventory keeps `samplerRevealMap` concentrated enough to treat it as recurring helper vocabulary, not a one-off typo
+- `tmp/precomp_sblk_inventory.json`: `name_guess = "ShaderDayNightParameters"` with `occurrences = 5`
+- the same inventory keeps `LightsAnimLookupMap = 94` and `samplerRevealMap = 32`
+- the same inventory also shows neighboring `samplerRevealMap` carry-through counts like `41`, `39`, and `21`, which supports recurring helper vocabulary rather than a one-off typo
 - `tmp/precomp_shader_profiles.json` repeats both `samplerRevealMap` and `LightsAnimLookupMap` across profile packets
 - [Shared TS4 Material, Texture, And UV Pipeline](../../../shared-ts4-material-texture-pipeline.md) already preserves these names under the `lighting/reveal/runtime helper` bucket instead of flattening them into ordinary slots
 
@@ -108,12 +112,12 @@ Current repo behavior is useful only as a diagnostic boundary:
 Diagnostic value of this packet:
 
 - it blocks slot-flattening in future docs
-- it gives two concrete roots for future side-by-side visual/manual inspection
+- it gives three concrete roots for future side-by-side visual/manual inspection
 
 ## Best next inspection step
 
 1. Keep the Sims-lineage `RevealMap` packet as the external helper baseline.
-2. Use the two current `ClientFullBuild0.package` roots as the first concrete visible-pass comparison packet.
+2. Use the three current `ClientFullBuild0.package` roots as the first concrete visible-pass comparison packet.
 3. Compare those roots against the adjacent `WriteDepthMask` rows before making any stronger slot claims.
 
 ## Honest limit

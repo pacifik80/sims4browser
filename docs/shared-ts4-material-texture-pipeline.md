@@ -7,6 +7,7 @@ Primary rule:
 - external references, creator tooling, and external snapshots are the authority base
 - this guide turns that evidence into one shared architectural model
 - current repo code is useful only as implementation boundary, failure evidence, or a place where the current approximation is visible
+- research priority must be set corpus-wide across the whole game, not by whichever single package slice currently has the easiest fixtures
 
 Use it when the task is about texture linkage, shader/material decoding, UV routing, viewport rendering, or export for `BuildBuy`, `CAS`, or `Sim`.
 
@@ -17,6 +18,10 @@ Related docs:
 - [Material pipeline deep dives](workflows/material-pipeline/README.md)
 - [Build/Buy material authority matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
 - [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md)
+- [Package-Material Pass Filtering Contract](workflows/material-pipeline/package-material-pass-filtering-contract.md)
+- [SimGlass Build/Buy Evidence Order](workflows/material-pipeline/simglass-buildbuy-evidence-order.md)
+- [SimGlass Domain Home Boundary](workflows/material-pipeline/simglass-domain-home-boundary.md)
+- [SimGlass Character Transparency Boundary](workflows/material-pipeline/simglass-character-transparency-boundary.md)
 - [Skintone And Overlay Compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
 - [Architecture](architecture.md)
 - [Sim domain roadmap](sim-domain-roadmap.md)
@@ -44,6 +49,32 @@ The correct architectural stance is:
 - shader family, texture role, UV channel, UV transform, alpha mode, and layering rules must be interpreted the same way everywhere unless a real format rule proves otherwise
 
 This matches both the current repo direction and the way the game content is structured: object content, CAS content, and assembled Sims use different identity and discovery paths, but they still resolve into the same broad class of render inputs.
+
+## Priority discipline
+
+The research task is about TS4 materials across the whole game corpus, not about one pack or one convenient asset cluster.
+
+Priority should therefore be set from the widest safe view first:
+
+- which shader/material families exist at all
+- how common they are across the corpus
+- how important they are to correct rendering/material behavior
+- how strong the external evidence is
+- how directly the result can be turned into an implementation-ready spec
+
+Safe rule:
+
+- package-specific routes such as `EP10` are useful only as secondary validation/evidence lanes
+- they may provide good fixtures
+- they must not define the global research queue by convenience alone
+
+One current narrow example of that rule:
+
+- `SimGlass` has its primary external semantic home in `CAS/Sim` creator and tooling packets
+- `Build/Buy` may still surface bounded carry-over evidence for `SimGlass`
+- the current cross-domain summary of that boundary now also lives in [SimGlass Domain Home Boundary](workflows/material-pipeline/simglass-domain-home-boundary.md)
+- the current character-transparency split for `SimGlass` versus generic alpha handling now also lives in [SimGlass Character Transparency Boundary](workflows/material-pipeline/simglass-character-transparency-boundary.md)
+- but that evidence must be weighted through [SimGlass Build/Buy Evidence Order](workflows/material-pipeline/simglass-buildbuy-evidence-order.md) instead of being allowed to redefine the family from object-side package patterns
 
 ## Universal shader contract
 
@@ -280,6 +311,30 @@ Material-bearing inputs can come from different places:
 - skintone and region-map inputs that modify or route material behavior
 
 The collector must preserve provenance. Do not flatten everything into one anonymous texture bag.
+
+### Stage 1.5. Apply scene/pass filtering when external GPU evidence exists
+
+If external GPU pass evidence exists, the browser should filter package-side candidates before deeper ownership matching.
+
+Current safe rules:
+
+- apply `SceneDomain` as a hard gate:
+  - `BuildBuy -> WorldRoom`
+  - `CasPart -> CAS`
+  - `SimPart -> CAS` until a separate checked-in live-Sim capture layer exists
+- apply `PassClass` as a hard gate:
+  - `MaterialLike` is eligible
+  - `Unknown` is reserve-only
+  - `CompositorOrUi` is excluded from normal authored-material ownership
+  - `DepthOnly` is excluded from final visible-material ownership
+
+Current contract:
+
+- [Package-Material Pass Filtering Contract](workflows/material-pipeline/package-material-pass-filtering-contract.md)
+
+Safe rule:
+
+- do not let compositor/depth helper passes compete on equal footing with visible material passes during package-material matching
 
 ### Stage 2. Decode material semantics
 
@@ -1527,6 +1582,8 @@ Until the remaining gaps are closed, follow these rules:
 5. If the index lacks stable facts required for this shared pipeline, add them to explicit indexing passes rather than runtime lazy mutation.
 6. Preserve raw field identity when semantics are uncertain. Losing provenance is worse than carrying an extra approximate slot.
 7. `CASP`, `GEOM/MTNF`, `Skintone`, and `RegionMap` are all render-relevant inputs. Do not collapse them into a single "texture candidate" bucket.
+8. If external GPU pass evidence exists, apply `SceneDomain` and `PassClass` filtering before deeper package-material ownership ranking.
+9. Do not let `CompositorOrUi` or `DepthOnly` be promoted as final visible authored-material ownership without explicit contrary proof.
 
 ## Validation checklist for future packets
 

@@ -20,10 +20,10 @@ Related docs:
 ```text
 GenerateSpotLightmap / NextFloorLightMapXform
 ├─ Externally proved family identity ~ 74%
-├─ Local carry-through packet ~ 77%
-├─ Candidate live-root isolation ~ 58%
+├─ Local carry-through packet ~ 84%
+├─ Candidate live-root isolation ~ 64%
 ├─ Exact matrix semantics ~ 18%
-└─ Implementation-diagnostic value ~ 64%
+└─ Implementation-diagnostic value ~ 71%
 ```
 
 ## Externally proved family identity
@@ -42,9 +42,10 @@ Safe reading:
 
 Strongest current local packet:
 
-- `tmp/precomp_sblk_inventory.json`: `name_guess = "GenerateSpotLightmap"` with repeated presence
+- `tmp/precomp_sblk_inventory.json`: `name_guess = "GenerateSpotLightmap"` with `occurrences = 6`
 - `tmp/precomp_sblk_inventory.json`: `NextFloorLightMapXform = 14`
 - `tmp/precomp_sblk_inventory.json`: secondary `NextFloorLightMapXform = 3`
+- `tmp/precomp_sblk_inventory.json`: the stronger generated-light packet also keeps `SeaLevel = 14`
 - `tmp/precomp_shader_profiles.json`: repeated `NextFloorLightMapXform` rows
 - the same local inventory still shows `SimGhostGlassCAS` as a weaker adjacent carry-through case rather than the semantic home of the helper
 
@@ -67,6 +68,7 @@ Why these roots matter:
 - they do not yet prove `GenerateSpotLightmap` directly
 - they do give the nearest currently isolated visible/projective comparison packet in the same local survey family
 - they help keep the generated-light row tied to projection/light-space behavior instead of ordinary surface decoding
+- they are still comparison controls, not the first direct generated-light fixture
 
 ## What this packet is trying to prove
 

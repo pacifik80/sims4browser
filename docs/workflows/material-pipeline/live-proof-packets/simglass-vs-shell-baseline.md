@@ -11,7 +11,18 @@ Related docs:
 - [Material Pipeline Deep Dives](../README.md)
 - [Edge-Family Matrix](../edge-family-matrix.md)
 - [P1 Live-Proof Queue](../p1-live-proof-queue.md)
+- [SimGlass Build/Buy Evidence Limit](simglass-buildbuy-evidence-limit.md)
+- [SimGlass Build/Buy Promotion Gate](simglass-buildbuy-promotion-gate.md)
+- [SimGlass Build/Buy Disqualifiers](simglass-buildbuy-disqualifiers.md)
+- [SimGlass Build/Buy Winning Signals](simglass-buildbuy-winning-signals.md)
+- [SimGlass Build/Buy Outcome Ladder](simglass-buildbuy-outcome-ladder.md)
+- [SimGlass Build/Buy Mixed-Signal Resolution](simglass-buildbuy-mixed-signal-resolution.md)
+- [SimGlass Build/Buy Provisional Candidate Checklist](simglass-buildbuy-provisional-candidate-checklist.md)
+- [SimGlass Build/Buy Winning Fixture Checklist](simglass-buildbuy-winning-fixture-checklist.md)
+- [Build/Buy Transparent Object Classification Boundary](buildbuy-transparent-object-classification-boundary.md)
+- [SimGlass EP10 Transparent-Decor Route](simglass-ep10-transparent-decor-route.md)
 - [SimSkin, SimGlass, And SimSkinMask](../family-sheets/simskin-simglass-simskinmask.md)
+- [Object Glass And Transparency](../family-sheets/object-glass-and-transparency.md)
 - [CAS/Sim Material Authority Matrix](../cas-sim-material-authority-matrix.md)
 - [Source map and trust levels](../../../references/codex-wiki/04-research-and-sources/01-source-map.md)
 
@@ -21,7 +32,7 @@ Related docs:
 SimGlass Versus Shell Baseline
 ├─ Externally proved identity ~ 87%
 ├─ Local external snapshot packet ~ 86%
-├─ Candidate live-target isolation ~ 84%
+├─ Candidate live-target isolation ~ 88%
 ├─ Exact shell-ranking proof ~ 24%
 └─ Implementation-diagnostic value ~ 68%
 ```
@@ -45,6 +56,7 @@ Safe reading:
 - `SimGlass` should survive as provenance even when the full TS4 material contract is not yet solved
 - the burden of proof is on any implementation that wants to flatten it into generic shell or alpha behavior
 - the packet may use `BuildBuy` or CAS-adjacent fixtures, but those fixtures only prove authority paths and family survival before the shared shader/material contract
+- after the new object-transparent split, transparent `Build/Buy` fixtures must also be checked against object-side glass/transparency branches before they are promoted into the `SimGlass` row
 - current creator evidence makes one narrower search rule safe too:
   - `SimGlass` is strongly associated with thin transparent layered content
   - that makes obvious architectural windows a weaker next fixture class than transparent decor or accessory-like objects with isolated transparent submeshes
@@ -132,6 +144,7 @@ Safe reading:
 - the family now survives at a stronger TS4-facing layer than `name_guess` archaeology alone
 - this is enough to keep the family on the candidate list as a survey-visible branch
 - it is not enough to claim that Build/Buy `SimGlass` already means the same thing as character-side `SimGlass`
+- it is not enough to outrank the external object-side transparent split by itself
 - it is still not a row-level asset root
 - the survey-backed next-step route is now narrower:
   - use the fish-bowl/display/lantern/mirror cluster first
@@ -166,6 +179,8 @@ Safe reading:
 - candidate-resolution plus root-list presence is enough to rank the next search route
 - it is not enough to claim a closed `SimGlass` live fixture
 - current implementation inconsistency here is diagnostic boundary, not evidence that the candidate cluster is irrelevant
+- the stronger survey-backed route is now promoted into its own packet:
+  - [SimGlass EP10 Transparent-Decor Route](simglass-ep10-transparent-decor-route.md)
 
 ### Candidate group D: shell baseline controls
 
@@ -223,7 +238,8 @@ Diagnostic value of this packet:
    - `lightWall_EP10GENlantern`
    - `mirrorWall1x1_EP10BATHsunrise`
 8. Treat the transformed roots in that cluster as survey-backed search anchors until one of them can be reopened cleanly as a stable fixture.
-9. Only after that fails should the search widen back out to other package slices.
+9. Classify any reopened transparent object against the object-side transparent branches before attaching it to the `SimGlass` row.
+10. Only after that fails should the search widen back out to other package slices.
 
 ## Honest limit
 
@@ -237,4 +253,15 @@ What it does prove:
 - creator-facing TS4 transparency guidance now makes the search class narrower too: `SimGlass` is tied more strongly to transparent CAS-like content than to generic architectural glass
 - the current `EP10` survey now also gives one broader candidate cluster for the next object-side pass: fish-bowl, display-shelf, shop-display, lantern, and mirror roots beat the window-heavy packet as the next search route
 - those transformed roots are still candidate anchors rather than closed fixtures, because current direct reopen attempts do not yet reconstruct them as Build/Buy assets
+- the current evidence ceiling for that whole Build/Buy side is now frozen separately:
+  - [SimGlass Build/Buy Evidence Limit](simglass-buildbuy-evidence-limit.md)
+- the current winning-branch burden for the first valid `Build/Buy SimGlass` fixture is now frozen separately too:
+  - [SimGlass Build/Buy Promotion Gate](simglass-buildbuy-promotion-gate.md)
+- the branch-specific losing conditions and winning record are now frozen separately too:
+  - [SimGlass Build/Buy Disqualifiers](simglass-buildbuy-disqualifiers.md)
+  - [SimGlass Build/Buy Winning Signals](simglass-buildbuy-winning-signals.md)
+  - [SimGlass Build/Buy Outcome Ladder](simglass-buildbuy-outcome-ladder.md)
+  - [SimGlass Build/Buy Mixed-Signal Resolution](simglass-buildbuy-mixed-signal-resolution.md)
+  - [SimGlass Build/Buy Provisional Candidate Checklist](simglass-buildbuy-provisional-candidate-checklist.md)
+  - [SimGlass Build/Buy Winning Fixture Checklist](simglass-buildbuy-winning-fixture-checklist.md)
 - current repo approximation must be judged against that preserved identity, not against a generic fallback story

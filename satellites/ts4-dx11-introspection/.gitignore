@@ -1,0 +1,12 @@
+captures/
+logs/
+docs/reports/recon-*.json
+docs/reports/recon-*.md
+docs/raw/disassembly/
+docs/raw/package-probes/
+ender_doc/*.rdc
+ender_doc/analysis/**/renderdoc-extract.raw.json
+bin/
+obj/
+out/
+.vs/

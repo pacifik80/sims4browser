@@ -1,0 +1,170 @@
+{
+  "captureFilename": "C:\\Users\\stani\\PROJECTS\\Sims4Browser\\satellites\\ts4-dx11-introspection\\ender_doc\\yafem_amale_table.rdc",
+  "thumbnailPath": "C:\\Users\\stani\\PROJECTS\\Sims4Browser\\satellites\\ts4-dx11-introspection\\ender_doc\\analysis\\yafem_amale_table\\yafem_amale_table.thumb.png",
+  "actionCount": 123,
+  "drawCount": 89,
+  "presentCount": 1,
+  "topPasses": [
+    {
+      "pass": "Colour Pass #5 (1 Targets)",
+      "drawCount": 52,
+      "sampleEventId": 996,
+      "sampleVsHash": "fa885f3261ac4ca25f9012169f54ab9a5b33a39d94b80b5297adcd213b56eeca",
+      "samplePsHash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "uniqueVsCount": 13,
+      "uniquePsCount": 8,
+      "sampleResourceNames": [
+        "tex[0]",
+        "tex[1]"
+      ]
+    },
+    {
+      "pass": "Colour Pass #3 (1 Targets + Depth)",
+      "drawCount": 15,
+      "sampleEventId": 522,
+      "sampleVsHash": "152410d157b9e8bf895dcaa2e277c7fd0ab2a2f939e0dc85631bdebaa0aed8aa",
+      "samplePsHash": "c91ba73b429ce3c25469c84e639dcb18deb1d27f78d8f76915b58008546a1d34",
+      "uniqueVsCount": 8,
+      "uniquePsCount": 9,
+      "sampleResourceNames": [
+        "texture0",
+        "texture1",
+        "texture2",
+        "texture3",
+        "texture4"
+      ]
+    },
+    {
+      "pass": "Colour Pass #2 (1 Targets)",
+      "drawCount": 10,
+      "sampleEventId": 329,
+      "sampleVsHash": "0a7c2e45fef76153b1039d7219c234347f4e569c6ea0b14d1a68947405bc7958",
+      "samplePsHash": null,
+      "uniqueVsCount": 2,
+      "uniquePsCount": 0,
+      "sampleResourceNames": []
+    },
+    {
+      "pass": "<unmarked>",
+      "drawCount": 8,
+      "sampleEventId": 276,
+      "sampleVsHash": "a1cdf27bec3e2295af2f0ef80c217a26f0b1f86545be7db82545394053b18f4f",
+      "samplePsHash": "16f3acf292525e958f05fb1591f821cbc4fd275de4a26bccd15e9dc61e36371f",
+      "uniqueVsCount": 5,
+      "uniquePsCount": 5,
+      "sampleResourceNames": [
+        "texture0"
+      ]
+    },
+    {
+      "pass": "Colour Pass #1 (1 Targets)",
+      "drawCount": 3,
+      "sampleEventId": 85,
+      "sampleVsHash": "b8374a49ad2f13740ba6483f2daad75a393e99596b527b40235fd0a45313a9b4",
+      "samplePsHash": null,
+      "uniqueVsCount": 1,
+      "uniquePsCount": 0,
+      "sampleResourceNames": []
+    },
+    {
+      "pass": "Colour Pass #4 (1 Targets)",
+      "drawCount": 1,
+      "sampleEventId": 926,
+      "sampleVsHash": "315f9c3eccc12416061fcf9d4916d287171b6757df89b7362e5a86dc95c3fee2",
+      "samplePsHash": "1fdc3b1b5902cb7248cbe4a2f3beab962c9d0a1238bcb2732dbfa3fd2a5a5ef6",
+      "uniqueVsCount": 1,
+      "uniquePsCount": 1,
+      "sampleResourceNames": [
+        "texture0"
+      ]
+    }
+  ],
+  "uniqueVsHashes": 30,
+  "uniquePsHashes": 23,
+  "catalogMatchedVs": 0,
+  "catalogMatchedPs": 0,
+  "topVsHashes": [
+    {
+      "hash": "60558f08c1d6487e2109572c707d7bb1a296dd1b3758be01935927e19588036c",
+      "draws": 23
+    },
+    {
+      "hash": "730aa2d7b0ae6ce5e3f35c412f79b216606fd0024112a3bbf521584fe08025d4",
+      "draws": 8
+    },
+    {
+      "hash": "44ec744dbf3365c90b10d976c7e60ce5de7cad8a7fcd1f340b7b00d99abeab4d",
+      "draws": 6
+    },
+    {
+      "hash": "bfe7b55a166ab9201b656e8ad4e21384b34f09d4a7f5f28bf2892aa5e0417e08",
+      "draws": 6
+    },
+    {
+      "hash": "e6fbcbdf63316cdd1975660186b1cf01e818f9ef6c76f55946b641fe89d51c5c",
+      "draws": 5
+    },
+    {
+      "hash": "152410d157b9e8bf895dcaa2e277c7fd0ab2a2f939e0dc85631bdebaa0aed8aa",
+      "draws": 4
+    },
+    {
+      "hash": "06a508314174ad6051889e3150172df250c2b874d257bba0fe0737d7992e85e0",
+      "draws": 4
+    },
+    {
+      "hash": "3a2e5a1cf5200b208b1e250f00b842a674ef39554ec39f59477308dbd1e1fdff",
+      "draws": 4
+    },
+    {
+      "hash": "b8374a49ad2f13740ba6483f2daad75a393e99596b527b40235fd0a45313a9b4",
+      "draws": 3
+    },
+    {
+      "hash": "0a7c2e45fef76153b1039d7219c234347f4e569c6ea0b14d1a68947405bc7958",
+      "draws": 2
+    }
+  ],
+  "topPsHashes": [
+    {
+      "hash": "fb5fbda27918692ba5985b396367d51773bc051ef6c7a5ec8c3849546a7a8af0",
+      "draws": 16
+    },
+    {
+      "hash": "c953833490b8a1d4589083c9c7fae2153fb42c5a53d7eb6bcca5b1eb5734cff1",
+      "draws": 15
+    },
+    {
+      "hash": "da4f32e3cb166e4e015f2f409cb0d145980f15dbcc4ff7a3e7c15810f0a4520c",
+      "draws": 8
+    },
+    {
+      "hash": "30a22b2a700647c8ccc104b62092dc1fe23682eeca49a26609b0c383a7a4566d",
+      "draws": 6
+    },
+    {
+      "hash": "c91ba73b429ce3c25469c84e639dcb18deb1d27f78d8f76915b58008546a1d34",
+      "draws": 4
+    },
+    {
+      "hash": "fd0b8ed626b36fe70549703619e62520d2137c9bc4edf1714b611c3614714f13",
+      "draws": 4
+    },
+    {
+      "hash": "2b9aff060ca135b29b5dce20db219f76c11541eaec863442d1a213f13dff9817",
+      "draws": 4
+    },
+    {
+      "hash": "78485e7005bbf538b45d6f10b58b2a6562c322d8e7dbbe43d345c14e33e5ad1e",
+      "draws": 3
+    },
+    {
+      "hash": "72b2593509ce32a8495d177bf5ba98522a6bb4fee1416821b80d3409211630b2",
+      "draws": 2
+    },
+    {
+      "hash": "16f3acf292525e958f05fb1591f821cbc4fd275de4a26bccd15e9dc61e36371f",
+      "draws": 1
+    }
+  ]
+}

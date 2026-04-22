@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/sims4browser/ts4-dx11-introspection/context-tag.schema.json",
+  "title": "TS4 DX11 Context Tag",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "world_mode",
+    "scene_label",
+    "family_focus",
+    "scene_class",
+    "expected_candidate_clusters",
+    "target_assets_or_effects",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "world_mode": {
+      "type": "string",
+      "enum": [
+        "CAS",
+        "BuildBuy",
+        "LiveMode"
+      ]
+    },
+    "scene_label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "family_focus": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "shader-daynight",
+          "generated-light",
+          "projection-reveal"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "scene_class": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "lighting-heavy",
+          "reveal-aware",
+          "refraction-adjacent",
+          "projection-heavy",
+          "indoor-lit",
+          "night-scene",
+          "day-scene"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "expected_candidate_clusters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "F03-maptex",
+          "F04-srctex",
+          "F04-parameter-heavy",
+          "F05-color-aware"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "target_assets_or_effects": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

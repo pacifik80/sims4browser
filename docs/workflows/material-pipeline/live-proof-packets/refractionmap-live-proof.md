@@ -12,6 +12,24 @@ Related docs:
 - [Edge-Family Matrix](../edge-family-matrix.md)
 - [P1 Live-Proof Queue](../p1-live-proof-queue.md)
 - [Projection, Reveal, And Lightmap Families](../family-sheets/projection-reveal-lightmap.md)
+- [Refraction Evidence Ledger](../refraction-evidence-ledger.md)
+- [Refraction Bridge Fixture Boundary](../refraction-bridge-fixture-boundary.md)
+- [Refraction Companion-Material Outcome Ladder](refraction-companion-material-outcome-ladder.md)
+- [Refraction Companion-Material Checklist](refraction-companion-material-checklist.md)
+- [Refraction Companion MATD-vs-MTST Boundary](refraction-companion-matd-vs-mtst-boundary.md)
+- [Refraction Adjacent-Helper Boundary](refraction-adjacent-helper-boundary.md)
+- [Refraction LilyPad Direct MATD Floor](refraction-lilypad-direct-matd-floor.md)
+- [Refraction LilyPad Projective Floor Boundary](refraction-lilypad-projective-floor-boundary.md)
+- [Refraction LilyPad No Direct Family Surface](refraction-lilypad-no-direct-family-surface.md)
+- [Refraction LilyPad Escalation Boundary](refraction-lilypad-escalation-boundary.md)
+- [Refraction Post-LilyPad Pivot](refraction-post-lilypad-pivot.md)
+- [Refraction Next-Route Priority](refraction-next-route-priority.md)
+- [Refraction 0389 Clean-Route Baseline](refraction-0389-clean-route-baseline.md)
+- [Refraction 0124 Mixed-Control Floor](refraction-0124-mixed-control-floor.md)
+- [Refraction 0389 Identity Gap](refraction-0389-identity-gap.md)
+- [Refraction 0389 Versus LilyPad Floor](refraction-0389-vs-lilypad-floor.md)
+- [Refraction 0389 No Signal Upgrade](refraction-0389-no-signal-upgrade.md)
+- [Refraction Post-0389 Handoff Boundary](refraction-post-0389-handoff-boundary.md)
 - [Shader Family Registry](../shader-family-registry.md)
 - [Source map and trust levels](../../../references/codex-wiki/04-research-and-sources/01-source-map.md)
 
@@ -21,8 +39,10 @@ Related docs:
 RefractionMap Live Proof
 ├─ Externally proved family identity ~ 73%
 ├─ Local family-local parameter isolation ~ 82%
-├─ Candidate live-root isolation ~ 86%
-├─ Build/Buy object/material seam ~ 79%
+├─ Candidate live-root isolation ~ 100%
+├─ Build/Buy object/material seam ~ 90%
+├─ Named fixture seam result ~ 89%
+├─ Negative-result ceiling ~ 91%
 ├─ Exact slot contract ~ 21%
 └─ Implementation-diagnostic value ~ 79%
 ```
@@ -71,6 +91,8 @@ Current honest state:
 - the nearest TS4-facing adjacent projective roots currently isolated in this workspace are:
   - `EP10\\ClientFullBuild0.package | 01661233:00000000:00F643B0FDD2F1F7` in `tmp/probe_00F6_after_projective_packed_fix.txt`
   - `EP04\\ClientFullBuild0.package | 01661233:00000000:0124E3B8AC7BEE62` in `tmp/probe_0124_projective_current.txt`
+- one further clean projective route is now isolated in sampled coverage:
+  - `EP11\\ClientFullBuild0.package | 01661233:00000000:0389A352F5EDFD45` in `tmp/probe_sample_medium_coverage.txt`
 - the strongest fully textured visible comparison roots in the same edge-family neighborhood are:
   - `EP08\\ClientFullBuild0.package | 01661233:00000000:0737711577697F1C` in `tmp/probe_0737711577697F1C.txt`
   - `EP03\\ClientFullBuild0.package | 01661233:00000000:00B6ABED04A8F593` in `tmp/probe_00b6_daynight_after_family_slots.txt`
@@ -97,6 +119,12 @@ Current honest state:
   - but `LOD 00010002` falls through to `FresnelOffset=1` with `DefaultMaterialDecodeStrategy`
   - its current root probe falls back to same-instance indexed `diffuse` from `EP04\\ClientFullBuild2.package`
   - this makes it useful as a boundary case, not as a clean refraction proxy
+- `0389A352F5EDFD45` is now the next cleaner route beyond `lilyPad`:
+  - `SceneReady`
+  - `textured=1`
+  - `WorldToDepthMapSpaceMatrix=1`
+  - `ProjectiveMaterialDecodeStrategy=1`
+  - unlike `0124...`, it is not currently carrying the same mixed `FresnelOffset` / fallback-diffuse boundary
 - the visible comparison roots also currently emit saved probe textures under `tmp/probe-textures/`, but those files are comparison artifacts, not direct refraction proof
 
 ## Build/Buy object/material seam
@@ -124,6 +152,7 @@ Safe reading:
 
 - the named lily-pad object is now strong enough to use as a Build/Buy object-material inspection fixture
 - this proves the object/material seam for the fixture, not the final semantics of `RefractionMap`
+- [Refraction Bridge Fixture Boundary](../refraction-bridge-fixture-boundary.md) now freezes that distinction explicitly so the named bridge root is not overread as slot closure
 - the next proof step should stay at the companion-material layer and only then revisit family-local params like `tex1`
 - if the seam closes, it still closes as shared refraction-family semantics reached through one authority route, not as a `BuildBuy`-specific shader rule
 - do not generalize the same candidate-resolution transform into a universal rule:
@@ -156,6 +185,21 @@ Not being proved yet:
 - one concrete end-to-end live asset root where `RefractionMap` itself, not just the adjacent projective bridge, is surfaced directly by name
 - whether the lily-pad seam resolves through direct `MATD` only or through any meaningful `MTST` variant path in the actual object packet
 
+Current seam result already supported:
+
+- [Refraction LilyPad Direct MATD Floor](refraction-lilypad-direct-matd-floor.md) now records that the current `00F643...` probe already surfaces a direct embedded `MATD` floor
+- [Refraction LilyPad Projective Floor Boundary](refraction-lilypad-projective-floor-boundary.md) now records that the same named fixture currently surfaces `WorldToDepthMapSpaceMatrix` / `ProjectiveMaterialDecodeStrategy` as the stable projective floor, not direct `RefractionMap` slot closure
+- [Refraction LilyPad No Direct Family Surface](refraction-lilypad-no-direct-family-surface.md) now records that the same probe still does not surface direct `RefractionMap`, `tex1`, or `samplerRefractionMap`
+- [Refraction LilyPad Escalation Boundary](refraction-lilypad-escalation-boundary.md) now records when this fixture should stop being deepened and remain a bounded floor/ceiling packet instead
+- [Refraction Post-LilyPad Pivot](refraction-post-lilypad-pivot.md) now records that the next useful packet is no longer “push `lilyPad` again” but “test the next clean route above the current floor/ceiling”
+- [Refraction Next-Route Priority](refraction-next-route-priority.md) now fixes the restart-safe order: `0389A352F5EDFD45` next, `00F643...` as named floor/ceiling reference, `0124...` as mixed/control route, and visible neighbors only as controls
+- [Refraction 0389 Clean-Route Baseline](refraction-0389-clean-route-baseline.md) now records the first honest baseline for the next clean route beyond `lilyPad`
+- [Refraction 0124 Mixed-Control Floor](refraction-0124-mixed-control-floor.md) now records exactly why `0124...` stays a control route instead of outranking `0389...`
+- [Refraction 0389 Identity Gap](refraction-0389-identity-gap.md) now records that `0389...` is still only coverage-backed and not yet a named object/material fixture
+- [Refraction 0389 Versus LilyPad Floor](refraction-0389-vs-lilypad-floor.md) now fixes the narrower comparison: `0389...` currently matches the `lilyPad` floor shape but not the stronger named seam/identity packet
+- [Refraction 0389 No Signal Upgrade](refraction-0389-no-signal-upgrade.md) now freezes the current ceiling: `0389...` repeats the floor but does not yet upgrade the refraction branch above `lilyPad`
+- [Refraction Post-0389 Handoff Boundary](refraction-post-0389-handoff-boundary.md) now freezes the route exit rule so the batch does not keep looping on refraction without a new inspection layer
+
 ## Current implementation boundary
 
 Current repo behavior is useful only as a diagnostic boundary:
@@ -176,8 +220,32 @@ Diagnostic value of this packet:
 4. Use the now-named `EP10\\ClientFullBuild0.package | sculptFountainSurface3x3_EP10GENlilyPad -> 01661233:00000000:00F643B0FDD2F1F7` link as the first durable row-level fixture.
 5. Keep `0124E3B8AC7BEE62` as a mixed boundary case because one sampled LOD already lands on `FresnelOffset` and the visible texture path currently falls back to same-instance diffuse.
 6. Use the visible comparison roots `0737711577697F1C` and `00B6ABED04A8F593` to keep the edge-family neighborhood bounded.
-7. Inspect the named lily-pad fixture next at the object/material companion layer using the external `OBJD -> Model -> MLOD -> MATD/MTST` chain before making any direct slot claim for `tex1`.
-8. Repeat the same row-level extraction method for `SimGlass` after the lily-pad bridge packet is fully folded back into the matrix and queue.
+7. Keep the named lily-pad fixture as the current bounded reference root, not as the default next deep target:
+   - [Refraction Post-LilyPad Pivot](refraction-post-lilypad-pivot.md)
+8. Use the now-fixed next-route order:
+   - inspect `0389A352F5EDFD45` as the next clean route
+   - keep `00F643...` as the named floor/ceiling reference
+   - keep `0124...` as the mixed/control route
+   - keep `073771...` and `00B6...` as visible neighborhood controls
+   - [Refraction Next-Route Priority](refraction-next-route-priority.md)
+9. Preserve the route-specific baseline split instead of rediscovering it from raw `tmp` files:
+   - [Refraction 0389 Clean-Route Baseline](refraction-0389-clean-route-baseline.md)
+   - [Refraction 0124 Mixed-Control Floor](refraction-0124-mixed-control-floor.md)
+10. Keep the current `0389...` ceiling honest too:
+   - [Refraction 0389 Identity Gap](refraction-0389-identity-gap.md)
+   - [Refraction 0389 Versus LilyPad Floor](refraction-0389-vs-lilypad-floor.md)
+   - [Refraction 0389 No Signal Upgrade](refraction-0389-no-signal-upgrade.md)
+11. If `0389...` still does not rise above that ceiling, use the explicit handoff boundary instead of deepening refraction by inertia:
+   - [Refraction Post-0389 Handoff Boundary](refraction-post-0389-handoff-boundary.md)
+12. Force any renewed companion-material inspection through the explicit outcome ladder instead of fuzzy bridge-language:
+   - [Refraction Companion-Material Outcome Ladder](refraction-companion-material-outcome-ladder.md)
+13. Record the result through the explicit companion-material checklist before promoting a route any further:
+   - [Refraction Companion-Material Checklist](refraction-companion-material-checklist.md)
+14. Preserve `MATD` versus `MTST` as an inspection result rather than an assumption:
+   - [Refraction Companion MATD-vs-MTST Boundary](refraction-companion-matd-vs-mtst-boundary.md)
+15. Keep adjacent projective helpers as boundary evidence rather than direct family closure:
+   - [Refraction Adjacent-Helper Boundary](refraction-adjacent-helper-boundary.md)
+16. Repeat the same row-level extraction method for `SimGlass` only after the next refraction route is honestly bounded and the handoff boundary is actually reached.
 
 ## Honest limit
 

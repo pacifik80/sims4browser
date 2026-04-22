@@ -13,6 +13,7 @@ Primary rule:
 ## Current Sheets
 
 - [SimSkin, SimGlass, And SimSkinMask](simskin-simglass-simskinmask.md)
+- [Object Glass And Transparency](object-glass-and-transparency.md)
 - [CASHotSpotAtlas](cas-hotspot-atlas.md)
 - [Projection, Reveal, And Lightmap Families](projection-reveal-lightmap.md)
 - [ShaderDayNightParameters](shader-daynight-parameters.md)

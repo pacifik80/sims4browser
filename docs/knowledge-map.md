@@ -11,8 +11,10 @@ If the task is about shared TS4 render/material behavior:
 - start with [Shared TS4 Material, Texture, And UV Pipeline](shared-ts4-material-texture-pipeline.md)
 - open [Research Restart Guide](workflows/material-pipeline/research-restart-guide.md) first if the task is a resumed external-first research pass
 - then jump to [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md) if the question is object-side or Build/Buy-specific
+- then jump to [Build/Buy Stateful Material-Set Seam](workflows/material-pipeline/buildbuy-stateful-material-set-seam.md) if the question is specifically about `MTST`, `MaterialVariant`, or swatch/state selection
 - then jump to [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md) if the question is family-specific
 - then jump to [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md) if the question is profile- or slot-specific
+- then open [Documentation Status Catalog](workflows/material-pipeline/documentation-status-catalog.md) if the question is "what docs exist and how complete are they?"
 - then open [Source map and trust levels](references/codex-wiki/04-research-and-sources/01-source-map.md) when you need provenance
 
 If the task is about Sim assembly or body-shell logic:
@@ -48,6 +50,8 @@ These carry dense topic-specific knowledge that would bloat the main guides if l
 
 - [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
 - [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
+- [Build/Buy Stateful Material-Set Seam](workflows/material-pipeline/buildbuy-stateful-material-set-seam.md)
+- [Documentation Status Catalog](workflows/material-pipeline/documentation-status-catalog.md)
 - [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md)
 - [Research Restart Guide](workflows/material-pipeline/research-restart-guide.md)
 - [Edge-Family Matrix](workflows/material-pipeline/edge-family-matrix.md)
@@ -92,14 +96,16 @@ These are not source-of-truth design docs. They track current direction and rema
 1. [Shared TS4 Material, Texture, And UV Pipeline](shared-ts4-material-texture-pipeline.md)
 2. [Research Restart Guide](workflows/material-pipeline/research-restart-guide.md)
 3. [Build/Buy Material Authority Matrix](workflows/material-pipeline/buildbuy-material-authority-matrix.md)
-4. [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
-5. [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md)
-6. [Edge-Family Matrix](workflows/material-pipeline/edge-family-matrix.md)
-7. [P1 Live-Proof Queue](workflows/material-pipeline/p1-live-proof-queue.md)
-8. [Live-Proof Packets](workflows/material-pipeline/live-proof-packets/README.md)
-9. [Skintone And Overlay Compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
-10. [Family Sheets](workflows/material-pipeline/family-sheets/README.md)
-11. [Source map and trust levels](references/codex-wiki/04-research-and-sources/01-source-map.md)
+4. [Build/Buy Stateful Material-Set Seam](workflows/material-pipeline/buildbuy-stateful-material-set-seam.md)
+5. [Documentation Status Catalog](workflows/material-pipeline/documentation-status-catalog.md)
+6. [CAS/Sim Material Authority Matrix](workflows/material-pipeline/cas-sim-material-authority-matrix.md)
+7. [Shader Family Registry](workflows/material-pipeline/shader-family-registry.md)
+8. [Edge-Family Matrix](workflows/material-pipeline/edge-family-matrix.md)
+9. [P1 Live-Proof Queue](workflows/material-pipeline/p1-live-proof-queue.md)
+10. [Live-Proof Packets](workflows/material-pipeline/live-proof-packets/README.md)
+11. [Skintone And Overlay Compositor](workflows/material-pipeline/skintone-and-overlay-compositor.md)
+12. [Family Sheets](workflows/material-pipeline/family-sheets/README.md)
+13. [Source map and trust levels](references/codex-wiki/04-research-and-sources/01-source-map.md)
 
 ### I need family-specific CAS/Sim authority details
 

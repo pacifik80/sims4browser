@@ -721,12 +721,15 @@ public sealed partial class MainWindow : Window
             ? scene.Materials[materialIndex]
             : null;
         var primaryTexture = SelectPrimaryViewportTexture(material, renderMode, selectedSlot);
-        var hasExplicitTextureUvDirective = HasExplicitTextureUvDirective(primaryTexture);
-        var hasConfirmedTextureUvDirective = hasExplicitTextureUvDirective &&
-                                            primaryTexture is not null &&
-                                            !primaryTexture.IsApproximateUvTransform;
-        var requestedChannel = hasConfirmedTextureUvDirective
-            ? primaryTexture!.UvChannel
+        var sampling = SelectViewportSampling(material, primaryTexture, selectedSlot);
+        var hasExplicitUvDirective = HasExplicitSamplingDirective(sampling) || HasExplicitTextureUvDirective(primaryTexture);
+        var hasConfirmedUvDirective = sampling is not null
+            ? HasExplicitSamplingDirective(sampling) && !sampling.IsApproximate
+            : hasExplicitUvDirective &&
+              primaryTexture is not null &&
+              !primaryTexture.IsApproximateUvTransform;
+        var requestedChannel = hasConfirmedUvDirective
+            ? sampling?.UvChannel ?? primaryTexture!.UvChannel
             : mesh.PreferredUvChannel;
         IReadOnlyList<float> coordinates;
 
@@ -743,27 +746,26 @@ public sealed partial class MainWindow : Window
             coordinates = mesh.Uvs;
         }
 
-        if (requestedChannel == 1 && hasConfirmedTextureUvDirective)
+        if (requestedChannel == 1 && hasConfirmedUvDirective)
         {
             coordinates = NormalizeUvCoordinatesIfLocalSubspace(coordinates);
         }
 
         if (renderMode != SceneRenderMode.MaterialUv ||
-            primaryTexture is null ||
-            primaryTexture.IsApproximateUvTransform ||
-            (Math.Abs(primaryTexture.UvScaleU - 1f) < 0.0001f &&
-             Math.Abs(primaryTexture.UvScaleV - 1f) < 0.0001f &&
-             Math.Abs(primaryTexture.UvOffsetU) < 0.0001f &&
-             Math.Abs(primaryTexture.UvOffsetV) < 0.0001f))
+            !HasViewportUvTransform(sampling, primaryTexture))
         {
             return coordinates;
         }
 
         var transformed = new float[coordinates.Count];
+        var scaleU = sampling?.UvScaleU ?? primaryTexture!.UvScaleU;
+        var scaleV = sampling?.UvScaleV ?? primaryTexture!.UvScaleV;
+        var offsetU = sampling?.UvOffsetU ?? primaryTexture!.UvOffsetU;
+        var offsetV = sampling?.UvOffsetV ?? primaryTexture!.UvOffsetV;
         for (var index = 0; index + 1 < coordinates.Count; index += 2)
         {
-            transformed[index] = (coordinates[index] * primaryTexture.UvScaleU) + primaryTexture.UvOffsetU;
-            transformed[index + 1] = (coordinates[index + 1] * primaryTexture.UvScaleV) + primaryTexture.UvOffsetV;
+            transformed[index] = (coordinates[index] * scaleU) + offsetU;
+            transformed[index + 1] = (coordinates[index + 1] * scaleV) + offsetV;
         }
 
         return transformed;
@@ -879,7 +881,8 @@ public sealed partial class MainWindow : Window
             ? textures.FirstOrDefault(texture => texture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
             : null;
         var viewportColorTexture = selectedSlotTexture ?? diffuseTexture ?? layeredColorTexture ?? emissiveTexture;
-        var uvTransform = BuildUvTransform(viewportColorTexture);
+        var sampling = SelectViewportSampling(material, viewportColorTexture, selectedSlot);
+        var uvTransform = BuildUvTransform(viewportColorTexture, sampling);
         var viewportTintColor = BuildViewportTintColor(material);
         var approximateBaseColor = BuildApproximateBaseColor(material);
         var effectiveBaseColor = viewportTintColor ?? approximateBaseColor;
@@ -1172,19 +1175,19 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static UVTransform BuildUvTransform(CanonicalTexture? texture)
+    private static UVTransform BuildUvTransform(CanonicalTexture? texture, CanonicalMaterialSampling? sampling)
     {
-        if (texture is null || !HasExplicitTextureUvDirective(texture))
+        if (!HasViewportUvTransform(sampling, texture))
         {
             return new UVTransform(0f);
         }
 
         return new UVTransform(
             rotation: 0f,
-            scalingX: texture.UvScaleU,
-            scalingY: texture.UvScaleV,
-            translationX: texture.UvOffsetU,
-            translationY: texture.UvOffsetV);
+            scalingX: sampling?.UvScaleU ?? texture!.UvScaleU,
+            scalingY: sampling?.UvScaleV ?? texture!.UvScaleV,
+            translationX: sampling?.UvOffsetU ?? texture!.UvOffsetU,
+            translationY: sampling?.UvOffsetV ?? texture!.UvOffsetV);
     }
 
     private static bool HasExplicitTextureUvDirective(CanonicalTexture? texture)
@@ -1199,6 +1202,62 @@ public sealed partial class MainWindow : Window
                Math.Abs(texture.UvScaleV - 1f) >= 0.0001f ||
                Math.Abs(texture.UvOffsetU) >= 0.0001f ||
                Math.Abs(texture.UvOffsetV) >= 0.0001f;
+    }
+
+    private static bool HasExplicitSamplingDirective(CanonicalMaterialSampling? sampling)
+    {
+        if (sampling is null)
+        {
+            return false;
+        }
+
+        return sampling.UvChannel != 0 ||
+               Math.Abs(sampling.UvScaleU - 1f) >= 0.0001f ||
+               Math.Abs(sampling.UvScaleV - 1f) >= 0.0001f ||
+               Math.Abs(sampling.UvOffsetU) >= 0.0001f ||
+               Math.Abs(sampling.UvOffsetV) >= 0.0001f;
+    }
+
+    private static bool HasViewportUvTransform(CanonicalMaterialSampling? sampling, CanonicalTexture? texture)
+    {
+        if (sampling is not null)
+        {
+            return HasExplicitSamplingDirective(sampling) && !sampling.IsApproximate;
+        }
+
+        return texture is not null &&
+               HasExplicitTextureUvDirective(texture) &&
+               !texture.IsApproximateUvTransform;
+    }
+
+    private static CanonicalMaterialSampling? SelectViewportSampling(CanonicalMaterial? material, CanonicalTexture? preferredTexture, string? selectedSlot)
+    {
+        if (material?.Sampling is not { Count: > 0 } sampling)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(selectedSlot))
+        {
+            var selectedSlotSampling = sampling.FirstOrDefault(entry => entry.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase));
+            if (selectedSlotSampling is not null)
+            {
+                return selectedSlotSampling;
+            }
+        }
+
+        if (preferredTexture is not null)
+        {
+            var textureSlotSampling = sampling.FirstOrDefault(entry => entry.Slot.Equals(preferredTexture.Slot, StringComparison.OrdinalIgnoreCase));
+            if (textureSlotSampling is not null)
+            {
+                return textureSlotSampling;
+            }
+        }
+
+        return sampling.FirstOrDefault(entry => entry.Slot.Equals("diffuse", StringComparison.OrdinalIgnoreCase)) ??
+               sampling.FirstOrDefault(entry => !entry.IsApproximate) ??
+               sampling[0];
     }
 
     private static IReadOnlyList<CanonicalTexture> SelectViewportTextures(CanonicalMaterial? material, SceneRenderMode renderMode, string? selectedSlot)

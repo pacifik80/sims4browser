@@ -35,7 +35,7 @@ public sealed class FileSystemCacheService : ICacheService
 public sealed class SqliteIndexStore : IIndexStore
 {
     private const string SeedFactContentVersionMetadataKey = "seed_fact_content_version";
-    private const string SeedFactContentVersion = "2026-04-19.seed-facts-v1";
+    private const string SeedFactContentVersion = "2026-04-21.seed-facts-v2";
     private const string SecondaryIndexesSql =
         """
         CREATE UNIQUE INDEX IF NOT EXISTS ux_resources_id ON resources(id);
@@ -1423,6 +1423,7 @@ public sealed class SqliteIndexStore : IIndexStore
                 restrict_opposite_gender INTEGER NOT NULL,
                 restrict_opposite_frame INTEGER NOT NULL,
                 sort_layer INTEGER NOT NULL,
+                composition_method INTEGER NULL,
                 species_label TEXT NULL,
                 age_label TEXT NOT NULL,
                 gender_label TEXT NOT NULL
@@ -1432,6 +1433,7 @@ public sealed class SqliteIndexStore : IIndexStore
         await EnsureDeferredMetadataSchemaAsync(connection, cancellationToken);
         await EnsureScanTokenSchemaAsync(connection, cancellationToken);
         await EnsureAssetSummarySchemaAsync(connection, cancellationToken);
+        await EnsureCasPartFactSchemaAsync(connection, cancellationToken);
         await EnsureSeedFactContentVersionAsync(connection, cancellationToken);
         if (!includeSearchStructures)
         {
@@ -2719,6 +2721,11 @@ public sealed class SqliteIndexStore : IIndexStore
         await EnsureColumnAsync(connection, "asset_variants", "scan_token", "TEXT NULL", cancellationToken);
     }
 
+    private static async Task EnsureCasPartFactSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await EnsureColumnAsync(connection, "cas_part_facts", "composition_method", "INTEGER NULL", cancellationToken);
+    }
+
     private static async Task EnsureColumnAsync(SqliteConnection connection, string tableName, string columnName, string declaration, CancellationToken cancellationToken)
     {
         var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2876,7 +2883,7 @@ public sealed class SqliteIndexStore : IIndexStore
             "slot_category", "category_normalized", "body_type", "internal_name",
             "default_body_type", "default_body_type_female", "default_body_type_male",
             "has_naked_link", "restrict_opposite_gender", "restrict_opposite_frame",
-            "sort_layer", "species_label", "age_label", "gender_label"
+            "sort_layer", "composition_method", "species_label", "age_label", "gender_label"
         ];
 
         private static readonly string[] CasPartFactInsertParameterBases =
@@ -2885,7 +2892,7 @@ public sealed class SqliteIndexStore : IIndexStore
             "slotCategory", "categoryNormalized", "bodyType", "internalName",
             "defaultBodyType", "defaultBodyTypeFemale", "defaultBodyTypeMale",
             "hasNakedLink", "restrictOppositeGender", "restrictOppositeFrame",
-            "sortLayer", "speciesLabel", "ageLabel", "genderLabel"
+            "sortLayer", "compositionMethod", "speciesLabel", "ageLabel", "genderLabel"
         ];
 
         private sealed class BatchMetricsAccumulator
@@ -2918,6 +2925,7 @@ public sealed class SqliteIndexStore : IIndexStore
             bool RestrictOppositeGender,
             bool RestrictOppositeFrame,
             int SortLayer,
+            int CompositionMethod,
             string? SpeciesLabel,
             string AgeLabel,
             string GenderLabel);
@@ -3384,6 +3392,7 @@ public sealed class SqliteIndexStore : IIndexStore
                     fact.RestrictOppositeGender,
                     fact.RestrictOppositeFrame,
                     fact.SortLayer,
+                    fact.CompositionMethod,
                     fact.SpeciesLabel,
                     fact.AgeLabel,
                     fact.GenderLabel));
@@ -3809,9 +3818,10 @@ public sealed class SqliteIndexStore : IIndexStore
             SetParameterValue(parameters[13], fact.RestrictOppositeGender ? 1 : 0);
             SetParameterValue(parameters[14], fact.RestrictOppositeFrame ? 1 : 0);
             SetParameterValue(parameters[15], fact.SortLayer);
-            SetParameterValue(parameters[16], fact.SpeciesLabel);
-            SetParameterValue(parameters[17], fact.AgeLabel);
-            SetParameterValue(parameters[18], fact.GenderLabel);
+            SetParameterValue(parameters[16], fact.CompositionMethod);
+            SetParameterValue(parameters[17], fact.SpeciesLabel);
+            SetParameterValue(parameters[18], fact.AgeLabel);
+            SetParameterValue(parameters[19], fact.GenderLabel);
         }
 
         private static void SetParameterValue(SqliteParameter parameter, object? value) =>
@@ -5322,6 +5332,7 @@ public sealed class PackageIndexCoordinator
         bool RestrictOppositeGender,
         bool RestrictOppositeFrame,
         int SortLayer,
+        int CompositionMethod,
         string? SpeciesLabel,
         string AgeLabel,
         string GenderLabel);

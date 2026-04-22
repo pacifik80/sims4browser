@@ -7,6 +7,10 @@ Related docs:
 - [Material Pipeline Deep Dives](../README.md)
 - [Shader Family Registry](../shader-family-registry.md)
 - [CAS/Sim Material Authority Matrix](../cas-sim-material-authority-matrix.md)
+- [SimGlass Build/Buy Evidence Order](../simglass-buildbuy-evidence-order.md)
+- [SimGlass Domain Home Boundary](../simglass-domain-home-boundary.md)
+- [SimGlass Character Transparency Boundary](../simglass-character-transparency-boundary.md)
+- [SimGlass Character Transparency Order](../simglass-character-transparency-order.md)
 - [Skintone And Overlay Compositor](../skintone-and-overlay-compositor.md)
 - [Source map and trust levels](../../../references/codex-wiki/04-research-and-sources/01-source-map.md)
 - [Open questions](../../../references/codex-wiki/04-research-and-sources/03-open-questions.md)
@@ -16,8 +20,8 @@ Related docs:
 ```text
 SimSkin / SimGlass / SimSkinMask
 ├─ SimSkin identity packet ~ 81%
-├─ SimGlass identity packet ~ 76%
-├─ SimSkinMask negative-result packet ~ 68%
+├─ SimGlass identity packet ~ 90%
+├─ SimSkinMask negative-result packet ~ 80%
 ├─ Exact authority order against MTNF/CASP ~ 41%
 └─ Full slot/compositor contract ~ 27%
 ```
@@ -70,11 +74,38 @@ Safe reading:
 - `SimGlass` is a real narrow transparent or glass-like mesh family
 - it should not be flattened into `SimSkin`
 - it should also not be flattened into a generic “alpha” fallback without preserving family identity
+- current external creator tooling is now also strong enough to keep `SimGlass` separate from `SimAlphaBlended` until a stronger live-family closure says otherwise
 
 Unsafe reading:
 
 - do not assume all transparent character content is `SimGlass`
 - do not assume that exact slot semantics for `SimGlass` are already externally closed
+
+Current safe companion:
+
+- [SimGlass Character Transparency Boundary](../simglass-character-transparency-boundary.md)
+- [SimGlass Character Transparency Order](../simglass-character-transparency-order.md)
+
+### `SimGlass` carry-over boundary into `Build/Buy`
+
+Current safe companion:
+
+- [SimGlass Build/Buy Evidence Order](../simglass-buildbuy-evidence-order.md)
+- [SimGlass Domain Home Boundary](../simglass-domain-home-boundary.md)
+
+Safe reading:
+
+- `CAS/Sim` remains the current semantic home for `SimGlass`
+- `Build/Buy` is now a bounded carry-over domain for `SimGlass`, not a proven semantic home
+- external creator-facing `SimGlass` evidence still defines the family floor
+- aggregate `Build/Buy` survey presence keeps the branch alive
+- narrowed `Build/Buy` route packets only rank the next reopen
+- only reopened fixture evidence may move a `Build/Buy` case into branch loss, provisional `SimGlass`, or winning `SimGlass`
+
+Unsafe reading:
+
+- do not let `Build/Buy` survey or route packets redefine the family
+- do not let `Build/Buy` transparent objects inherit `SimGlass` by default
 
 ## Mask-adjacent packet
 
@@ -84,6 +115,7 @@ Strongest evidence:
 
 - current creator-facing skin workflows keep masks inside skintone, overlay, burn-mask, or skin-detail logic rather than as a separate geometry-family branch
 - [TS4 Skininator](https://modthesims.info/d/568474) exposes burn masks and skintone-adjacent mask workflows
+- [Sims 4: CASPFlags](https://modthesims.info/wiki.php?title=Sims_4%3ACASPFlags) exposes `SkinOverlay` as a CAS/body-type category rather than a mesh/export branch
 - [Please explain Skin Overlay, Skin Mask, Normal Skin, Etc](https://modthesims.info/t/594620) reflects the same creator-facing distinction between overlays, masks, and normal skins
 - recent Sims 4 Studio notes already fit the same pattern: mask-bearing skin content lives inside image or overlay workflows, not a standalone mesh-family pipeline
 - [Sims_3:Shaders](https://modthesims.info/wiki.php?title=Sims_3%3AShaders) and [Sims_3:Shaders\\Params](https://modthesims.info/wiki.php?title=Sims_3%3AShaders%5CParams) reinforce the general lineage point that mask-like or alpha-like inputs can be family-local material helpers without implying a separate mesh-family branch
@@ -97,10 +129,24 @@ Current negative result:
 
 - the current local external-tool packet exposes named `SimSkin` and `SimGlass` branches
 - it does not expose a peer `SimSkinMask` geometry or export branch
+- the new local snapshot [simskin_vs_simskinmask_snapshot_2026-04-21.json](../../../tmp/simskin_vs_simskinmask_snapshot_2026-04-21.json) also tightens the bounded negative result:
+  - `simskin = 51` profile rows across `3` packed-type variants
+  - `SimSkinMask = 12` profile rows across `6` packed-type variants
+  - the current workspace `.simgeom` list expands only to a mirrored duplicate packet in `tmp/research/TS4SimRipper`, not a new non-mirrored sample lane
+- the completed direct `CASPart -> GEOM -> family` census floor stays aligned with that same negative result:
+  - [caspart_geom_shader_census_fullscan.json](../../../tmp/caspart_geom_shader_census_fullscan.json) currently surfaces `SimSkin` and `SimGlass`, but no `SimSkinMask` family row
+  - the `414` per-package result shards under `tmp/caspart_geom_shader_census_run/package-results` also currently stay negative for `SimSkinMask`
+- the checked-in external wrapper floor stays aligned too:
+  - [.external s4pe ShaderData.cs](../../../.external/s4pe/s4pi%20Wrappers/s4piRCOLChunks/ShaderData.cs) names `SimSkin` and `SimGlass`, but still no peer `SimSkinMask`
+- the bounded public refresh on `2026-04-21` stays aligned with that same reading:
+  - current public `TS4SimRipper` still exposes `SimSkin` / `SimGlass` but no peer named `SimSkinMask` geometry/export branch
+  - public `Sims 4: CASPFlags` keeps the nearest public skin-mask category at `SkinOverlay`, not a geometry/export branch
+  - public creator-facing help still keeps skin masks under skintone/overlay semantics rather than a standalone mesh-family workflow
 
 What this negative result does mean:
 
 - current evidence is insufficient to promote `SimSkinMask` into a standalone geometry-family authority node
+- current evidence is now negative across bundled or mirrored samples, profile archaeology, the direct family census floor, and checked-in external wrapper or export snapshots
 
 What this negative result does not mean:
 
@@ -133,10 +179,12 @@ Unsafe wording:
 
 ## Recommended next work
 
-1. Add a wider live sample packet outside the bundled `TS4SimRipper` resources.
+1. Add a genuinely wider live sample packet outside the bundled or mirrored `TS4SimRipper` resources.
 2. Compare the same shell family through:
    - GEOM-side shader identity
    - embedded `MTNF`, when present
    - parsed `CASP` fields
    - skintone/compositor overlays
 3. Keep `SimSkinMask` in the skintone or overlay packet until a real peer geometry-family branch is found.
+4. Do not spend another repo-local or public-tooling batch on the same packet unless a genuinely new external sample appears.
+5. Use the `Build/Buy` `SimGlass` companion only as a carry-over evidence order, not as an object-side semantic replacement.

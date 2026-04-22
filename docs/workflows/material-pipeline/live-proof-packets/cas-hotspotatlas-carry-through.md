@@ -20,10 +20,10 @@ Related docs:
 ```text
 CASHotSpotAtlas Carry-Through
 ├─ Externally proved identity ~ 89%
-├─ Local external snapshot packet ~ 71%
+├─ Local external snapshot packet ~ 84%
 ├─ Carry-through concentration packet ~ 74%
 ├─ Exact runtime render proof ~ 28%
-└─ Implementation-diagnostic value ~ 63%
+└─ Implementation-diagnostic value ~ 74%
 ```
 
 ## Externally proved identity
@@ -32,6 +32,7 @@ What is already strong enough:
 
 - [Making a CAS slider with TS4MorphMaker using a Deformer Map](https://modthesims.info/t/613057) identifies `CASHotSpotAtlas` as an EA atlas mapped to `UV1`
 - the same tutorial ties atlas colors to `HotSpotControl`, then to `SimModifier`, then to morph resources such as `DMap`
+- the same tutorial also states that each atlas color value corresponds to a `HotSpotControl`, and that `HotSpotControl` chooses modifier behavior by slider direction and viewing angle
 - [Pointed Ears as CAS Sliders](https://db.modthesims.info/showthread.php?t=596028) reinforces the same routing packet in creator-facing terms
 
 Safe reading:
@@ -39,21 +40,33 @@ Safe reading:
 - `CASHotSpotAtlas` is a real EA hotspot atlas
 - it belongs first to the CAS editing and morph branch
 - `UV1` plus hotspot-to-modifier routing are part of its identity, not incidental metadata
+- `HotSpotControl` now has a sharper external role too: color-selected control surface, not just a guessed intermediate name
 
 ## Local external snapshot packet
 
 Strongest local packet in this repo:
 
-- [TS4SimRipper Enums.cs](../../../references/external/TS4SimRipper/src/Enums.cs): explicit `HotSpotControl` and `SimModifier` resource types
-- [TS4SimRipper SIMInfo.cs](../../../references/external/TS4SimRipper/src/SIMInfo.cs): body and face modifier arrays preserved as real `SimModifierData`
-- [TS4SimRipper GameFileHandler.cs](../../../references/external/TS4SimRipper/src/GameFileHandler.cs): explicit fetch path for `SimModifier` resources
-- [TS4SimRipper Form1.cs](../../../references/external/TS4SimRipper/src/Form1.cs): explicit `SimModifier` fetch/use paths in the external tool snapshot
+- [TS4SimRipper Enums.cs](../../../references/external/TS4SimRipper/src/Enums.cs): explicit `HotSpotControl = 0x8B18FF6E`, `SimModifier = 0xC5F6763E`, and `DeformerMap = 0xDB43E069`
+- [TS4SimRipper SIMInfo.cs](../../../references/external/TS4SimRipper/src/SIMInfo.cs): body and face modifier arrays preserved as weighted `SimModifierData`
+- [TS4SimRipper SMOD.cs](../../../references/external/TS4SimRipper/src/SMOD.cs): one modifier resource links to `BGEO`, `deformerMapShape`, `deformerMapNormal`, and `BOND`
+- [TS4SimRipper GameFileHandler.cs](../../../references/external/TS4SimRipper/src/GameFileHandler.cs): dedicated fetch paths for `SimModifier`, `BGEO`, `DMap`, and `BOND`
+- [TS4SimRipper Form1.cs](../../../references/external/TS4SimRipper/src/Form1.cs): concrete weighted application of `SMOD` links into `BGEO`, `DMap`, and `BOND` payloads
 
 Why this packet matters:
 
-- it gives local external confirmation that the atlas tutorial is not describing imaginary resource families
+- it gives local external confirmation that the atlas tutorial is not describing imaginary downstream resource families
 - the modifier side of the chain exists as a concrete TS4 resource packet in checked-in external tooling
+- the checked-in tooling proves the downstream `SimModifier -> SMOD -> BGEO/DMap/BOND` branch, but not the upstream `CASHotSpotAtlas -> HotSpotControl` branch
+- the combined packet is now narrower:
+  - external creator evidence already proves `CASHotSpotAtlas -> color value -> HotSpotControl -> SimModifier`
+  - local external tooling proves `SimModifier -> SMOD -> BGEO/DMap/BOND`
 - this strengthens the reading that hotspot-atlas carry-through should stay inside morph/helper provenance unless a stronger runtime packet appears
+
+Local negative boundary to keep explicit:
+
+- the current `TS4SimRipper` snapshot exposes `HotSpotControl` only as a known resource type id
+- this snapshot does not expose a `HotSpotControl` parser, loader, or usage path
+- this snapshot also does not expose a local `CASHotSpotAtlas` parser or direct usage path
 
 ## Current candidate live targets
 
@@ -127,7 +140,7 @@ Diagnostic value of this packet:
 ## Best next inspection step
 
 1. Keep the tutorial-backed `CASHotSpotAtlas -> HotSpotControl -> SimModifier` route as the external baseline.
-2. Use the local `TS4SimRipper` `HotSpotControl` and `SimModifier` packet as the external-local bridge.
+2. Use the local `TS4SimRipper` `SimModifier -> SMOD -> BGEO/DMap/BOND` packet as the external-local bridge, while keeping the missing local `HotSpotControl` / `CASHotSpotAtlas` path explicit.
 3. Then isolate one real CAS part or modifier fixture where hotspot-atlas provenance survives into adjacent metadata without being coerced into an ordinary surface slot.
 
 ## Honest limit
@@ -138,3 +151,4 @@ What it does prove:
 
 - `CASHotSpotAtlas` is already too well grounded to leave inside generic unresolved shader vocabulary
 - current carry-through evidence is strong enough to preserve the name as morph/helper provenance while stricter live proof is still being gathered
+- the current local external snapshot strengthens the downstream modifier-application branch without overclaiming a local atlas parser

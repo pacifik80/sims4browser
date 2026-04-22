@@ -4308,26 +4308,31 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     diagnostics.Add($"ObjectDefinition reference candidates: {string.Join("; ", referenceSummary)}");
                 }
 
-                if (indexStore is not null)
+                var resolvedReferenceResources = await ResolveObjectDefinitionResourcesAsync(
+                    objectDefinition,
+                    parsedObjectDefinition,
+                    packageResources,
+                    diagnostics,
+                    cancellationToken).ConfigureAwait(false);
+                var resolvedReferenceSummary = resolvedReferenceResources
+                    .Take(8)
+                    .Select(static match => $"{match.Key.TypeName} -> {match.Key.FullTgi} @ {Path.GetFileName(match.PackagePath)}")
+                    .ToArray();
+                if (resolvedReferenceSummary.Length > 0)
                 {
-                    var resolvedReferenceResources = await ResolveCrossPackageObjectDefinitionResourcesAsync(parsedObjectDefinition, cancellationToken).ConfigureAwait(false);
-                    var resolvedReferenceSummary = resolvedReferenceResources
-                        .Take(8)
-                        .Select(static match => $"{match.Key.TypeName} -> {match.Key.FullTgi} @ {Path.GetFileName(match.PackagePath)}")
-                        .ToArray();
-                    if (resolvedReferenceSummary.Length > 0)
-                    {
-                        diagnostics.Add($"ObjectDefinition swap32-resolved references: {string.Join("; ", resolvedReferenceSummary)}");
-                    }
+                    diagnostics.Add($"ObjectDefinition swap32-resolved references: {string.Join("; ", resolvedReferenceSummary)}");
+                }
 
-                    var resolvedModelRoot = resolvedReferenceResources
-                        .FirstOrDefault(static resource => resource.Key.TypeName == "Model");
-                    if (resolvedModelRoot is not null &&
-                        effectiveRoot.Key.FullTgi != resolvedModelRoot.Key.FullTgi &&
-                        modelLods.Length == 0 &&
-                        embeddedLodLabels.Length == 0)
+                var resolvedModelRoot = resolvedReferenceResources
+                    .FirstOrDefault(static resource => resource.Key.TypeName == "Model");
+                if (resolvedModelRoot is not null &&
+                    effectiveRoot.Key.FullTgi != resolvedModelRoot.Key.FullTgi &&
+                    modelLods.Length == 0 &&
+                    embeddedLodLabels.Length == 0)
+                {
+                    effectiveRoot = resolvedModelRoot;
+                    if (indexStore is not null)
                     {
-                        effectiveRoot = resolvedModelRoot;
                         var resolvedLinked = await indexStore
                             .GetResourcesByInstanceAsync(resolvedModelRoot.PackagePath, resolvedModelRoot.Key.FullInstance, cancellationToken)
                             .ConfigureAwait(false);
@@ -4342,8 +4347,9 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                         modelLods = linkedResources.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
                         textures = linkedResources.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
                         materialResources = linkedResources.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
-                        diagnostics.Add($"Using swap32-resolved ObjectDefinition model root: {resolvedModelRoot.Key.FullTgi} from {Path.GetFileName(resolvedModelRoot.PackagePath)}.");
                     }
+
+                    diagnostics.Add($"Using swap32-resolved ObjectDefinition model root: {resolvedModelRoot.Key.FullTgi} from {Path.GetFileName(resolvedModelRoot.PackagePath)}.");
                 }
             }
             catch (Exception ex)
@@ -5389,27 +5395,72 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         Ts4ObjectDefinition objectDefinition,
         CancellationToken cancellationToken)
     {
-        var resources = await ResolveCrossPackageObjectDefinitionResourcesAsync(objectDefinition, cancellationToken).ConfigureAwait(false);
+        var resources = await ResolveObjectDefinitionResourcesAsync(
+            ownerResource: null,
+            objectDefinition,
+            Array.Empty<ResourceMetadata>(),
+            diagnostics: null,
+            cancellationToken).ConfigureAwait(false);
         return resources
             .Select(static match => $"{match.Key.TypeName} -> {match.Key.FullTgi} @ {Path.GetFileName(match.PackagePath)}")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
-    private async Task<ResourceMetadata[]> ResolveCrossPackageObjectDefinitionResourcesAsync(
+    private async Task<ResourceMetadata[]> ResolveObjectDefinitionResourcesAsync(
+        ResourceMetadata? ownerResource,
         Ts4ObjectDefinition objectDefinition,
+        IReadOnlyList<ResourceMetadata> packageResources,
+        List<string>? diagnostics,
         CancellationToken cancellationToken)
     {
-        if (indexStore is null)
-        {
-            return [];
-        }
-
         var resources = new List<ResourceMetadata>();
         foreach (var candidate in objectDefinition.ReferenceCandidates
                      .Where(static candidate => candidate.Swap32Key.TypeName is "Model" or "Footprint")
                      .Take(8))
         {
+            resources.AddRange(packageResources.Where(resource =>
+                string.Equals(resource.Key.FullTgi, candidate.Swap32Key.FullTgi, StringComparison.OrdinalIgnoreCase)));
+
+            if (ownerResource is not null &&
+                !resources.Any(resource => string.Equals(resource.Key.FullTgi, candidate.Swap32Key.FullTgi, StringComparison.OrdinalIgnoreCase)))
+            {
+                try
+                {
+                    var bytes = await resourceCatalogService
+                        .GetResourceBytesAsync(ownerResource.PackagePath, candidate.Swap32Key, raw: false, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (bytes.Length > 0)
+                    {
+                        diagnostics?.Add($"ObjectDefinition local swap32 probe succeeded: {candidate.Swap32Key.FullTgi} @ {Path.GetFileName(ownerResource.PackagePath)} ({bytes.Length} bytes).");
+                        resources.Add(new ResourceMetadata(
+                            Guid.NewGuid(),
+                            ownerResource.DataSourceId,
+                            ownerResource.SourceKind,
+                            ownerResource.PackagePath,
+                            candidate.Swap32Key,
+                            null,
+                            bytes.Length,
+                            bytes.Length,
+                            false,
+                            candidate.Swap32Key.TypeName == "Model" ? PreviewKind.Scene : PreviewKind.Metadata,
+                            candidate.Swap32Key.TypeName is "Model" or "Footprint",
+                            candidate.Swap32Key.TypeName == "Model",
+                            string.Empty,
+                            string.Empty));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    diagnostics?.Add($"ObjectDefinition local swap32 probe failed: {candidate.Swap32Key.FullTgi} @ {Path.GetFileName(ownerResource.PackagePath)} ({ex.Message}).");
+                }
+            }
+
+            if (indexStore is null)
+            {
+                continue;
+            }
+
             var matches = await indexStore.GetResourcesByTgiAsync(candidate.Swap32Key.FullTgi, cancellationToken).ConfigureAwait(false);
             resources.AddRange(matches);
         }
@@ -5751,6 +5802,7 @@ public static class Ts4SeedMetadataExtractor
             TryExtractCasPartSummaryBool(description, "restrictOppositeGender") ?? false,
             TryExtractCasPartSummaryBool(description, "restrictOppositeFrame") ?? false,
             TryExtractCasPartSummaryInt(description, "sortLayer"),
+            TryExtractCasPartSummaryInt(description, "compositionMethod"),
             TryExtractCasPartSummaryField(description, "species"),
             TryExtractCasPartSummaryField(description, "age") ?? "Unknown",
             TryExtractCasPartSummaryField(description, "gender") ?? "Unknown");
@@ -5773,7 +5825,8 @@ public static class Ts4SeedMetadataExtractor
                description.Contains("defaultBodyTypeMale=", StringComparison.OrdinalIgnoreCase) ||
                description.Contains("nakedLink=", StringComparison.OrdinalIgnoreCase) ||
                description.Contains("restrictOppositeGender=", StringComparison.OrdinalIgnoreCase) ||
-               description.Contains("restrictOppositeFrame=", StringComparison.OrdinalIgnoreCase);
+               description.Contains("restrictOppositeFrame=", StringComparison.OrdinalIgnoreCase) ||
+               description.Contains("compositionMethod=", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? TryExtractCasPartSummaryField(string? description, string key)
@@ -5854,6 +5907,7 @@ public static class Ts4SeedMetadataExtractor
         parts.Add($"restrictOppositeFrame={casPart.RestrictOppositeFrame.ToString().ToLowerInvariant()}");
 
         parts.Add($"sortLayer={casPart.SortLayer}");
+        parts.Add($"compositionMethod={casPart.CompositionMethod}");
 
         return string.Join(" | ", parts);
     }
@@ -5960,6 +6014,7 @@ public static class Ts4SeedMetadataExtractor
             casPart.RestrictOppositeGender,
             casPart.RestrictOppositeFrame,
             casPart.SortLayer,
+            casPart.CompositionMethod,
             casPart.SpeciesLabel,
             casPart.AgeLabel,
             casPart.GenderLabel);
@@ -5986,6 +6041,7 @@ public sealed record Ts4CasPartSummaryMetadata(
     bool RestrictOppositeGender,
     bool RestrictOppositeFrame,
     int? SortLayer,
+    int? CompositionMethod,
     string? SpeciesLabel,
     string AgeLabel,
     string GenderLabel);
@@ -6037,6 +6093,7 @@ internal sealed class Ts4CasPart
     public required ulong FallbackPart { get; init; }
     public required byte NakedKey { get; init; }
     public required int SortLayer { get; init; }
+    public required byte CompositionMethod { get; init; }
     public required IReadOnlyList<ResourceKeyRecord> TgiList { get; init; }
     public required IReadOnlyList<Ts4CasLod> Lods { get; init; }
     public required IReadOnlyList<Ts4CasTextureCandidate> TextureReferences { get; init; }
@@ -6215,7 +6272,7 @@ internal sealed class Ts4CasPart
 
         var diffuseKey = reader.ReadByte();
         var shadowKey = reader.ReadByte();
-        _ = reader.ReadByte();
+        var compositionMethod = reader.ReadByte();
         var regionMapKey = reader.ReadByte();
         var overrideCount = reader.ReadByte();
         SkipBytes(stream, overrideCount * 5L, "CASPart override list");
@@ -6267,6 +6324,7 @@ internal sealed class Ts4CasPart
             FallbackPart = fallbackPart,
             NakedKey = nakedKey,
             SortLayer = sortLayer,
+            CompositionMethod = compositionMethod,
             TgiList = tgiList,
             Lods = lods,
             TextureReferences = BuildTextureReferences(

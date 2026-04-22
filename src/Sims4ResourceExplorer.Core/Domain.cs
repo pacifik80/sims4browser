@@ -210,6 +210,7 @@ public sealed record DiscoveredCasPartFact(
     bool RestrictOppositeGender,
     bool RestrictOppositeFrame,
     int SortLayer,
+    int CompositionMethod,
     string? SpeciesLabel,
     string AgeLabel,
     string GenderLabel);

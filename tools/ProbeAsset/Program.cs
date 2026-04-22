@@ -1,4 +1,5 @@
 using LlamaLogic.Packages;
+using Microsoft.Data.Sqlite;
 using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Core;
 using Sims4ResourceExplorer.Indexing;
@@ -6,9 +7,13 @@ using Sims4ResourceExplorer.Packages;
 using Sims4ResourceExplorer.Preview;
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
+
+const string ProbeSeedFactContentVersion = "2026-04-21.seed-facts-v2";
 
 if (args.Length > 0 && string.Equals(args[0], "--find-root", StringComparison.OrdinalIgnoreCase))
 {
@@ -122,6 +127,20 @@ if (args.Length > 0 && string.Equals(args[0], "--profile-index", StringCompariso
     return await RunIndexProfileAsync(searchRoot, maxPackages, workerCount, packageOrder);
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--census-matd-shaders", StringComparison.OrdinalIgnoreCase))
+{
+    var cacheRoot = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "profile-index-cache");
+    var outputPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "matd_shader_census_fullscan.json");
+    return await RunMatdShaderCensusAsync(cacheRoot, outputPath);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--census-resource-types", StringComparison.OrdinalIgnoreCase))
+{
+    var cacheRoot = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "profile-index-cache");
+    var outputPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "resource_type_census_fullscan.json");
+    return await RunResourceTypeCensusAsync(cacheRoot, outputPath);
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--rebuild-live-sim-archetypes", StringComparison.OrdinalIgnoreCase))
 {
     var workerCount = args.Length > 1 && int.TryParse(args[1], out var parsedWorkerCount) ? parsedWorkerCount : (int?)null;
@@ -133,6 +152,43 @@ if (args.Length > 0 && string.Equals(args[0], "--survey-sim-archetypes", StringC
     var outputPath = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "sim_archetype_body_shell_audit.json");
     var maxEntries = args.Length > 2 && int.TryParse(args[2], out var parsedMaxEntries) ? parsedMaxEntries : 0;
     return await RunSimArchetypeBodyShellSurveyAsync(outputPath, maxEntries);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--census-sim-material-carriers", StringComparison.OrdinalIgnoreCase))
+{
+    var outputPath = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "sim_material_carrier_census.json");
+    var maxEntries = args.Length > 2 && int.TryParse(args[2], out var parsedMaxEntries) ? parsedMaxEntries : 0;
+    return await RunSimMaterialCarrierCensusAsync(outputPath, maxEntries);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--census-cas-carriers", StringComparison.OrdinalIgnoreCase))
+{
+    var cacheRoot = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "profile-index-cache");
+    var outputPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "cas_carrier_census_fullscan.json");
+    return await RunCasCarrierCensusAsync(cacheRoot, outputPath);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--census-caspart-linkages", StringComparison.OrdinalIgnoreCase))
+{
+    var cacheRoot = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "profile-index-cache");
+    var outputPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "caspart_linkage_census_fullscan.json");
+    var maxEntries = args.Length > 3 && int.TryParse(args[3], out var parsedMaxEntries) ? parsedMaxEntries : 0;
+    return await RunCasPartLinkageCensusAsync(cacheRoot, outputPath, maxEntries);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--census-caspart-composition", StringComparison.OrdinalIgnoreCase))
+{
+    var cacheRoot = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "profile-index-cache");
+    var outputPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "compositionmethod_census_fullscan.json");
+    var maxEntries = args.Length > 3 && int.TryParse(args[3], out var parsedMaxEntries) ? parsedMaxEntries : 0;
+    return await RunCasPartCompositionCensusAsync(cacheRoot, outputPath, maxEntries);
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--backfill-caspart-composition-cache", StringComparison.OrdinalIgnoreCase))
+{
+    var cacheRoot = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "profile-index-cache");
+    var outputPath = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "compositionmethod_cache_backfill.json");
+    return await BackfillCasPartCompositionCacheAsync(cacheRoot, outputPath);
 }
 
 var packagePath = args.Length > 0 ? args[0] : @"C:\GAMES\The Sims 4\EP10\ClientFullBuild0.package";
@@ -1980,6 +2036,1510 @@ static async Task<int> RunIndexProfileAsync(string searchRoot, int maxPackages, 
     return 0;
 }
 
+static async Task<int> RunMatdShaderCensusAsync(string cacheRoot, string outputPath)
+{
+    var cacheDirectory = NormalizeCacheDirectory(cacheRoot);
+    if (!Directory.Exists(cacheDirectory))
+    {
+        Console.Error.WriteLine($"Cache directory not found: {cacheDirectory}");
+        return 1;
+    }
+
+    var dbPaths = Directory
+        .EnumerateFiles(cacheDirectory, "index*.sqlite", SearchOption.TopDirectoryOnly)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (dbPaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No shard databases were found under {cacheDirectory}");
+        return 1;
+    }
+
+    var shaderProfilesPath = Path.Combine(Environment.CurrentDirectory, "tmp", "precomp_shader_profiles.json");
+    var shaderNamesByHash = LoadShaderProfileNames(shaderProfilesPath);
+    Console.WriteLine($"Loaded {shaderNamesByHash.Count} shader profile name(s) from {shaderProfilesPath}");
+
+    var rows = new List<CensusResourceRow>();
+    foreach (var dbPath in dbPaths)
+    {
+        await using var connection = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select package_path, full_tgi
+            from resources
+            where type_name = 'MaterialDefinition'
+            order by package_path, full_tgi
+            """;
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            rows.Add(new CensusResourceRow(
+                reader.GetString(0),
+                reader.GetString(1)));
+        }
+    }
+
+    var groupedByPackage = rows
+        .GroupBy(static row => row.PackagePath, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    var catalog = new LlamaResourceCatalogService();
+    var profileCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var familyCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var topBucketCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var packageClassCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var packageCoverageByProfile = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var packageCoverageByFamily = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var shaderHashCoverage = new Dictionary<uint, CensusCount>();
+    var emptyResourceSamples = new List<string>();
+    var failures = new List<string>();
+    var emptyResources = 0;
+
+    var processed = 0;
+    foreach (var packageGroup in groupedByPackage)
+    {
+        var packagePath = packageGroup.Key;
+        var topBucket = GetTopBucket(packagePath);
+        var packageClass = GetPackageClass(packagePath);
+        CensusIncrementIntMap(topBucketCounts, topBucket, packageGroup.Count());
+        CensusIncrementIntMap(packageClassCounts, packageClass, packageGroup.Count());
+
+        foreach (var row in packageGroup)
+        {
+            processed++;
+            if (!TryParseTgi(row.FullTgi, out var key))
+            {
+                failures.Add($"Invalid TGI: {row.FullTgi} @ {packagePath}");
+                continue;
+            }
+
+            try
+            {
+                var bytes = await catalog.GetResourceBytesAsync(packagePath, key, raw: false, CancellationToken.None).ConfigureAwait(false);
+                if (bytes.Length == 0)
+                {
+                    emptyResources++;
+                    if (emptyResourceSamples.Count < 200)
+                    {
+                        emptyResourceSamples.Add($"{row.FullTgi} @ {packagePath}: decoded payload is empty");
+                    }
+
+                    continue;
+                }
+
+                if (!TryReadMatdShaderHash(bytes, out var shaderHash))
+                {
+                    failures.Add($"{row.FullTgi} @ {packagePath}: resource bytes did not decode as MATD");
+                    continue;
+                }
+
+                var profileName = shaderNamesByHash.TryGetValue(shaderHash, out var knownName) && !string.IsNullOrWhiteSpace(knownName)
+                    ? knownName
+                    : $"Shader_{shaderHash:X8}";
+                var familyName = NormalizeShaderFamilyName(profileName);
+
+                CensusIncrementStringCount(profileCounts, profileName, topBucket, packageClass);
+                CensusIncrementStringCount(familyCounts, familyName, topBucket, packageClass);
+                CensusIncrementUIntCount(shaderHashCoverage, shaderHash, topBucket, packageClass);
+                CensusAddCoverage(packageCoverageByProfile, profileName, packagePath);
+                CensusAddCoverage(packageCoverageByFamily, familyName, packagePath);
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{row.FullTgi} @ {packagePath}: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine($"MATD census package {processed,6}/{rows.Count,6}: {packagePath}");
+    }
+
+    var summary = new MatdShaderCensusSummary(
+        DateTimeOffset.UtcNow,
+        cacheDirectory,
+        dbPaths.Select(static path => Path.GetFileName(path)!).ToArray(),
+        rows.Count,
+        groupedByPackage.Length,
+        rows.Count - emptyResources - failures.Count,
+        emptyResources,
+        failures.Count,
+        topBucketCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        packageClassCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        profileCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, packageCoverageByProfile[pair.Key].Count))
+            .ToArray(),
+        familyCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, packageCoverageByFamily[pair.Key].Count))
+            .ToArray(),
+        Array.Empty<CensusCountSnapshot>(),
+        shaderHashCoverage
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(static pair => pair.Value.ToSnapshot($"0x{pair.Key:X8}", 0))
+            .ToArray(),
+        emptyResourceSamples,
+        failures.Take(200).ToArray());
+
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+
+    Console.WriteLine($"MATD_SHADER_CENSUS resources={summary.MaterialDefinitionResources} packages={summary.MaterialDefinitionPackages} decoded={summary.DecodedResources} empty={summary.EmptyResources} failures={summary.Failures}");
+    foreach (var row in summary.TopProfiles.Take(20))
+    {
+        Console.WriteLine($"PROFILE {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+    foreach (var row in summary.TopFamilies.Take(20))
+    {
+        Console.WriteLine($"FAMILY {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+    Console.WriteLine($"Saved: {outputPath}");
+    return 0;
+}
+
+static async Task<int> RunResourceTypeCensusAsync(string cacheRoot, string outputPath)
+{
+    var cacheDirectory = NormalizeCacheDirectory(cacheRoot);
+    if (!Directory.Exists(cacheDirectory))
+    {
+        Console.Error.WriteLine($"Cache directory not found: {cacheDirectory}");
+        return 1;
+    }
+
+    var dbPaths = Directory
+        .EnumerateFiles(cacheDirectory, "index*.sqlite", SearchOption.TopDirectoryOnly)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (dbPaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No shard databases were found under {cacheDirectory}");
+        return 1;
+    }
+
+    var totalResources = 0;
+    var packagePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var topBucketCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var packageClassCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var typeCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var packageCoverageByType = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var dbPath in dbPaths)
+    {
+        await using var connection = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select package_path, type_name, count(*) as resource_count
+            from resources
+            group by package_path, type_name
+            order by package_path, type_name
+            """;
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            var packagePath = reader.GetString(0);
+            var typeName = reader.GetString(1);
+            var resourceCount = reader.GetInt32(2);
+
+            totalResources += resourceCount;
+            packagePaths.Add(packagePath);
+
+            var topBucket = GetTopBucket(packagePath);
+            var packageClass = GetPackageClass(packagePath);
+            CensusIncrementIntMap(topBucketCounts, topBucket, resourceCount);
+            CensusIncrementIntMap(packageClassCounts, packageClass, resourceCount);
+
+            if (!typeCounts.TryGetValue(typeName, out var existing))
+            {
+                existing = new CensusCount();
+                typeCounts[typeName] = existing;
+            }
+
+            existing.Count += resourceCount;
+            CensusIncrementIntMap(existing.TopBuckets, topBucket, resourceCount);
+            CensusIncrementIntMap(existing.PackageClasses, packageClass, resourceCount);
+            CensusAddCoverage(packageCoverageByType, typeName, packagePath);
+        }
+    }
+
+    var summary = new ResourceTypeCensusSummary(
+        DateTimeOffset.UtcNow,
+        cacheDirectory,
+        dbPaths.Select(static path => Path.GetFileName(path)!).ToArray(),
+        totalResources,
+        packagePaths.Count,
+        topBucketCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        packageClassCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        typeCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, packageCoverageByType[pair.Key].Count))
+            .ToArray());
+
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+
+    Console.WriteLine($"RESOURCE_TYPE_CENSUS resources={summary.TotalResources} packages={summary.TotalPackages} distinctTypes={summary.TopTypes.Count}");
+    foreach (var row in summary.TopTypes.Take(20))
+    {
+        Console.WriteLine($"TYPE {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+    Console.WriteLine($"Saved: {outputPath}");
+    return 0;
+}
+
+static async Task<int> RunCasCarrierCensusAsync(string cacheRoot, string outputPath)
+{
+    var cacheDirectory = NormalizeCacheDirectory(cacheRoot);
+    if (!Directory.Exists(cacheDirectory))
+    {
+        Console.Error.WriteLine($"Cache directory not found: {cacheDirectory}");
+        return 1;
+    }
+
+    var dbPaths = Directory
+        .EnumerateFiles(cacheDirectory, "index*.sqlite", SearchOption.TopDirectoryOnly)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (dbPaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No shard databases were found under {cacheDirectory}");
+        return 1;
+    }
+
+    var assetTopBucketCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var assetPackageClassCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var casAssetsByPrimaryGeometryType = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var casAssetsByIdentityType = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var geometryCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var identityCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+    var factTopBucketCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var factPackageClassCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var slotCategoryCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var categoryNormalizedCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var speciesCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var ageCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var genderCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var bodyTypeCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var slotCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var categoryCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var speciesCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var ageCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var genderCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var bodyTypeCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+    var casAssetPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var casPartPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    var casAssets = 0;
+    var assetsWithExactGeometryCandidate = 0;
+    var assetsWithMaterialReferences = 0;
+    var assetsWithTextureReferences = 0;
+    var assetsWithMaterialResourceCandidate = 0;
+    var assetsWithTextureResourceCandidate = 0;
+    var assetsWithRigReference = 0;
+    var assetsWithPackageLocalGraph = 0;
+    var assetsWithDiagnostics = 0;
+
+    var casPartFacts = 0;
+    var factsWithNakedLink = 0;
+    var factsRestrictOppositeGender = 0;
+    var factsRestrictOppositeFrame = 0;
+    var factsWithDefaultBodyType = 0;
+    var factsWithDefaultBodyTypeFemale = 0;
+    var factsWithDefaultBodyTypeMale = 0;
+
+    foreach (var dbPath in dbPaths)
+    {
+        await using var connection = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await using (var assetCommand = connection.CreateCommand())
+        {
+            assetCommand.CommandText = """
+                select package_path,
+                       coalesce(primary_geometry_type, ''),
+                       coalesce(identity_type, ''),
+                       has_exact_geometry_candidate,
+                       has_material_references,
+                       has_texture_references,
+                       has_material_resource_candidate,
+                       has_texture_resource_candidate,
+                       has_rig_reference,
+                       is_package_local_graph,
+                       has_diagnostics
+                from assets
+                where asset_kind = 'Cas'
+                """;
+            await using var reader = await assetCommand.ExecuteReaderAsync().ConfigureAwait(false);
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                casAssets++;
+                var packagePath = reader.GetString(0);
+                casAssetPackages.Add(packagePath);
+                var topBucket = GetTopBucket(packagePath);
+                var packageClass = GetPackageClass(packagePath);
+                CensusIncrementIntMap(assetTopBucketCounts, topBucket, 1);
+                CensusIncrementIntMap(assetPackageClassCounts, packageClass, 1);
+
+                var primaryGeometryType = NormalizeCountLabel(reader.GetString(1));
+                var identityType = NormalizeCountLabel(reader.GetString(2));
+                CensusIncrementStringCount(casAssetsByPrimaryGeometryType, primaryGeometryType, topBucket, packageClass);
+                CensusIncrementStringCount(casAssetsByIdentityType, identityType, topBucket, packageClass);
+                CensusAddCoverage(geometryCoverage, primaryGeometryType, packagePath);
+                CensusAddCoverage(identityCoverage, identityType, packagePath);
+
+                if (reader.GetInt64(3) != 0) { assetsWithExactGeometryCandidate++; }
+                if (reader.GetInt64(4) != 0) { assetsWithMaterialReferences++; }
+                if (reader.GetInt64(5) != 0) { assetsWithTextureReferences++; }
+                if (reader.GetInt64(6) != 0) { assetsWithMaterialResourceCandidate++; }
+                if (reader.GetInt64(7) != 0) { assetsWithTextureResourceCandidate++; }
+                if (reader.GetInt64(8) != 0) { assetsWithRigReference++; }
+                if (reader.GetInt64(9) != 0) { assetsWithPackageLocalGraph++; }
+                if (reader.GetInt64(10) != 0) { assetsWithDiagnostics++; }
+            }
+        }
+
+        await using (var factCommand = connection.CreateCommand())
+        {
+            factCommand.CommandText = """
+                select package_path,
+                       coalesce(slot_category, ''),
+                       coalesce(category_normalized, ''),
+                       body_type,
+                       has_naked_link,
+                       restrict_opposite_gender,
+                       restrict_opposite_frame,
+                       coalesce(species_label, ''),
+                       coalesce(age_label, ''),
+                       coalesce(gender_label, ''),
+                       default_body_type,
+                       default_body_type_female,
+                       default_body_type_male
+                from cas_part_facts
+                """;
+            await using var reader = await factCommand.ExecuteReaderAsync().ConfigureAwait(false);
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                casPartFacts++;
+                var packagePath = reader.GetString(0);
+                casPartPackages.Add(packagePath);
+                var topBucket = GetTopBucket(packagePath);
+                var packageClass = GetPackageClass(packagePath);
+                CensusIncrementIntMap(factTopBucketCounts, topBucket, 1);
+                CensusIncrementIntMap(factPackageClassCounts, packageClass, 1);
+
+                var slotCategory = NormalizeCountLabel(reader.GetString(1));
+                var categoryNormalized = NormalizeCountLabel(reader.GetString(2));
+                var bodyType = $"BodyType {reader.GetInt64(3)}";
+                var species = NormalizeCountLabel(reader.GetString(7));
+                var age = NormalizeCountLabel(reader.GetString(8));
+                var gender = NormalizeCountLabel(reader.GetString(9));
+
+                CensusIncrementStringCount(slotCategoryCounts, slotCategory, topBucket, packageClass);
+                CensusIncrementStringCount(categoryNormalizedCounts, categoryNormalized, topBucket, packageClass);
+                CensusIncrementStringCount(bodyTypeCounts, bodyType, topBucket, packageClass);
+                CensusIncrementStringCount(speciesCounts, species, topBucket, packageClass);
+                CensusIncrementStringCount(ageCounts, age, topBucket, packageClass);
+                CensusIncrementStringCount(genderCounts, gender, topBucket, packageClass);
+
+                CensusAddCoverage(slotCoverage, slotCategory, packagePath);
+                CensusAddCoverage(categoryCoverage, categoryNormalized, packagePath);
+                CensusAddCoverage(bodyTypeCoverage, bodyType, packagePath);
+                CensusAddCoverage(speciesCoverage, species, packagePath);
+                CensusAddCoverage(ageCoverage, age, packagePath);
+                CensusAddCoverage(genderCoverage, gender, packagePath);
+
+                if (reader.GetInt64(4) != 0) { factsWithNakedLink++; }
+                if (reader.GetInt64(5) != 0) { factsRestrictOppositeGender++; }
+                if (reader.GetInt64(6) != 0) { factsRestrictOppositeFrame++; }
+                if (reader.GetInt64(10) != 0) { factsWithDefaultBodyType++; }
+                if (reader.GetInt64(11) != 0) { factsWithDefaultBodyTypeFemale++; }
+                if (reader.GetInt64(12) != 0) { factsWithDefaultBodyTypeMale++; }
+            }
+        }
+    }
+
+    var summary = new CasCarrierCensusSummary(
+        DateTimeOffset.UtcNow,
+        cacheDirectory,
+        dbPaths.Select(static path => Path.GetFileName(path)!).ToArray(),
+        casAssets,
+        casAssetPackages.Count,
+        casPartFacts,
+        casPartPackages.Count,
+        assetTopBucketCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        assetPackageClassCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        factTopBucketCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        factPackageClassCounts.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        assetsWithExactGeometryCandidate,
+        assetsWithMaterialReferences,
+        assetsWithTextureReferences,
+        assetsWithMaterialResourceCandidate,
+        assetsWithTextureResourceCandidate,
+        assetsWithRigReference,
+        assetsWithPackageLocalGraph,
+        assetsWithDiagnostics,
+        factsWithNakedLink,
+        factsRestrictOppositeGender,
+        factsRestrictOppositeFrame,
+        factsWithDefaultBodyType,
+        factsWithDefaultBodyTypeFemale,
+        factsWithDefaultBodyTypeMale,
+        casAssetsByPrimaryGeometryType
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, geometryCoverage[pair.Key].Count))
+            .ToArray(),
+        casAssetsByIdentityType
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, identityCoverage[pair.Key].Count))
+            .ToArray(),
+        slotCategoryCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, slotCoverage[pair.Key].Count))
+            .ToArray(),
+        categoryNormalizedCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, categoryCoverage[pair.Key].Count))
+            .ToArray(),
+        bodyTypeCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, bodyTypeCoverage[pair.Key].Count))
+            .ToArray(),
+        speciesCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, speciesCoverage[pair.Key].Count))
+            .ToArray(),
+        ageCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, ageCoverage[pair.Key].Count))
+            .ToArray(),
+        genderCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, genderCoverage[pair.Key].Count))
+            .ToArray());
+
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+
+    Console.WriteLine($"CAS_CARRIER_CENSUS assets={summary.CasAssets} assetPackages={summary.CasAssetPackages} facts={summary.CasPartFacts} factPackages={summary.CasPartPackages} geom={summary.AssetsWithExactGeometryCandidate} matRefs={summary.AssetsWithMaterialReferences} texRefs={summary.AssetsWithTextureReferences} matRes={summary.AssetsWithMaterialResourceCandidate}");
+    foreach (var row in summary.TopSlotCategories.Take(10))
+    {
+        Console.WriteLine($"SLOT {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+
+    Console.WriteLine($"Saved: {outputPath}");
+    return 0;
+}
+
+static async Task<int> RunCasPartLinkageCensusAsync(string cacheRoot, string outputPath, int maxEntries)
+{
+    var cacheDirectory = NormalizeCacheDirectory(cacheRoot);
+    if (!Directory.Exists(cacheDirectory))
+    {
+        Console.Error.WriteLine($"Cache directory not found: {cacheDirectory}");
+        return 1;
+    }
+
+    var dbPaths = Directory
+        .EnumerateFiles(cacheDirectory, "index*.sqlite", SearchOption.TopDirectoryOnly)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (dbPaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No shard databases were found under {cacheDirectory}");
+        return 1;
+    }
+
+    var rows = new List<CensusResourceRow>();
+    foreach (var dbPath in dbPaths)
+    {
+        await using var connection = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select package_path, full_tgi
+            from resources
+            where type_name = 'CASPart'
+            order by package_path, full_tgi
+            """;
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            rows.Add(new CensusResourceRow(
+                reader.GetString(0),
+                reader.GetString(1)));
+        }
+    }
+
+    if (maxEntries > 0 && rows.Count > maxEntries)
+    {
+        rows = rows.Take(maxEntries).ToList();
+    }
+
+    var groupedByPackage = rows
+        .GroupBy(static row => row.PackagePath, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    var slotCategoryCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var slotCategoryCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var textureSlotCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var textureSlotCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var packageTopBuckets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var packageClasses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var uniqueGeometryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var uniqueTextureKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var uniqueRegionMapKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var parseFailures = new List<string>();
+    var zeroLengthResources = 0;
+
+    var casPartResources = rows.Count;
+    var parsedResources = 0;
+    var rowsWithLods = 0;
+    var rowsWithGeometryInLods = 0;
+    var rowsWithFallbackGeometry = 0;
+    var rowsWithAnyGeometryCandidate = 0;
+    var rowsWithLodGeometryOnly = 0;
+    var rowsWithFallbackGeometryOnly = 0;
+    var rowsWithBothGeometryPaths = 0;
+    var rowsWithRigCandidates = 0;
+    var rowsWithTextureCandidates = 0;
+    var rowsWithDiffuseCandidate = 0;
+    var rowsWithShadowCandidate = 0;
+    var rowsWithRegionMapCandidate = 0;
+    var rowsWithNormalCandidate = 0;
+    var rowsWithSpecularCandidate = 0;
+    var rowsWithEmissionCandidate = 0;
+    var rowsWithColorShiftMaskCandidate = 0;
+
+    var accessor = new CasPartReflectionAccessor();
+    var stopwatch = Stopwatch.StartNew();
+
+    Console.WriteLine($"CASPart linkage census rows={casPartResources:N0} packages={groupedByPackage.Length:N0}");
+
+    foreach (var (packageGroup, packageIndex) in groupedByPackage.Select(static (group, index) => (group, index)))
+    {
+        var packagePath = packageGroup.Key;
+        var topBucket = GetTopBucket(packagePath);
+        var packageClass = GetPackageClass(packagePath);
+        CensusIncrementIntMap(packageTopBuckets, topBucket, packageGroup.Count());
+        CensusIncrementIntMap(packageClasses, packageClass, packageGroup.Count());
+
+        await using var stream = new FileStream(
+            packagePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 131072,
+            options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var package = await DataBasePackedFile.FromStreamAsync(stream, CancellationToken.None);
+
+        foreach (var row in packageGroup)
+        {
+            if (!TryParseTgi(row.FullTgi, out var key))
+            {
+                parseFailures.Add($"Invalid TGI: {row.FullTgi} @ {packagePath}");
+                continue;
+            }
+
+            try
+            {
+                var bytes = await ReadPackageBytesFromPackageAsync(package, key, CancellationToken.None).ConfigureAwait(false);
+                if (bytes.Length == 0)
+                {
+                    zeroLengthResources++;
+                    continue;
+                }
+
+                var parsed = accessor.Parse(bytes);
+                parsedResources++;
+
+                var slotCategory = MapCasBodyTypeToSlotCategory(parsed.BodyType);
+                CensusIncrementStringCount(slotCategoryCounts, slotCategory, topBucket, packageClass);
+                CensusAddCoverage(slotCategoryCoverage, slotCategory, packagePath);
+
+                if (parsed.LodKeyIndices.Count > 0)
+                {
+                    rowsWithLods++;
+                }
+
+                var tgiList = parsed.TgiList;
+                var lodGeometryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var lodIndices in parsed.LodKeyIndices)
+                {
+                    foreach (var keyIndex in lodIndices)
+                    {
+                        if (keyIndex >= tgiList.Count)
+                        {
+                            continue;
+                        }
+
+                        var candidate = tgiList[keyIndex];
+                        if (string.Equals(candidate.TypeName, "Geometry", StringComparison.OrdinalIgnoreCase))
+                        {
+                            lodGeometryKeys.Add(candidate.FullTgi);
+                            uniqueGeometryKeys.Add(candidate.FullTgi);
+                        }
+                    }
+                }
+
+                var fallbackGeometryKeys = tgiList
+                    .Where(static candidate => string.Equals(candidate.TypeName, "Geometry", StringComparison.OrdinalIgnoreCase))
+                    .Select(static candidate => candidate.FullTgi)
+                    .Where(fullTgi => !lodGeometryKeys.Contains(fullTgi))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                foreach (var fullTgi in fallbackGeometryKeys)
+                {
+                    uniqueGeometryKeys.Add(fullTgi);
+                }
+
+                var hasLodGeometry = lodGeometryKeys.Count > 0;
+                var hasFallbackGeometry = fallbackGeometryKeys.Length > 0;
+                if (hasLodGeometry) { rowsWithGeometryInLods++; }
+                if (hasFallbackGeometry) { rowsWithFallbackGeometry++; }
+                if (hasLodGeometry || hasFallbackGeometry) { rowsWithAnyGeometryCandidate++; }
+                if (hasLodGeometry && hasFallbackGeometry) { rowsWithBothGeometryPaths++; }
+                else if (hasLodGeometry) { rowsWithLodGeometryOnly++; }
+                else if (hasFallbackGeometry) { rowsWithFallbackGeometryOnly++; }
+
+                var hasRigCandidate = tgiList.Any(static candidate => string.Equals(candidate.TypeName, "Rig", StringComparison.OrdinalIgnoreCase));
+                if (hasRigCandidate)
+                {
+                    rowsWithRigCandidates++;
+                }
+
+                var textureSlotsSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var textureCandidate in parsed.TextureReferences)
+                {
+                    textureSlotsSeen.Add(textureCandidate.Slot);
+                    uniqueTextureKeys.Add(textureCandidate.Key.FullTgi);
+                    CensusIncrementStringCount(textureSlotCounts, textureCandidate.Slot, topBucket, packageClass);
+                    CensusAddCoverage(textureSlotCoverage, textureCandidate.Slot, packagePath);
+
+                    if (string.Equals(textureCandidate.Slot, "region_map", StringComparison.OrdinalIgnoreCase))
+                    {
+                        uniqueRegionMapKeys.Add(textureCandidate.Key.FullTgi);
+                    }
+                }
+
+                if (textureSlotsSeen.Count > 0) { rowsWithTextureCandidates++; }
+                if (textureSlotsSeen.Contains("diffuse")) { rowsWithDiffuseCandidate++; }
+                if (textureSlotsSeen.Contains("shadow")) { rowsWithShadowCandidate++; }
+                if (textureSlotsSeen.Contains("region_map")) { rowsWithRegionMapCandidate++; }
+                if (textureSlotsSeen.Contains("normal")) { rowsWithNormalCandidate++; }
+                if (textureSlotsSeen.Contains("specular")) { rowsWithSpecularCandidate++; }
+                if (textureSlotsSeen.Contains("emission")) { rowsWithEmissionCandidate++; }
+                if (textureSlotsSeen.Contains("color_shift_mask")) { rowsWithColorShiftMaskCandidate++; }
+            }
+            catch (Exception ex)
+            {
+                if (parseFailures.Count < 200)
+                {
+                    parseFailures.Add($"{row.FullTgi} @ {packagePath}: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+
+        Console.WriteLine($"CASPart linkage package {packageIndex + 1,4}/{groupedByPackage.Length,4}: {packagePath}");
+    }
+
+    stopwatch.Stop();
+
+    var summary = new CasPartLinkageCensusSummary(
+        DateTimeOffset.UtcNow,
+        cacheDirectory,
+        dbPaths.Select(static path => Path.GetFileName(path)!).ToArray(),
+        casPartResources,
+        groupedByPackage.Length,
+        parsedResources,
+        zeroLengthResources,
+        parseFailures.Count,
+        rowsWithLods,
+        rowsWithGeometryInLods,
+        rowsWithFallbackGeometry,
+        rowsWithAnyGeometryCandidate,
+        rowsWithLodGeometryOnly,
+        rowsWithFallbackGeometryOnly,
+        rowsWithBothGeometryPaths,
+        rowsWithRigCandidates,
+        rowsWithTextureCandidates,
+        rowsWithDiffuseCandidate,
+        rowsWithShadowCandidate,
+        rowsWithRegionMapCandidate,
+        rowsWithNormalCandidate,
+        rowsWithSpecularCandidate,
+        rowsWithEmissionCandidate,
+        rowsWithColorShiftMaskCandidate,
+        uniqueGeometryKeys.Count,
+        uniqueTextureKeys.Count,
+        uniqueRegionMapKeys.Count,
+        packageTopBuckets.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        packageClasses.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        slotCategoryCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, slotCategoryCoverage[pair.Key].Count))
+            .ToArray(),
+        textureSlotCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, textureSlotCoverage[pair.Key].Count))
+            .ToArray(),
+        parseFailures,
+        stopwatch.Elapsed);
+
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+
+    Console.WriteLine($"CASPART_LINKAGE_CENSUS rows={summary.CasPartResources} parsed={summary.ParsedResources} lodGeom={summary.RowsWithGeometryInLods} fallbackGeom={summary.RowsWithFallbackGeometry} anyGeom={summary.RowsWithAnyGeometryCandidate} tex={summary.RowsWithTextureCandidates} regionMap={summary.RowsWithRegionMapCandidate}");
+    foreach (var row in summary.TopTextureSlots.Take(10))
+    {
+        Console.WriteLine($"TEX_SLOT {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+    foreach (var row in summary.TopSlotCategories.Take(10))
+    {
+        Console.WriteLine($"BODY_SLOT {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+
+    Console.WriteLine($"Saved: {outputPath}");
+    return 0;
+}
+
+static async Task<int> RunCasPartCompositionCensusAsync(string cacheRoot, string outputPath, int maxEntries)
+{
+    var cacheDirectory = NormalizeCacheDirectory(cacheRoot);
+    if (!Directory.Exists(cacheDirectory))
+    {
+        Console.Error.WriteLine($"Cache directory not found: {cacheDirectory}");
+        return 1;
+    }
+
+    var dbPaths = Directory
+        .EnumerateFiles(cacheDirectory, "index*.sqlite", SearchOption.TopDirectoryOnly)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (dbPaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No shard databases were found under {cacheDirectory}");
+        return 1;
+    }
+
+    var rows = new List<CensusResourceRow>();
+    foreach (var dbPath in dbPaths)
+    {
+        await using var connection = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select package_path, full_tgi
+            from resources
+            where type_name = 'CASPart'
+            order by package_path, full_tgi
+            """;
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            rows.Add(new CensusResourceRow(
+                reader.GetString(0),
+                reader.GetString(1)));
+        }
+    }
+
+    if (maxEntries > 0 && rows.Count > maxEntries)
+    {
+        rows = rows.Take(maxEntries).ToList();
+    }
+
+    var groupedByPackage = rows
+        .GroupBy(static row => row.PackagePath, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    var packageTopBuckets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var packageClasses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var compositionCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var compositionCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var compositionSortCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var compositionSortCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var slotCompositionCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var slotCompositionCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var slotCompositionSortCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var slotCompositionSortCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var unresolvedBodyTypeCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var unresolvedBodyTypeCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var unresolvedBodyTypeCompositionCounts = new Dictionary<string, CensusCount>(StringComparer.OrdinalIgnoreCase);
+    var unresolvedBodyTypeCompositionCoverage = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    var parseFailures = new List<string>();
+    var parseFailureCount = 0;
+    var zeroLengthResources = 0;
+
+    var casPartResources = rows.Count;
+    var parsedResources = 0;
+    var rowsWithCompositionMethodZero = 0;
+    var rowsWithCompositionMethodNonZero = 0;
+
+    var accessor = new CasPartReflectionAccessor();
+    var stopwatch = Stopwatch.StartNew();
+
+    Console.WriteLine($"CASPart composition census rows={casPartResources:N0} packages={groupedByPackage.Length:N0}");
+
+    foreach (var (packageGroup, packageIndex) in groupedByPackage.Select(static (group, index) => (group, index)))
+    {
+        var packagePath = packageGroup.Key;
+        var topBucket = GetTopBucket(packagePath);
+        var packageClass = GetPackageClass(packagePath);
+        CensusIncrementIntMap(packageTopBuckets, topBucket, packageGroup.Count());
+        CensusIncrementIntMap(packageClasses, packageClass, packageGroup.Count());
+
+        await using var stream = new FileStream(
+            packagePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 131072,
+            options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var package = await DataBasePackedFile.FromStreamAsync(stream, CancellationToken.None);
+
+        foreach (var row in packageGroup)
+        {
+            if (!TryParseTgi(row.FullTgi, out var key))
+            {
+                parseFailureCount++;
+                parseFailures.Add($"Invalid TGI: {row.FullTgi} @ {packagePath}");
+                continue;
+            }
+
+            try
+            {
+                var bytes = await ReadPackageBytesFromPackageAsync(package, key, CancellationToken.None).ConfigureAwait(false);
+                if (bytes.Length == 0)
+                {
+                    zeroLengthResources++;
+                    continue;
+                }
+
+                var parsed = accessor.Parse(bytes);
+                parsedResources++;
+
+                if (parsed.CompositionMethod == 0)
+                {
+                    rowsWithCompositionMethodZero++;
+                }
+                else
+                {
+                    rowsWithCompositionMethodNonZero++;
+                }
+
+                var slotCategory = MapCasBodyTypeToSlotCategory(parsed.BodyType);
+                var compositionKey = $"composition={parsed.CompositionMethod}";
+                var compositionSortKey = $"composition={parsed.CompositionMethod} | sort={parsed.SortLayer}";
+                var slotCompositionKey = $"{slotCategory} | composition={parsed.CompositionMethod}";
+                var slotCompositionSortKey = $"{slotCategory} | composition={parsed.CompositionMethod} | sort={parsed.SortLayer}";
+
+                CensusIncrementStringCount(compositionCounts, compositionKey, topBucket, packageClass);
+                CensusAddCoverage(compositionCoverage, compositionKey, packagePath);
+
+                CensusIncrementStringCount(compositionSortCounts, compositionSortKey, topBucket, packageClass);
+                CensusAddCoverage(compositionSortCoverage, compositionSortKey, packagePath);
+
+                CensusIncrementStringCount(slotCompositionCounts, slotCompositionKey, topBucket, packageClass);
+                CensusAddCoverage(slotCompositionCoverage, slotCompositionKey, packagePath);
+
+                CensusIncrementStringCount(slotCompositionSortCounts, slotCompositionSortKey, topBucket, packageClass);
+                CensusAddCoverage(slotCompositionSortCoverage, slotCompositionSortKey, packagePath);
+
+                if (slotCategory.StartsWith("Body Type ", StringComparison.OrdinalIgnoreCase))
+                {
+                    CensusIncrementStringCount(unresolvedBodyTypeCounts, slotCategory, topBucket, packageClass);
+                    CensusAddCoverage(unresolvedBodyTypeCoverage, slotCategory, packagePath);
+
+                    var unresolvedCompositionKey = $"{slotCategory} | composition={parsed.CompositionMethod}";
+                    CensusIncrementStringCount(unresolvedBodyTypeCompositionCounts, unresolvedCompositionKey, topBucket, packageClass);
+                    CensusAddCoverage(unresolvedBodyTypeCompositionCoverage, unresolvedCompositionKey, packagePath);
+                }
+            }
+            catch (Exception ex)
+            {
+                parseFailureCount++;
+                if (parseFailures.Count < 200)
+                {
+                    parseFailures.Add($"{row.FullTgi} @ {packagePath}: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+
+        Console.WriteLine($"CASPart composition package {packageIndex + 1,4}/{groupedByPackage.Length,4}: {packagePath}");
+    }
+
+    stopwatch.Stop();
+
+    var summary = new CasPartCompositionCensusSummary(
+        DateTimeOffset.UtcNow,
+        cacheDirectory,
+        dbPaths.Select(static path => Path.GetFileName(path)!).ToArray(),
+        casPartResources,
+        groupedByPackage.Length,
+        parsedResources,
+        zeroLengthResources,
+        parseFailureCount,
+        rowsWithCompositionMethodZero,
+        rowsWithCompositionMethodNonZero,
+        compositionCounts.Count,
+        compositionSortCounts.Count,
+        packageTopBuckets.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        packageClasses.OrderByDescending(static pair => pair.Value).ToDictionary(),
+        compositionCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, compositionCoverage[pair.Key].Count))
+            .ToArray(),
+        compositionSortCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, compositionSortCoverage[pair.Key].Count))
+            .ToArray(),
+        slotCompositionCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, slotCompositionCoverage[pair.Key].Count))
+            .ToArray(),
+        slotCompositionSortCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, slotCompositionSortCoverage[pair.Key].Count))
+            .ToArray(),
+        unresolvedBodyTypeCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, unresolvedBodyTypeCoverage[pair.Key].Count))
+            .ToArray(),
+        unresolvedBodyTypeCompositionCounts
+            .OrderByDescending(static pair => pair.Value.Count)
+            .Select(pair => pair.Value.ToSnapshot(pair.Key, unresolvedBodyTypeCompositionCoverage[pair.Key].Count))
+            .ToArray(),
+        parseFailures,
+        stopwatch.Elapsed);
+
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+
+    Console.WriteLine($"CASPART_COMPOSITION_CENSUS rows={summary.CasPartResources} parsed={summary.ParsedResources} compositionZero={summary.RowsWithCompositionMethodZero} compositionNonZero={summary.RowsWithCompositionMethodNonZero} distinctComposition={summary.DistinctCompositionMethods} distinctPairs={summary.DistinctCompositionSortPairs}");
+    foreach (var row in summary.TopCompositionMethods.Take(10))
+    {
+        Console.WriteLine($"COMPOSITION {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+    foreach (var row in summary.TopCompositionSortPairs.Take(10))
+    {
+        Console.WriteLine($"COMPOSITION_SORT {row.Name} count={row.Count} packages={row.PackageCoverage}");
+    }
+
+    Console.WriteLine($"Saved: {outputPath}");
+    return 0;
+}
+
+static async Task<int> BackfillCasPartCompositionCacheAsync(string cacheRoot, string outputPath)
+{
+    var cacheDirectory = NormalizeCacheDirectory(cacheRoot);
+    if (!Directory.Exists(cacheDirectory))
+    {
+        Console.Error.WriteLine($"Cache directory not found: {cacheDirectory}");
+        return 1;
+    }
+
+    var dbPaths = Directory
+        .EnumerateFiles(cacheDirectory, "index*.sqlite", SearchOption.TopDirectoryOnly)
+        .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (dbPaths.Length == 0)
+    {
+        Console.Error.WriteLine($"No shard databases were found under {cacheDirectory}");
+        return 1;
+    }
+
+    var accessor = new CasPartReflectionAccessor();
+    var databaseSummaries = new List<CasPartCompositionBackfillDatabaseSummary>();
+    var progressPath = Path.ChangeExtension(outputPath, ".progress.json");
+    var stopwatch = Stopwatch.StartNew();
+    var overallTargetCount = 0;
+
+    foreach (var dbPath in dbPaths)
+    {
+        await using var connection = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+        await connection.OpenAsync().ConfigureAwait(false);
+        var hasColumn = await SqliteColumnExistsAsync(connection, "cas_part_facts", "composition_method").ConfigureAwait(false);
+        overallTargetCount += hasColumn
+            ? await ExecuteScalarIntAsync(connection, "select count(*) from cas_part_facts where composition_method is null;").ConfigureAwait(false)
+            : await ExecuteScalarIntAsync(connection, "select count(*) from cas_part_facts;").ConfigureAwait(false);
+    }
+
+    var totalFactRows = 0;
+    var totalMissingBefore = 0;
+    var totalMissingAfter = 0;
+    var totalDistinctTargets = 0;
+    var totalUpdatedFactRows = 0;
+    var totalProcessedTargets = 0;
+    var totalParseFailures = 0;
+    var totalZeroLengthResources = 0;
+    var totalInvalidTgis = 0;
+
+    foreach (var dbPath in dbPaths)
+    {
+        await using var connection = new SqliteConnection($"Data Source={dbPath};Mode=ReadWrite");
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await EnsureSqliteColumnAsync(connection, "cas_part_facts", "composition_method", "INTEGER NULL").ConfigureAwait(false);
+
+        var totalRowsInDb = await ExecuteScalarIntAsync(connection, "select count(*) from cas_part_facts;").ConfigureAwait(false);
+        var missingBefore = await ExecuteScalarIntAsync(connection, "select count(*) from cas_part_facts where composition_method is null;").ConfigureAwait(false);
+
+        var targets = new List<CasPartFactRowTarget>();
+        await using (var selectTargets = connection.CreateCommand())
+        {
+            selectTargets.CommandText = """
+                select rowid, package_path, root_tgi
+                from cas_part_facts
+                where composition_method is null
+                order by package_path, rowid
+                """;
+            await using var reader = await selectTargets.ExecuteReaderAsync().ConfigureAwait(false);
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                targets.Add(new CasPartFactRowTarget(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetString(2)));
+            }
+        }
+
+        var groupedByPackage = targets
+            .GroupBy(static row => row.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var processedTargets = 0;
+        var updatedFactRows = 0;
+        var parseFailures = 0;
+        var zeroLengthResources = 0;
+        var invalidTgis = 0;
+
+        foreach (var (packageGroup, packageIndex) in groupedByPackage.Select(static (group, index) => (group, index)))
+        {
+            var packagePath = packageGroup.Key;
+            await using var stream = new FileStream(
+                packagePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 131072,
+                options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var package = await DataBasePackedFile.FromStreamAsync(stream, CancellationToken.None);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync().ConfigureAwait(false);
+            await using var updateCommand = connection.CreateCommand();
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = """
+                update cas_part_facts
+                set composition_method = $compositionMethod
+                where rowid = $rowId
+                """;
+            updateCommand.Parameters.Add("$compositionMethod", SqliteType.Integer);
+            updateCommand.Parameters.Add("$rowId", SqliteType.Integer);
+
+            foreach (var target in packageGroup)
+            {
+                if (!TryParseTgi(target.RootTgi, out var key))
+                {
+                    invalidTgis++;
+                    continue;
+                }
+
+                try
+                {
+                    var bytes = await ReadPackageBytesFromPackageAsync(package, key, CancellationToken.None).ConfigureAwait(false);
+                    if (bytes.Length == 0)
+                    {
+                        zeroLengthResources++;
+                        continue;
+                    }
+
+                    var parsed = accessor.Parse(bytes);
+                    updateCommand.Parameters["$compositionMethod"].Value = (int)parsed.CompositionMethod;
+                    updateCommand.Parameters["$rowId"].Value = target.RowId;
+                    updatedFactRows += await updateCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    processedTargets++;
+                }
+                catch
+                {
+                    parseFailures++;
+                }
+            }
+
+            await transaction.CommitAsync().ConfigureAwait(false);
+
+            await WriteBackfillProgressAsync(
+                progressPath,
+                new CasPartCompositionBackfillProgress(
+                    DateTimeOffset.UtcNow,
+                    cacheDirectory,
+                    ProbeSeedFactContentVersion,
+                    overallTargetCount,
+                    totalProcessedTargets + processedTargets,
+                    totalUpdatedFactRows + updatedFactRows,
+                    Path.GetFileName(dbPath),
+                    packagePath,
+                    packageIndex + 1,
+                    groupedByPackage.Length,
+                    stopwatch.Elapsed)).ConfigureAwait(false);
+
+            Console.WriteLine($"CASPart composition backfill {Path.GetFileName(dbPath)} package {packageIndex + 1,4}/{groupedByPackage.Length,4}: {packagePath}");
+        }
+
+        await using (var metadataTransaction = (SqliteTransaction)await connection.BeginTransactionAsync().ConfigureAwait(false))
+        await using (var metadataCommand = connection.CreateCommand())
+        {
+            metadataCommand.Transaction = metadataTransaction;
+            metadataCommand.CommandText = """
+                insert into cache_metadata(key, value)
+                values ($key, $value)
+                on conflict(key) do update set value = excluded.value
+                """;
+            metadataCommand.Parameters.AddWithValue("$key", "seed_fact_content_version");
+            metadataCommand.Parameters.AddWithValue("$value", ProbeSeedFactContentVersion);
+            await metadataCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
+            await metadataTransaction.CommitAsync().ConfigureAwait(false);
+        }
+
+        var missingAfter = await ExecuteScalarIntAsync(connection, "select count(*) from cas_part_facts where composition_method is null;").ConfigureAwait(false);
+        var schemaHasColumn = await SqliteColumnExistsAsync(connection, "cas_part_facts", "composition_method").ConfigureAwait(false);
+
+        databaseSummaries.Add(new CasPartCompositionBackfillDatabaseSummary(
+            Path.GetFileName(dbPath),
+            totalRowsInDb,
+            missingBefore,
+            missingAfter,
+            targets.Count,
+            processedTargets,
+            updatedFactRows,
+            parseFailures,
+            zeroLengthResources,
+            invalidTgis,
+            schemaHasColumn));
+
+        totalFactRows += totalRowsInDb;
+        totalMissingBefore += missingBefore;
+        totalMissingAfter += missingAfter;
+        totalDistinctTargets += targets.Count;
+        totalUpdatedFactRows += updatedFactRows;
+        totalProcessedTargets += processedTargets;
+        totalParseFailures += parseFailures;
+        totalZeroLengthResources += zeroLengthResources;
+        totalInvalidTgis += invalidTgis;
+
+        await WriteBackfillProgressAsync(
+            progressPath,
+            new CasPartCompositionBackfillProgress(
+                DateTimeOffset.UtcNow,
+                cacheDirectory,
+                ProbeSeedFactContentVersion,
+                overallTargetCount,
+                totalProcessedTargets,
+                totalUpdatedFactRows,
+                Path.GetFileName(dbPath),
+                null,
+                groupedByPackage.Length,
+                groupedByPackage.Length,
+                stopwatch.Elapsed)).ConfigureAwait(false);
+    }
+
+    stopwatch.Stop();
+
+    var summary = new CasPartCompositionBackfillSummary(
+        DateTimeOffset.UtcNow,
+        cacheDirectory,
+        dbPaths.Select(static path => Path.GetFileName(path)!).ToArray(),
+        ProbeSeedFactContentVersion,
+        totalFactRows,
+        totalMissingBefore,
+        totalMissingAfter,
+        totalDistinctTargets,
+        totalProcessedTargets,
+        totalUpdatedFactRows,
+        totalParseFailures,
+        totalZeroLengthResources,
+        totalInvalidTgis,
+        databaseSummaries,
+        stopwatch.Elapsed);
+
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+
+    Console.WriteLine($"CASPART_COMPOSITION_BACKFILL facts={summary.TotalFactRows} missingBefore={summary.MissingCompositionBefore} missingAfter={summary.MissingCompositionAfter} targets={summary.DistinctTargets} processed={summary.ProcessedTargets} updatedRows={summary.UpdatedFactRows} parseFailures={summary.ParseFailures}");
+    Console.WriteLine($"Saved: {outputPath}");
+    return 0;
+}
+
+static async Task<byte[]> ReadPackageBytesFromPackageAsync(DataBasePackedFile package, ResourceKeyRecord key, CancellationToken cancellationToken)
+{
+    var llamaKey = new ResourceKey((ResourceType)key.Type, key.Group, key.FullInstance);
+    try
+    {
+        return (await package.GetAsync(llamaKey, false, cancellationToken).ConfigureAwait(false)).ToArray();
+    }
+    catch (Exception ex) when (ex.Message.Contains("marked as deleted", StringComparison.OrdinalIgnoreCase))
+    {
+        return (await package.GetAsync(llamaKey, true, cancellationToken).ConfigureAwait(false)).ToArray();
+    }
+}
+
+static string MapCasBodyTypeToSlotCategory(int bodyType) => bodyType switch
+{
+    2 => "Hair",
+    3 => "Head",
+    5 => "Full Body",
+    6 => "Top",
+    7 => "Bottom",
+    8 => "Shoes",
+    12 => "Accessory",
+    _ => $"Body Type {bodyType}"
+};
+
+static string NormalizeCacheDirectory(string cacheRoot)
+{
+    if (Directory.Exists(Path.Combine(cacheRoot, "cache")))
+    {
+        return Path.Combine(cacheRoot, "cache");
+    }
+
+    return cacheRoot;
+}
+
+static async Task<int> ExecuteScalarIntAsync(SqliteConnection connection, string sql)
+{
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    var value = await command.ExecuteScalarAsync().ConfigureAwait(false);
+    return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+}
+
+static async Task EnsureSqliteColumnAsync(SqliteConnection connection, string tableName, string columnName, string declaration)
+{
+    if (await SqliteColumnExistsAsync(connection, tableName, columnName).ConfigureAwait(false))
+    {
+        return;
+    }
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {declaration};";
+    await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+}
+
+static async Task WriteBackfillProgressAsync(string progressPath, CasPartCompositionBackfillProgress progress)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(progressPath)!);
+    await File.WriteAllTextAsync(progressPath, JsonSerializer.Serialize(progress, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+}
+
+static async Task<bool> SqliteColumnExistsAsync(SqliteConnection connection, string tableName, string columnName)
+{
+    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"PRAGMA table_info({tableName});";
+    await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+    while (await reader.ReadAsync().ConfigureAwait(false))
+    {
+        columns.Add(reader.GetString(1));
+    }
+
+    return columns.Contains(columnName);
+}
+
+static Dictionary<uint, string> LoadShaderProfileNames(string profilePath)
+{
+    if (!File.Exists(profilePath))
+    {
+        return [];
+    }
+
+    using var document = JsonDocument.Parse(File.ReadAllText(profilePath));
+    var result = new Dictionary<uint, string>();
+    foreach (var property in document.RootElement.EnumerateObject())
+    {
+        var keyText = property.Name.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? property.Name[2..]
+            : property.Name;
+        if (!uint.TryParse(keyText, System.Globalization.NumberStyles.HexNumber, null, out var shaderHash))
+        {
+            continue;
+        }
+
+        var name = property.Value.TryGetProperty("name_guess", out var nameElement) && nameElement.ValueKind == JsonValueKind.String
+            ? nameElement.GetString()
+            : null;
+        result[shaderHash] = string.IsNullOrWhiteSpace(name) ? $"Shader_{shaderHash:X8}" : name!;
+    }
+
+    return result;
+}
+
+static bool TryReadMatdShaderHash(ReadOnlySpan<byte> bytes, out uint shaderHash)
+{
+    shaderHash = 0;
+    if (bytes.Length < 16)
+    {
+        return false;
+    }
+
+    var matdOffset = bytes.IndexOf("MATD"u8);
+    if (matdOffset < 0 || matdOffset + 16 > bytes.Length)
+    {
+        return false;
+    }
+
+    shaderHash = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(matdOffset + 12, 4));
+    return true;
+}
+
+static string NormalizeShaderFamilyName(string profileName)
+{
+    if (string.IsNullOrWhiteSpace(profileName))
+    {
+        return "Unknown";
+    }
+
+    var span = profileName.AsSpan().Trim();
+    var separatorIndex = span.IndexOfAny(['-', '_', ' ']);
+    return separatorIndex > 0 ? span[..separatorIndex].ToString() : span.ToString();
+}
+
+static string NormalizeCountLabel(string? value, string unknown = "Unknown")
+{
+    return string.IsNullOrWhiteSpace(value) ? unknown : value.Trim();
+}
+
+static void CensusIncrementIntMap(Dictionary<string, int> counts, string key, int amount)
+{
+    counts[key] = counts.TryGetValue(key, out var existing) ? existing + amount : amount;
+}
+
+static void CensusIncrementStringCount(Dictionary<string, CensusCount> counts, string key, string topBucket, string packageClass)
+{
+    if (!counts.TryGetValue(key, out var existing))
+    {
+        existing = new CensusCount();
+        counts[key] = existing;
+    }
+
+    existing.Count++;
+    CensusIncrementIntMap(existing.TopBuckets, topBucket, 1);
+    CensusIncrementIntMap(existing.PackageClasses, packageClass, 1);
+}
+
+static void CensusIncrementUIntCount(Dictionary<uint, CensusCount> counts, uint key, string topBucket, string packageClass)
+{
+    if (!counts.TryGetValue(key, out var existing))
+    {
+        existing = new CensusCount();
+        counts[key] = existing;
+    }
+
+    existing.Count++;
+    CensusIncrementIntMap(existing.TopBuckets, topBucket, 1);
+    CensusIncrementIntMap(existing.PackageClasses, packageClass, 1);
+}
+
+static void CensusAddCoverage(Dictionary<string, HashSet<string>> coverage, string key, string packagePath)
+{
+    if (!coverage.TryGetValue(key, out var set))
+    {
+        set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        coverage[key] = set;
+    }
+
+    set.Add(packagePath);
+}
+
+static string GetTopBucket(string packagePath)
+{
+    var relative = Path.GetRelativePath(@"C:\GAMES\The Sims 4", packagePath);
+    var firstSegment = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+    if (string.Equals(firstSegment, "Data", StringComparison.OrdinalIgnoreCase))
+    {
+        return "BaseGame-Data";
+    }
+
+    return firstSegment switch
+    {
+        "Delta" => "Delta",
+        _ when firstSegment.StartsWith("EP", StringComparison.OrdinalIgnoreCase) => "EP",
+        _ when firstSegment.StartsWith("GP", StringComparison.OrdinalIgnoreCase) => "GP",
+        _ when firstSegment.StartsWith("SP", StringComparison.OrdinalIgnoreCase) => "SP",
+        _ when firstSegment.StartsWith("FP", StringComparison.OrdinalIgnoreCase) => "FP",
+        _ => firstSegment
+    };
+}
+
+static string GetPackageClass(string packagePath)
+{
+    var fileName = Path.GetFileName(packagePath);
+    if (fileName.StartsWith("ClientFullBuild", StringComparison.OrdinalIgnoreCase))
+    {
+        return "ClientFullBuild";
+    }
+
+    if (fileName.StartsWith("ClientDeltaBuild", StringComparison.OrdinalIgnoreCase))
+    {
+        return "ClientDeltaBuild";
+    }
+
+    if (fileName.StartsWith("SimulationFullBuild", StringComparison.OrdinalIgnoreCase))
+    {
+        return "SimulationFullBuild";
+    }
+
+    if (fileName.StartsWith("SimulationDeltaBuild", StringComparison.OrdinalIgnoreCase))
+    {
+        return "SimulationDeltaBuild";
+    }
+
+    if (fileName.StartsWith("SimulationPreload", StringComparison.OrdinalIgnoreCase))
+    {
+        return "SimulationPreload";
+    }
+
+    if (fileName.StartsWith("thumbnailsdeltabg", StringComparison.OrdinalIgnoreCase))
+    {
+        return "thumbnailsdeltabg";
+    }
+
+    if (fileName.StartsWith("thumbnailsdeltapack", StringComparison.OrdinalIgnoreCase))
+    {
+        return "thumbnailsdeltapack";
+    }
+
+    if (fileName.StartsWith("thumbnails", StringComparison.OrdinalIgnoreCase))
+    {
+        return "thumbnails";
+    }
+
+    if (fileName.StartsWith("Strings_", StringComparison.OrdinalIgnoreCase))
+    {
+        return "Strings_*";
+    }
+
+    if (fileName.StartsWith("ClipHeader", StringComparison.OrdinalIgnoreCase))
+    {
+        return "ClipHeader";
+    }
+
+    if (fileName.StartsWith("magalog", StringComparison.OrdinalIgnoreCase))
+    {
+        return "magalog";
+    }
+
+    if (fileName.StartsWith("UI", StringComparison.OrdinalIgnoreCase))
+    {
+        return "UI";
+    }
+
+    return fileName;
+}
+
 static uint? TryGetWordAtOffset(IReadOnlyList<string> nonZeroOffsets, int offset)
 {
     var prefix = $"+0x{offset:X4}=";
@@ -3295,6 +4855,196 @@ static void DumpUnknownChunk(ReadOnlySpan<byte> bytes)
     }
 }
 
+static async Task<int> RunSimMaterialCarrierCensusAsync(string outputPath, int maxEntries)
+{
+    var cache = new FileSystemCacheService();
+    Directory.CreateDirectory(cache.CacheRoot);
+
+    var store = new SqliteIndexStore(cache);
+    await store.InitializeAsync(CancellationToken.None);
+
+    var catalog = new LlamaResourceCatalogService();
+    var graphBuilder = new ExplicitAssetGraphBuilder(catalog, store);
+    var assets = await LoadAllSimArchetypeAssetsAsync(store, maxEntries, CancellationToken.None);
+    var rows = new List<SimMaterialCarrierSurveyRow>(assets.Count);
+    var stopwatch = Stopwatch.StartNew();
+
+    Console.WriteLine($"Censusing {assets.Count:N0} Sim archetype asset(s) from live index...");
+
+    foreach (var (asset, index) in assets.Select(static (asset, index) => (asset, index)))
+    {
+        Console.WriteLine($"[{index + 1:N0}/{assets.Count:N0}] {asset.DisplayName}");
+
+        try
+        {
+            var packageResources = await store.GetPackageResourcesAsync(asset.PackagePath, CancellationToken.None);
+            var graph = await graphBuilder.BuildPreviewGraphAsync(asset, packageResources, CancellationToken.None);
+            rows.Add(BuildSimMaterialCarrierSurveyRow(asset, graph));
+        }
+        catch (Exception ex)
+        {
+            rows.Add(new SimMaterialCarrierSurveyRow(
+                asset.DisplayName,
+                asset.RootKey.FullTgi,
+                asset.PackagePath,
+                string.Empty,
+                string.Empty,
+                "Error",
+                string.Empty,
+                string.Empty,
+                false,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                0,
+                0,
+                false,
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                string.Empty,
+                [$"Exception: {ex.GetType().Name}: {ex.Message}"]));
+        }
+    }
+
+    stopwatch.Stop();
+
+    var assetTopBuckets = rows
+        .GroupBy(static row => GetTopBucket(row.AssetPackagePath), StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(static group => group.Count())
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var assetPackageClasses = rows
+        .GroupBy(static row => GetPackageClass(row.AssetPackagePath), StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(static group => group.Count())
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var graphStatusCounts = rows
+        .GroupBy(static row => row.GraphStatus, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var contractStatusCounts = rows
+        .Where(static row => !string.Equals(row.GraphStatus, "Error", StringComparison.OrdinalIgnoreCase) &&
+                             !string.Equals(row.GraphStatus, "GraphMissing", StringComparison.OrdinalIgnoreCase))
+        .GroupBy(static row => row.ContractStatus, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var assemblyModeCounts = rows
+        .Where(static row => !string.IsNullOrWhiteSpace(row.AssemblyMode))
+        .GroupBy(static row => row.AssemblyMode, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var overlayDistribution = rows
+        .Where(static row => row.GraphSupported)
+        .GroupBy(static row => row.OverlayTextureCount.ToString(CultureInfo.InvariantCulture), StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => int.Parse(group.Key, CultureInfo.InvariantCulture))
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var swatchDistribution = rows
+        .Where(static row => row.GraphSupported)
+        .GroupBy(static row => row.SwatchColorCount.ToString(CultureInfo.InvariantCulture), StringComparer.OrdinalIgnoreCase)
+        .OrderBy(static group => int.Parse(group.Key, CultureInfo.InvariantCulture))
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var activeLayerCounts = rows
+        .SelectMany(static row => row.ActiveLayers)
+        .GroupBy(static label => label, StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(static group => group.Count())
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var bodyCandidateSourceKindCounts = rows
+        .SelectMany(static row => row.BodyCandidateSourceKinds)
+        .GroupBy(static kind => kind, StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(static group => group.Count())
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var casSlotCandidateSourceKindCounts = rows
+        .SelectMany(static row => row.CasSlotCandidateSourceKinds)
+        .GroupBy(static kind => kind, StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(static group => group.Count())
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var bodyFoundationCoverage = BuildSimCarrierCoverage(rows, static row => row.BodyFoundation);
+    var bodySourceCoverage = BuildSimCarrierCoverage(rows, static row => row.BodySources);
+    var slotGroupCoverage = BuildSimCarrierCoverage(rows, static row => row.SlotGroups);
+    var morphGroupCoverage = BuildSimCarrierCoverage(rows, static row => row.MorphGroups);
+
+    var supportedRows = rows.Where(static row => row.GraphSupported).ToArray();
+    var assetsWithSkintoneRender = supportedRows.Count(static row => !string.IsNullOrWhiteSpace(row.SkintoneResourceTgi));
+    var assetsWithBaseTexture = supportedRows.Count(static row => !string.IsNullOrWhiteSpace(row.BaseTextureResourceTgi));
+    var assetsWithOverlayTextures = supportedRows.Count(static row => row.OverlayTextureCount > 0);
+    var assetsWithViewportTint = supportedRows.Count(static row => row.HasViewportTint);
+    var uniqueSkintoneResources = supportedRows
+        .Select(static row => row.SkintoneResourceTgi)
+        .Where(static value => !string.IsNullOrWhiteSpace(value))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+    var uniqueBaseTextureResources = supportedRows
+        .Select(static row => row.BaseTextureResourceTgi)
+        .Where(static value => !string.IsNullOrWhiteSpace(value))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+    var skintoneTopBuckets = supportedRows
+        .Where(static row => !string.IsNullOrWhiteSpace(row.SkintonePackagePath))
+        .GroupBy(static row => GetTopBucket(row.SkintonePackagePath), StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(static group => group.Count())
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+    var baseTextureTopBuckets = supportedRows
+        .Where(static row => !string.IsNullOrWhiteSpace(row.BaseTexturePackagePath))
+        .GroupBy(static row => GetTopBucket(row.BaseTexturePackagePath), StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(static group => group.Count())
+        .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+    var report = new SimMaterialCarrierCensusReport(
+        outputPath,
+        assets.Count,
+        stopwatch.Elapsed,
+        supportedRows.Length,
+        rows.Count - supportedRows.Length,
+        assetsWithSkintoneRender,
+        uniqueSkintoneResources,
+        assetsWithBaseTexture,
+        uniqueBaseTextureResources,
+        assetsWithOverlayTextures,
+        assetsWithViewportTint,
+        assetTopBuckets,
+        assetPackageClasses,
+        graphStatusCounts,
+        contractStatusCounts,
+        assemblyModeCounts,
+        overlayDistribution,
+        swatchDistribution,
+        activeLayerCounts,
+        bodyCandidateSourceKindCounts,
+        casSlotCandidateSourceKindCounts,
+        skintoneTopBuckets,
+        baseTextureTopBuckets,
+        bodyFoundationCoverage,
+        bodySourceCoverage,
+        slotGroupCoverage,
+        morphGroupCoverage,
+        rows);
+
+    var outputDirectory = Path.GetDirectoryName(outputPath);
+    if (!string.IsNullOrWhiteSpace(outputDirectory))
+    {
+        Directory.CreateDirectory(outputDirectory);
+    }
+
+    await File.WriteAllTextAsync(
+        outputPath,
+        JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }),
+        CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine($"SIM_MATERIAL_CARRIER_CENSUS assets={report.TotalAssets} supported={report.SupportedAssets} skintone={report.AssetsWithSkintoneRender} baseTexture={report.AssetsWithBaseTexture} overlays={report.AssetsWithOverlayTextures} uniqueSkintones={report.UniqueSkintoneResources} uniqueBaseTextures={report.UniqueBaseTextureResources}");
+    foreach (var pair in report.AssemblyModeCounts)
+    {
+        Console.WriteLine($"ASSEMBLY {pair.Key} count={pair.Value}");
+    }
+
+    Console.WriteLine($"Saved: {outputPath}");
+    return 0;
+}
+
 static async Task<int> RunSimArchetypeBodyShellSurveyAsync(string outputPath, int maxEntries)
 {
     var cache = new FileSystemCacheService();
@@ -3483,6 +5233,112 @@ static async Task<IReadOnlyList<AssetSummary>> LoadAllSimArchetypeAssetsAsync(
     return results;
 }
 
+static IReadOnlyList<SimCarrierCoverageSnapshot> BuildSimCarrierCoverage(
+    IEnumerable<SimMaterialCarrierSurveyRow> rows,
+    Func<SimMaterialCarrierSurveyRow, IReadOnlyList<SimCarrierValueRow>> selector)
+{
+    var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var assetCoverage = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var row in rows)
+    {
+        var seenInRow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in selector(row))
+        {
+            if (string.IsNullOrWhiteSpace(entry.Label))
+            {
+                continue;
+            }
+
+            CensusIncrementIntMap(totals, entry.Label, entry.Count);
+            if (seenInRow.Add(entry.Label))
+            {
+                CensusIncrementIntMap(assetCoverage, entry.Label, 1);
+            }
+        }
+    }
+
+    return totals
+        .OrderByDescending(static pair => pair.Value)
+        .ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+        .Select(pair => new SimCarrierCoverageSnapshot(
+            pair.Key,
+            pair.Value,
+            assetCoverage.TryGetValue(pair.Key, out var assets) ? assets : 0))
+        .ToArray();
+}
+
+static SimMaterialCarrierSurveyRow BuildSimMaterialCarrierSurveyRow(AssetSummary asset, AssetGraph graph)
+{
+    var simGraph = graph.SimGraph;
+    if (simGraph is null)
+    {
+        return new SimMaterialCarrierSurveyRow(
+            asset.DisplayName,
+            asset.RootKey.FullTgi,
+            asset.PackagePath,
+            string.Empty,
+            string.Empty,
+            "GraphMissing",
+            string.Empty,
+            SimBodyAssemblyMode.None.ToString(),
+            false,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            0,
+            0,
+            false,
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            string.Empty,
+            ["Sim graph was not constructed."]);
+    }
+
+    var selectedTemplate = simGraph.TemplateOptions
+        .OrderByDescending(static option => option.IsRepresentative)
+        .ThenByDescending(static option => option.HasAuthoritativeBodyParts)
+        .ThenByDescending(static option => option.OutfitPartCount)
+        .ThenBy(static option => option.DisplayName, StringComparer.OrdinalIgnoreCase)
+        .FirstOrDefault();
+    var contract = BuildSimBodyShellContractSnapshot(simGraph);
+    var skintoneRender = simGraph.SkintoneRender;
+    var timingLine = graph.Diagnostics.FirstOrDefault(static line => line.StartsWith("Sim graph timings:", StringComparison.Ordinal));
+
+    return new SimMaterialCarrierSurveyRow(
+        asset.DisplayName,
+        asset.RootKey.FullTgi,
+        asset.PackagePath,
+        selectedTemplate?.DisplayName ?? string.Empty,
+        selectedTemplate?.PackagePath ?? string.Empty,
+        "Supported",
+        contract.ContractStatus,
+        simGraph.BodyAssembly.Mode.ToString(),
+        true,
+        skintoneRender?.SkintoneResourceTgi ?? string.Empty,
+        skintoneRender?.SkintonePackagePath ?? string.Empty,
+        skintoneRender?.BaseTextureResourceTgi ?? string.Empty,
+        skintoneRender?.BaseTexturePackagePath ?? string.Empty,
+        skintoneRender?.OverlayTextureCount ?? 0,
+        skintoneRender?.SwatchColorCount ?? 0,
+        skintoneRender?.ViewportTintColor is not null,
+        contract.ActiveLayers,
+        simGraph.BodyCandidates.Select(static candidate => candidate.SourceKind.ToString()).ToArray(),
+        simGraph.CasSlotCandidates.Select(static candidate => candidate.SourceKind.ToString()).ToArray(),
+        simGraph.BodyFoundation.Select(static item => new SimCarrierValueRow(item.Label, item.Count)).ToArray(),
+        simGraph.BodySources.Select(static item => new SimCarrierValueRow(item.Label, item.Count)).ToArray(),
+        simGraph.SlotGroups.Select(static item => new SimCarrierValueRow(item.Label, item.Count)).ToArray(),
+        simGraph.MorphGroups.Select(static item => new SimCarrierValueRow(item.Label, item.Count)).ToArray(),
+        timingLine ?? string.Empty,
+        contract.Issues);
+}
+
 static SimArchetypeBodyShellSurveyRow BuildSimArchetypeBodyShellSurveyRow(AssetSummary asset, AssetGraph graph)
 {
     var simGraph = graph.SimGraph;
@@ -3504,6 +5360,26 @@ static SimArchetypeBodyShellSurveyRow BuildSimArchetypeBodyShellSurveyRow(AssetS
             ["Sim graph was not constructed."]);
     }
 
+    var contract = BuildSimBodyShellContractSnapshot(simGraph);
+    var timingLine = graph.Diagnostics.FirstOrDefault(static line => line.StartsWith("Sim graph timings:", StringComparison.Ordinal));
+    return new SimArchetypeBodyShellSurveyRow(
+        asset.DisplayName,
+        asset.RootKey.FullTgi,
+        asset.PackagePath,
+        simGraph.SimInfoResource.Name ?? string.Empty,
+        simGraph.SimInfoResource.PackagePath,
+        contract.ContractStatus,
+        simGraph.BodyAssembly.Mode.ToString(),
+        contract.ActiveLayers,
+        contract.CandidateSources,
+        contract.BodyDrivingCount,
+        contract.UsesIndexedDefaultRecipe,
+        timingLine ?? string.Empty,
+        contract.Issues);
+}
+
+static SimBodyShellContractSnapshot BuildSimBodyShellContractSnapshot(SimAssetGraph simGraph)
+{
     var bodyDrivingSource = simGraph.BodySources.FirstOrDefault(static source => source.Label == "Body-driving outfit records");
     var bodyDrivingCount = bodyDrivingSource?.Count ?? 0;
     var activeLayers = simGraph.BodyAssembly.Layers
@@ -3547,20 +5423,12 @@ static SimArchetypeBodyShellSurveyRow BuildSimArchetypeBodyShellSurveyRow(AssetS
         issues.Add("Assembly mode is non-empty but no active body layers were resolved.");
     }
 
-    var timingLine = graph.Diagnostics.FirstOrDefault(static line => line.StartsWith("Sim graph timings:", StringComparison.Ordinal));
-    return new SimArchetypeBodyShellSurveyRow(
-        asset.DisplayName,
-        asset.RootKey.FullTgi,
-        asset.PackagePath,
-        simGraph.SimInfoResource.Name ?? string.Empty,
-        simGraph.SimInfoResource.PackagePath,
+    return new SimBodyShellContractSnapshot(
         contractStatus,
-        simGraph.BodyAssembly.Mode.ToString(),
         activeLayers,
         candidateSources,
         bodyDrivingCount,
         usesIndexedDefaultRecipe,
-        timingLine ?? string.Empty,
         issues);
 }
 
@@ -3675,6 +5543,80 @@ file sealed record SimArchetypeBodyShellSurveyReport(
     IReadOnlyDictionary<string, int> StatusCounts,
     IReadOnlyDictionary<string, int> AssemblyModeCounts,
     IReadOnlyList<SimArchetypeBodyShellSurveyRow> Rows);
+
+file sealed record SimMaterialCarrierSurveyRow(
+    string AssetDisplayName,
+    string RootTgi,
+    string AssetPackagePath,
+    string SelectedTemplateDisplayName,
+    string SelectedTemplatePackagePath,
+    string GraphStatus,
+    string ContractStatus,
+    string AssemblyMode,
+    bool GraphSupported,
+    string SkintoneResourceTgi,
+    string SkintonePackagePath,
+    string BaseTextureResourceTgi,
+    string BaseTexturePackagePath,
+    int OverlayTextureCount,
+    int SwatchColorCount,
+    bool HasViewportTint,
+    IReadOnlyList<string> ActiveLayers,
+    IReadOnlyList<string> BodyCandidateSourceKinds,
+    IReadOnlyList<string> CasSlotCandidateSourceKinds,
+    IReadOnlyList<SimCarrierValueRow> BodyFoundation,
+    IReadOnlyList<SimCarrierValueRow> BodySources,
+    IReadOnlyList<SimCarrierValueRow> SlotGroups,
+    IReadOnlyList<SimCarrierValueRow> MorphGroups,
+    string TimingLine,
+    IReadOnlyList<string> Issues);
+
+file sealed record SimCarrierValueRow(
+    string Label,
+    int Count);
+
+file sealed record SimCarrierCoverageSnapshot(
+    string Label,
+    int TotalCount,
+    int AssetCoverage);
+
+file sealed record SimMaterialCarrierCensusReport(
+    string OutputPath,
+    int TotalAssets,
+    TimeSpan Elapsed,
+    int SupportedAssets,
+    int UnsupportedAssets,
+    int AssetsWithSkintoneRender,
+    int UniqueSkintoneResources,
+    int AssetsWithBaseTexture,
+    int UniqueBaseTextureResources,
+    int AssetsWithOverlayTextures,
+    int AssetsWithViewportTint,
+    IReadOnlyDictionary<string, int> AssetTopBuckets,
+    IReadOnlyDictionary<string, int> AssetPackageClasses,
+    IReadOnlyDictionary<string, int> GraphStatusCounts,
+    IReadOnlyDictionary<string, int> ContractStatusCounts,
+    IReadOnlyDictionary<string, int> AssemblyModeCounts,
+    IReadOnlyDictionary<string, int> OverlayTextureDistribution,
+    IReadOnlyDictionary<string, int> SwatchColorDistribution,
+    IReadOnlyDictionary<string, int> ActiveLayerCounts,
+    IReadOnlyDictionary<string, int> BodyCandidateSourceKindCounts,
+    IReadOnlyDictionary<string, int> CasSlotCandidateSourceKindCounts,
+    IReadOnlyDictionary<string, int> SkintoneTopBuckets,
+    IReadOnlyDictionary<string, int> BaseTextureTopBuckets,
+    IReadOnlyList<SimCarrierCoverageSnapshot> BodyFoundationCoverage,
+    IReadOnlyList<SimCarrierCoverageSnapshot> BodySourceCoverage,
+    IReadOnlyList<SimCarrierCoverageSnapshot> SlotGroupCoverage,
+    IReadOnlyList<SimCarrierCoverageSnapshot> MorphGroupCoverage,
+    IReadOnlyList<SimMaterialCarrierSurveyRow> Rows);
+
+file sealed record SimBodyShellContractSnapshot(
+    string ContractStatus,
+    IReadOnlyList<string> ActiveLayers,
+    IReadOnlyList<string> CandidateSources,
+    int BodyDrivingCount,
+    bool UsesIndexedDefaultRecipe,
+    IReadOnlyList<string> Issues);
 
 file sealed record ThreeDimensionalSurveyReport(
     string SearchRoot,
@@ -3866,4 +5808,307 @@ file sealed class SurveyNameProbeState
             Failed,
             Examples.ToArray(),
             Failures.ToArray());
+}
+
+file sealed record CensusResourceRow(
+    string PackagePath,
+    string FullTgi);
+
+file sealed record CasPartFactRowTarget(
+    long RowId,
+    string PackagePath,
+    string RootTgi);
+
+file sealed class CensusCount
+{
+    public int Count { get; set; }
+
+    public Dictionary<string, int> TopBuckets { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, int> PackageClasses { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public CensusCountSnapshot ToSnapshot(string name, int packageCoverage) =>
+        new(
+            name,
+            Count,
+            packageCoverage,
+            TopBuckets.OrderByDescending(static pair => pair.Value).ToDictionary(),
+            PackageClasses.OrderByDescending(static pair => pair.Value).ToDictionary());
+}
+
+file sealed record CensusCountSnapshot(
+    string Name,
+    int Count,
+    int PackageCoverage,
+    IReadOnlyDictionary<string, int> TopBuckets,
+    IReadOnlyDictionary<string, int> PackageClasses);
+
+file sealed record MatdShaderCensusSummary(
+    DateTimeOffset GeneratedUtc,
+    string CacheDirectory,
+    IReadOnlyList<string> Databases,
+    int MaterialDefinitionResources,
+    int MaterialDefinitionPackages,
+    int DecodedResources,
+    int EmptyResources,
+    int Failures,
+    IReadOnlyDictionary<string, int> TopBuckets,
+    IReadOnlyDictionary<string, int> PackageClasses,
+    IReadOnlyList<CensusCountSnapshot> TopProfiles,
+    IReadOnlyList<CensusCountSnapshot> TopFamilies,
+    IReadOnlyList<CensusCountSnapshot> TopFamilyKinds,
+    IReadOnlyList<CensusCountSnapshot> TopShaderHashes,
+    IReadOnlyList<string> EmptyResourceSamples,
+    IReadOnlyList<string> FailureSamples);
+
+file sealed record ResourceTypeCensusSummary(
+    DateTimeOffset GeneratedUtc,
+    string CacheDirectory,
+    IReadOnlyList<string> Databases,
+    int TotalResources,
+    int TotalPackages,
+    IReadOnlyDictionary<string, int> TopBuckets,
+    IReadOnlyDictionary<string, int> PackageClasses,
+    IReadOnlyList<CensusCountSnapshot> TopTypes);
+
+file sealed record CasCarrierCensusSummary(
+    DateTimeOffset GeneratedUtc,
+    string CacheDirectory,
+    IReadOnlyList<string> Databases,
+    int CasAssets,
+    int CasAssetPackages,
+    int CasPartFacts,
+    int CasPartPackages,
+    IReadOnlyDictionary<string, int> AssetTopBuckets,
+    IReadOnlyDictionary<string, int> AssetPackageClasses,
+    IReadOnlyDictionary<string, int> FactTopBuckets,
+    IReadOnlyDictionary<string, int> FactPackageClasses,
+    int AssetsWithExactGeometryCandidate,
+    int AssetsWithMaterialReferences,
+    int AssetsWithTextureReferences,
+    int AssetsWithMaterialResourceCandidate,
+    int AssetsWithTextureResourceCandidate,
+    int AssetsWithRigReference,
+    int AssetsWithPackageLocalGraph,
+    int AssetsWithDiagnostics,
+    int FactsWithNakedLink,
+    int FactsRestrictOppositeGender,
+    int FactsRestrictOppositeFrame,
+    int FactsWithDefaultBodyType,
+    int FactsWithDefaultBodyTypeFemale,
+    int FactsWithDefaultBodyTypeMale,
+    IReadOnlyList<CensusCountSnapshot> TopPrimaryGeometryTypes,
+    IReadOnlyList<CensusCountSnapshot> TopIdentityTypes,
+    IReadOnlyList<CensusCountSnapshot> TopSlotCategories,
+    IReadOnlyList<CensusCountSnapshot> TopNormalizedCategories,
+    IReadOnlyList<CensusCountSnapshot> TopBodyTypes,
+    IReadOnlyList<CensusCountSnapshot> TopSpeciesLabels,
+    IReadOnlyList<CensusCountSnapshot> TopAgeLabels,
+    IReadOnlyList<CensusCountSnapshot> TopGenderLabels);
+
+file sealed record CasPartLinkageCensusSummary(
+    DateTimeOffset GeneratedUtc,
+    string CacheDirectory,
+    IReadOnlyList<string> Databases,
+    int CasPartResources,
+    int CasPartPackages,
+    int ParsedResources,
+    int ZeroLengthResources,
+    int ParseFailures,
+    int RowsWithLods,
+    int RowsWithGeometryInLods,
+    int RowsWithFallbackGeometry,
+    int RowsWithAnyGeometryCandidate,
+    int RowsWithLodGeometryOnly,
+    int RowsWithFallbackGeometryOnly,
+    int RowsWithBothGeometryPaths,
+    int RowsWithRigCandidates,
+    int RowsWithTextureCandidates,
+    int RowsWithDiffuseCandidate,
+    int RowsWithShadowCandidate,
+    int RowsWithRegionMapCandidate,
+    int RowsWithNormalCandidate,
+    int RowsWithSpecularCandidate,
+    int RowsWithEmissionCandidate,
+    int RowsWithColorShiftMaskCandidate,
+    int UniqueGeometryResources,
+    int UniqueTextureResources,
+    int UniqueRegionMapResources,
+    IReadOnlyDictionary<string, int> TopBuckets,
+    IReadOnlyDictionary<string, int> PackageClasses,
+    IReadOnlyList<CensusCountSnapshot> TopSlotCategories,
+    IReadOnlyList<CensusCountSnapshot> TopTextureSlots,
+    IReadOnlyList<string> FailureSamples,
+    TimeSpan Elapsed);
+
+file sealed record CasPartCompositionCensusSummary(
+    DateTimeOffset GeneratedUtc,
+    string CacheDirectory,
+    IReadOnlyList<string> Databases,
+    int CasPartResources,
+    int CasPartPackages,
+    int ParsedResources,
+    int ZeroLengthResources,
+    int ParseFailures,
+    int RowsWithCompositionMethodZero,
+    int RowsWithCompositionMethodNonZero,
+    int DistinctCompositionMethods,
+    int DistinctCompositionSortPairs,
+    IReadOnlyDictionary<string, int> TopBuckets,
+    IReadOnlyDictionary<string, int> PackageClasses,
+    IReadOnlyList<CensusCountSnapshot> TopCompositionMethods,
+    IReadOnlyList<CensusCountSnapshot> TopCompositionSortPairs,
+    IReadOnlyList<CensusCountSnapshot> TopSlotCompositionMethods,
+    IReadOnlyList<CensusCountSnapshot> TopSlotCompositionSortPairs,
+    IReadOnlyList<CensusCountSnapshot> TopUnresolvedBodyTypes,
+    IReadOnlyList<CensusCountSnapshot> TopUnresolvedBodyTypeCompositionMethods,
+    IReadOnlyList<string> FailureSamples,
+    TimeSpan Elapsed);
+
+file sealed record CasPartCompositionBackfillSummary(
+    DateTimeOffset GeneratedUtc,
+    string CacheDirectory,
+    IReadOnlyList<string> Databases,
+    string SeedFactContentVersion,
+    int TotalFactRows,
+    int MissingCompositionBefore,
+    int MissingCompositionAfter,
+    int DistinctTargets,
+    int ProcessedTargets,
+    int UpdatedFactRows,
+    int ParseFailures,
+    int ZeroLengthResources,
+    int InvalidTgis,
+    IReadOnlyList<CasPartCompositionBackfillDatabaseSummary> DatabasesSummary,
+    TimeSpan Elapsed);
+
+file sealed record CasPartCompositionBackfillDatabaseSummary(
+    string Database,
+    int TotalFactRows,
+    int MissingCompositionBefore,
+    int MissingCompositionAfter,
+    int DistinctTargets,
+    int ProcessedTargets,
+    int UpdatedFactRows,
+    int ParseFailures,
+    int ZeroLengthResources,
+    int InvalidTgis,
+    bool HasCompositionColumn);
+
+file sealed record CasPartCompositionBackfillProgress(
+    DateTimeOffset GeneratedUtc,
+    string CacheDirectory,
+    string SeedFactContentVersion,
+    int TotalTargets,
+    int ProcessedTargets,
+    int UpdatedFactRows,
+    string CurrentDatabase,
+    string? CurrentPackagePath,
+    int CompletedPackagesInDatabase,
+    int TotalPackagesInDatabase,
+    TimeSpan Elapsed);
+
+file sealed record CasPartReflectionData(
+    int BodyType,
+    int SortLayer,
+    byte CompositionMethod,
+    string? InternalName,
+    IReadOnlyList<ResourceKeyRecord> TgiList,
+    IReadOnlyList<IReadOnlyList<byte>> LodKeyIndices,
+    IReadOnlyList<CasPartTextureCandidateData> TextureReferences);
+
+file sealed record CasPartTextureCandidateData(
+    string Slot,
+    ResourceKeyRecord Key,
+    string? SemanticName);
+
+file sealed class CasPartReflectionAccessor
+{
+    private readonly Type casPartType;
+    private readonly MethodInfo parseMethod;
+    private readonly PropertyInfo bodyTypeProperty;
+    private readonly PropertyInfo sortLayerProperty;
+    private readonly PropertyInfo compositionMethodProperty;
+    private readonly PropertyInfo internalNameProperty;
+    private readonly PropertyInfo tgiListProperty;
+    private readonly PropertyInfo lodsProperty;
+    private readonly PropertyInfo textureReferencesProperty;
+
+    public CasPartReflectionAccessor()
+    {
+        var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
+        casPartType = assetsAssembly.GetType("Sims4ResourceExplorer.Assets.Ts4CasPart")
+            ?? throw new InvalidOperationException("Internal Ts4CasPart type was not found.");
+        parseMethod = casPartType.GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Ts4CasPart.Parse was not found.");
+        bodyTypeProperty = RequireProperty(casPartType, "BodyType");
+        sortLayerProperty = RequireProperty(casPartType, "SortLayer");
+        compositionMethodProperty = RequireProperty(casPartType, "CompositionMethod");
+        internalNameProperty = RequireProperty(casPartType, "InternalName");
+        tgiListProperty = RequireProperty(casPartType, "TgiList");
+        lodsProperty = RequireProperty(casPartType, "Lods");
+        textureReferencesProperty = RequireProperty(casPartType, "TextureReferences");
+    }
+
+    public CasPartReflectionData Parse(byte[] bytes)
+    {
+        var parsed = parseMethod.Invoke(null, [bytes])
+            ?? throw new InvalidOperationException("Ts4CasPart.Parse returned null.");
+        var bodyType = (int)(bodyTypeProperty.GetValue(parsed)
+            ?? throw new InvalidOperationException("Ts4CasPart.BodyType was null."));
+        var sortLayer = (int)(sortLayerProperty.GetValue(parsed)
+            ?? throw new InvalidOperationException("Ts4CasPart.SortLayer was null."));
+        var compositionMethod = (byte)(compositionMethodProperty.GetValue(parsed)
+            ?? throw new InvalidOperationException("Ts4CasPart.CompositionMethod was null."));
+        var internalName = internalNameProperty.GetValue(parsed) as string;
+        var tgiList = (IReadOnlyList<ResourceKeyRecord>)(tgiListProperty.GetValue(parsed)
+            ?? throw new InvalidOperationException("Ts4CasPart.TgiList was null."));
+
+        var lodKeyIndices = new List<IReadOnlyList<byte>>();
+        if (lodsProperty.GetValue(parsed) is System.Collections.IEnumerable lods)
+        {
+            foreach (var lod in lods)
+            {
+                if (lod is null)
+                {
+                    continue;
+                }
+
+                var keyIndicesProperty = RequireProperty(lod.GetType(), "KeyIndices");
+                if (keyIndicesProperty.GetValue(lod) is IEnumerable<byte> keyIndices)
+                {
+                    lodKeyIndices.Add(keyIndices.ToArray());
+                }
+                else if (keyIndicesProperty.GetValue(lod) is System.Collections.IEnumerable boxedIndices)
+                {
+                    lodKeyIndices.Add(boxedIndices.Cast<object?>().Select(static value => Convert.ToByte(value, CultureInfo.InvariantCulture)).ToArray());
+                }
+            }
+        }
+
+        var textureReferences = new List<CasPartTextureCandidateData>();
+        if (textureReferencesProperty.GetValue(parsed) is System.Collections.IEnumerable textureCandidates)
+        {
+            foreach (var candidate in textureCandidates)
+            {
+                if (candidate is null)
+                {
+                    continue;
+                }
+
+                var candidateType = candidate.GetType();
+                var slot = RequireProperty(candidateType, "Slot").GetValue(candidate) as string ?? "Unknown";
+                var key = (ResourceKeyRecord)(RequireProperty(candidateType, "Key").GetValue(candidate)
+                    ?? throw new InvalidOperationException("Ts4CasTextureCandidate.Key was null."));
+                var semantic = RequireProperty(candidateType, "Semantic").GetValue(candidate)?.ToString();
+                textureReferences.Add(new CasPartTextureCandidateData(slot, key, semantic));
+            }
+        }
+
+        return new CasPartReflectionData(bodyType, sortLayer, compositionMethod, internalName, tgiList, lodKeyIndices, textureReferences);
+    }
+
+    private static PropertyInfo RequireProperty(Type type, string name) =>
+        type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException($"Property {type.FullName}.{name} was not found.");
 }

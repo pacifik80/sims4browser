@@ -9,6 +9,12 @@ Related docs:
 - [Material pipeline deep dives](README.md)
 - [Shared TS4 Material, Texture, And UV Pipeline](../../shared-ts4-material-texture-pipeline.md)
 - [CAS/Sim Material Authority Matrix](cas-sim-material-authority-matrix.md)
+- [Body And Head Shell Authority Table](body-head-shell-authority-table.md)
+- [Hair, Accessory, And Shoes Authority Table](hair-accessory-shoes-authority-table.md)
+- [CompositionMethod And SortLayer Boundary](compositionmethod-sortlayer-boundary.md)
+- [Overlay And Detail Family Authority Table](overlay-detail-family-authority-table.md)
+- [Overlay-Detail Priority After High-Byte Stack](live-proof-packets/overlay-detail-priority-after-highbyte-stack.md)
+- [SortLayer Census Baseline](sortlayer-census-baseline.md)
 - [Source map and trust levels](../../references/codex-wiki/04-research-and-sources/01-source-map.md)
 - [Open questions](../../references/codex-wiki/04-research-and-sources/03-open-questions.md)
 
@@ -17,10 +23,10 @@ Related docs:
 ```text
 Skintone And Overlay Compositor
 ├─ TONE/skintone structural model ~ 82%
-├─ Overlay/detail family boundary ~ 74%
+├─ Overlay/detail family boundary ~ 80%
 ├─ Region-map-aware skintone routing in current repo ~ 86%
 ├─ Tan/burn/underlayer evidence ~ 68%
-├─ CompositionMethod / SortLayer practical role ~ 58%
+├─ CompositionMethod / SortLayer practical role ~ 66%
 └─ Exact in-game blend math ~ 38%
 ```
 
@@ -185,6 +191,7 @@ Current safe rule:
 - keep overlay/detail families inside compositor authority
 - do not promote them into separate geometry authority branches
 - keep them separate from shell authority and from hair/accessory/footwear authority
+- use [Hair, Accessory, And Shoes Authority Table](hair-accessory-shoes-authority-table.md) when the question is about worn-slot identity rather than compositor math
 
 ## Tan, burn, underlayers, and chest overlays
 
@@ -216,6 +223,8 @@ What is currently strong enough:
 - both are real CAS compositor-facing inputs
 - they belong on the overlay/detail side of the model, not on the shell identity side
 - creator-facing practice and current repo docs both treat them as ordering/compositing controls
+- `sort_layer` now also has a direct whole-index counted layer, rather than only creator-facing and reference-code support
+- the new packet [Overlay-Detail Priority After High-Byte Stack](live-proof-packets/overlay-detail-priority-after-highbyte-stack.md) now also keeps low-value overlay rows separate from the closed high-byte family stack
 
 What is still weak:
 
@@ -253,6 +262,10 @@ The remaining gaps are narrow:
 
 The next strong follow-up packet should be one of:
 
-- a `CompositionMethod / SortLayer` live-asset table
+- use [Overlay And Detail Family Authority Table](overlay-detail-family-authority-table.md) as the current explicit ranking baseline
+- use [SortLayer Census Baseline](sortlayer-census-baseline.md) for the current direct counted `sort_layer` layer
+- use [Hair, Accessory, And Shoes Authority Table](hair-accessory-shoes-authority-table.md) to keep skintone routing bounded away from worn-slot identity
+- then return to [SimSkin Versus SimSkinMask](live-proof-packets/simskin-vs-simskinmask.md)
+- use [Overlay-Detail Priority After High-Byte Stack](live-proof-packets/overlay-detail-priority-after-highbyte-stack.md) as the current restart-safe Tier A precedence packet
 - a `tan/burn/underlayer` fixture pack
 - a direct repo-side `TONE` parser and staged skintone compositor prototype
