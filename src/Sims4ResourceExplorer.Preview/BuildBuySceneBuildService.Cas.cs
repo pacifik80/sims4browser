@@ -299,7 +299,8 @@ public sealed partial class BuildBuySceneBuildService
                         : null,
                     ShaderFamily: materialInfo.ShaderFamily,
                     DecodeStrategy: materialInfo.DecodeStrategy,
-                    Sampling: materialInfo.SamplingInstructions));
+                    Sampling: materialInfo.SamplingInstructions,
+                    VisualPayloadKind: materialInfo.VisualPayloadKind));
             }
             catch (Exception ex)
             {

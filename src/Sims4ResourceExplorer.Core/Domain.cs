@@ -699,7 +699,8 @@ public sealed record CanonicalMaterial(
     CanonicalColor? ViewportTintColor = null,
     string? ShaderFamily = null,
     string? DecodeStrategy = null,
-    IReadOnlyList<CanonicalMaterialSampling>? Sampling = null);
+    IReadOnlyList<CanonicalMaterialSampling>? Sampling = null,
+    string? VisualPayloadKind = null);
 
 public sealed record CanonicalMaterialSampling(
     string Slot,

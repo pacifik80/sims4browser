@@ -1742,6 +1742,11 @@ public sealed partial class MainWindow : Window
         CanonicalTexture? baseColorTexture,
         string? selectedSlot)
     {
+        if (IsNonVisualViewportMaterial(material))
+        {
+            return null;
+        }
+
         if (string.IsNullOrWhiteSpace(selectedSlot))
         {
             return SelectOpacityTexture(material, baseColorTexture);
@@ -1781,6 +1786,11 @@ public sealed partial class MainWindow : Window
         CanonicalTexture? baseColorTexture,
         string? selectedSlot)
     {
+        if (IsNonVisualViewportMaterial(material))
+        {
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(selectedSlot))
         {
             return material?.IsTransparent == true || HasExplicitOpacityTexture(material);
@@ -1792,6 +1802,10 @@ public sealed partial class MainWindow : Window
             : null;
         return SelectOpacityTexture(textures, baseColorTexture, scopedAlphaSlot) is not null;
     }
+
+    private static bool IsNonVisualViewportMaterial(CanonicalMaterial? material) =>
+        string.Equals(material?.VisualPayloadKind, "non-visual", StringComparison.OrdinalIgnoreCase) ||
+        (material?.Approximation?.Contains("non-visual helper/control material", StringComparison.OrdinalIgnoreCase) ?? false);
 
     private static CanonicalTexture? SelectOpacityTexture(IReadOnlyList<CanonicalTexture> textures, CanonicalTexture? baseColorTexture, string? explicitAlphaSlot)
     {

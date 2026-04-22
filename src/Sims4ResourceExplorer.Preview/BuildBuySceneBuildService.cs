@@ -505,7 +505,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                             : null,
                         ShaderFamily: materialInfo.ShaderFamily,
                         DecodeStrategy: materialInfo.DecodeStrategy,
-                        Sampling: materialInfo.SamplingInstructions));
+                        Sampling: materialInfo.SamplingInstructions,
+                        VisualPayloadKind: materialInfo.VisualPayloadKind));
                 }
 
                 ReportProgress(progress, $"Building {meshLabel}: decoding vertices...", meshStart + (meshSpan * 0.62));
