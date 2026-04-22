@@ -1244,6 +1244,14 @@ public sealed partial class MainWindow : Window
             {
                 return selectedSlotSampling;
             }
+
+            // In per-slot preview mode, do not borrow diffuse/default sampling from a different slot.
+            // Falling back to the texture's own UV metadata is safer than cross-slot UV pollution.
+            if (preferredTexture is null ||
+                preferredTexture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
         }
 
         if (preferredTexture is not null)
