@@ -8197,6 +8197,10 @@ public sealed class ExplorerTests : IDisposable
         Assert.True(scene.Success, string.Join(Environment.NewLine, scene.Diagnostics));
         Assert.NotNull(scene.Scene);
         var resolvedMaterial = Assert.Single(scene.Scene!.Materials);
+        Assert.Equal("colorMap7", resolvedMaterial.ShaderFamily);
+        Assert.Equal("ColorMap7MaterialDecodeStrategy", resolvedMaterial.DecodeStrategy);
+        var sampling = Assert.Single(resolvedMaterial.Sampling!);
+        Assert.Equal("diffuse", sampling.Slot);
         var texture = Assert.Single(resolvedMaterial.Textures);
         Assert.Equal(materialTexture.Key.FullTgi, texture.SourceKey?.FullTgi);
         Assert.Equal(packagePath, texture.SourcePackagePath);
@@ -8266,10 +8270,6 @@ public sealed class ExplorerTests : IDisposable
         Assert.DoesNotContain(scene.Diagnostics, message => message.Contains("capacity", StringComparison.OrdinalIgnoreCase));
     }
 
-        Assert.Equal("colorMap7", resolvedMaterial.ShaderFamily);
-        Assert.Equal("ColorMap7MaterialDecodeStrategy", resolvedMaterial.DecodeStrategy);
-        var sampling = Assert.Single(resolvedMaterial.Sampling!);
-        Assert.Equal("diffuse", sampling.Slot);
     [Fact]
     public async Task CasGeometryScene_ParsesVersion15GeomTailData()
     {
