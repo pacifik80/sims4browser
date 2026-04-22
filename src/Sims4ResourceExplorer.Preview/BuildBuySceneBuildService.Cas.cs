@@ -296,7 +296,10 @@ public sealed partial class BuildBuySceneBuildService
                     materialInfo.SourceKind,
                     materialInfo.ApproximateBaseColor is { Length: >= 3 } color
                         ? new CanonicalColor(color[0], color[1], color[2], color.Length >= 4 ? color[3] : 1f)
-                        : null));
+                        : null,
+                    ShaderFamily: materialInfo.ShaderFamily,
+                    DecodeStrategy: materialInfo.DecodeStrategy,
+                    Sampling: materialInfo.SamplingInstructions));
             }
             catch (Exception ex)
             {

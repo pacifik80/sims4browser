@@ -771,16 +771,13 @@ public sealed partial class MainWindow : Window
 
     private static CanonicalTexture? SelectPrimaryViewportTexture(CanonicalMaterial? material, SceneRenderMode renderMode, string? selectedSlot)
     {
-        var textureGroup = SelectViewportTextureGroup(material, renderMode, selectedSlot);
-        if (textureGroup.Count == 0)
+        var textures = SelectViewportTextures(material, renderMode, selectedSlot);
+        if (textures.Count == 0)
         {
             return null;
         }
 
-        return textureGroup
-            .OrderByDescending(texture => ScorePrimaryViewportTexture(texture, renderMode))
-            .ThenBy(texture => texture.Slot, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+        return textures[0];
     }
 
     private static IReadOnlyList<float> NormalizeUvCoordinatesIfLocalSubspace(IReadOnlyList<float> coordinates)
@@ -870,16 +867,16 @@ public sealed partial class MainWindow : Window
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var textureGroup = SelectViewportTextureGroup(material, renderMode, selectedSlot);
-        var diffuseTexture = SelectBaseColorTexture(textureGroup);
-        var layeredColorTexture = SelectLayeredColorTexture(textureGroup);
-        var emissiveTexture = SelectEmissiveTexture(textureGroup, diffuseTexture, layeredColorTexture);
-        var opacityTexture = SelectViewportOpacityTexture(material, textureGroup, diffuseTexture, selectedSlot);
-        var normalTexture = SelectNormalTexture(textureGroup);
-        var specularTexture = SelectSpecularTexture(textureGroup);
-        var colorShiftMaskTexture = SelectColorShiftMaskTexture(textureGroup);
+        var textures = SelectViewportTextures(material, renderMode, selectedSlot);
+        var diffuseTexture = SelectBaseColorTexture(textures);
+        var layeredColorTexture = SelectLayeredColorTexture(textures);
+        var emissiveTexture = SelectEmissiveTexture(textures, diffuseTexture, layeredColorTexture);
+        var opacityTexture = SelectViewportOpacityTexture(material, textures, diffuseTexture, selectedSlot);
+        var normalTexture = SelectNormalTexture(textures);
+        var specularTexture = SelectSpecularTexture(textures);
+        var colorShiftMaskTexture = SelectColorShiftMaskTexture(textures);
         var selectedSlotTexture = !string.IsNullOrWhiteSpace(selectedSlot)
-            ? textureGroup.FirstOrDefault(texture => texture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
+            ? textures.FirstOrDefault(texture => texture.Slot.Equals(selectedSlot, StringComparison.OrdinalIgnoreCase))
             : null;
         var viewportColorTexture = selectedSlotTexture ?? diffuseTexture ?? layeredColorTexture ?? emissiveTexture;
         var uvTransform = BuildUvTransform(viewportColorTexture);
@@ -903,7 +900,7 @@ public sealed partial class MainWindow : Window
             !isFlat &&
             viewportColorTexture is not null;
         var renderEmissiveMap = (isFlat && viewportColorTexture is not null) || (!isFlat && emissiveTexture is not null);
-        var renderAlphaMap = ShouldRenderTransparentViewport(material, textureGroup, diffuseTexture, selectedSlot);
+        var renderAlphaMap = ShouldRenderTransparentViewport(material, textures, diffuseTexture, selectedSlot);
         var forceOpaqueViewportTexture = isLit && !renderAlphaMap;
         var (textureModel, usesSwatchComposite) = CreateViewportTextureModel(
             material,
@@ -1204,7 +1201,7 @@ public sealed partial class MainWindow : Window
                Math.Abs(texture.UvOffsetV) >= 0.0001f;
     }
 
-    private static IReadOnlyList<CanonicalTexture> SelectViewportTextureGroup(CanonicalMaterial? material, SceneRenderMode renderMode, string? selectedSlot)
+    private static IReadOnlyList<CanonicalTexture> SelectViewportTextures(CanonicalMaterial? material, SceneRenderMode renderMode, string? selectedSlot)
     {
         if (material is null || material.Textures.Count == 0)
         {
@@ -1221,21 +1218,10 @@ public sealed partial class MainWindow : Window
         }
 
         return material.Textures
-            .GroupBy(BuildTextureSamplingKey, StringComparer.Ordinal)
-            .OrderByDescending(group => ScoreTextureGroup(group, renderMode))
-            .ThenByDescending(group => group.Count())
-            .Select(group => group
-                .OrderByDescending(texture => ScorePrimaryViewportTexture(texture, renderMode))
-                .ThenBy(texture => texture.Slot, StringComparer.OrdinalIgnoreCase)
-                .ToArray())
-            .FirstOrDefault() ?? [];
+            .OrderByDescending(texture => ScorePrimaryViewportTexture(texture, renderMode))
+            .ThenBy(texture => texture.Slot, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
-
-    private static string BuildTextureSamplingKey(CanonicalTexture texture) =>
-        FormattableString.Invariant($"{texture.UvChannel}|{texture.UvScaleU:0.####}|{texture.UvScaleV:0.####}|{texture.UvOffsetU:0.####}|{texture.UvOffsetV:0.####}");
-
-    private static int ScoreTextureGroup(IGrouping<string, CanonicalTexture> group, SceneRenderMode renderMode) =>
-        group.Sum(texture => ScorePrimaryViewportTexture(texture, renderMode)) + group.Count();
 
     private static int ScorePrimaryViewportTexture(CanonicalTexture texture, SceneRenderMode renderMode)
     {
@@ -1266,9 +1252,9 @@ public sealed partial class MainWindow : Window
         var material = materialIndex >= 0 && materialIndex < scene.Materials.Count
             ? scene.Materials[materialIndex]
             : null;
-        var textureGroup = SelectViewportTextureGroup(material, SceneRenderMode.LitTexture, selectedSlot);
-        var diffuseTexture = SelectBaseColorTexture(textureGroup);
-        return ShouldRenderTransparentViewport(material, textureGroup, diffuseTexture, selectedSlot);
+        var textures = SelectViewportTextures(material, SceneRenderMode.LitTexture, selectedSlot);
+        var diffuseTexture = SelectBaseColorTexture(textures);
+        return ShouldRenderTransparentViewport(material, textures, diffuseTexture, selectedSlot);
     }
 
     private async Task<WriteableBitmap> GenerateUvPreviewAsync(CanonicalScene scene, CancellationToken cancellationToken)

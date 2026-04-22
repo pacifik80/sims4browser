@@ -8269,6 +8269,10 @@ public sealed class ExplorerTests : IDisposable
     [Fact]
     public async Task CasGeometryScene_ParsesVersion15GeomTailData()
     {
+        Assert.Equal("colorMap7", resolvedMaterial.ShaderFamily);
+        Assert.Equal("ColorMap7MaterialDecodeStrategy", resolvedMaterial.DecodeStrategy);
+        var sampling = Assert.Single(resolvedMaterial.Sampling!);
+        Assert.Equal("diffuse", sampling.Slot);
         var packagePath = Path.Combine(tempRoot, "cas-version15-geom.package");
         var geometry = CreateResource(Guid.NewGuid(), packagePath, SourceKind.Game, "Geometry", 1, "Version15Geom");
         var catalog = new FakeResourceCatalogService(

@@ -502,7 +502,10 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                         materialInfo.SourceKind,
                         materialInfo.ApproximateBaseColor is { Length: >= 3 } color
                             ? new CanonicalColor(color[0], color[1], color[2], color.Length >= 4 ? color[3] : 1f)
-                            : null));
+                            : null,
+                        ShaderFamily: materialInfo.ShaderFamily,
+                        DecodeStrategy: materialInfo.DecodeStrategy,
+                        Sampling: materialInfo.SamplingInstructions));
                 }
 
                 ReportProgress(progress, $"Building {meshLabel}: decoding vertices...", meshStart + (meshSpan * 0.62));
@@ -685,6 +688,10 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             SamplingSources = orderedCandidates
                 .SelectMany(static candidate => candidate.Material.SamplingSources)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            SamplingInstructions = orderedCandidates
+                .SelectMany(static candidate => candidate.Material.SamplingInstructions)
+                .Distinct()
                 .ToArray(),
             LayeredTextureSlots = layeredSlots,
             // Alternate MTST states may contribute missing layered textures, but they should not
@@ -1585,6 +1592,17 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 .Select(static instruction => instruction.Source)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(static source => source, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            effectiveResolvedSamplingInstructions
+                .Select(static instruction => new CanonicalMaterialSampling(
+                    instruction.Slot,
+                    instruction.UvChannel,
+                    instruction.UvScaleU,
+                    instruction.UvScaleV,
+                    instruction.UvOffsetU,
+                    instruction.UvOffsetV,
+                    instruction.Source,
+                    instruction.IsApproximate))
                 .ToArray(),
             effectiveApproximateBaseColor,
             isTransparent,
@@ -2893,6 +2911,7 @@ internal sealed record Ts4MaterialInfo(
     string DecodeStrategy,
     Ts4MaterialCoverageTier CoverageTier,
     IReadOnlyList<string> SamplingSources,
+    IReadOnlyList<CanonicalMaterialSampling> SamplingInstructions,
     float[]? ApproximateBaseColor,
     bool IsTransparent,
     string AlphaMode,
@@ -2913,6 +2932,7 @@ internal sealed record Ts4MaterialInfo(
             "UnsupportedMaterial",
             Ts4MaterialCoverageTier.RuntimeDependent,
             ["unsupported-material"],
+            [],
             null,
             false,
             "opaque",

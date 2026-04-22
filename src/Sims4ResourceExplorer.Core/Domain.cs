@@ -695,7 +695,20 @@ public sealed record CanonicalMaterial(
     string? Approximation = null,
     CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown,
     CanonicalColor? ApproximateBaseColor = null,
-    CanonicalColor? ViewportTintColor = null);
+    CanonicalColor? ViewportTintColor = null,
+    string? ShaderFamily = null,
+    string? DecodeStrategy = null,
+    IReadOnlyList<CanonicalMaterialSampling>? Sampling = null);
+
+public sealed record CanonicalMaterialSampling(
+    string Slot,
+    int UvChannel = 0,
+    float UvScaleU = 1f,
+    float UvScaleV = 1f,
+    float UvOffsetU = 0f,
+    float UvOffsetV = 0f,
+    string? Source = null,
+    bool IsApproximate = false);
 
 public sealed record CanonicalColor(float R, float G, float B, float A = 1f);
 
