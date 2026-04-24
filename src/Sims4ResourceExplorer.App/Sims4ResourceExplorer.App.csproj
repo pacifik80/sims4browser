@@ -4,7 +4,7 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>Sims4ResourceExplorer.App</RootNamespace>
-    <BuildNumber>0178</BuildNumber>
+    <BuildNumber>0180</BuildNumber>
     <Version>0.0.$(BuildNumber)</Version>
     <FileVersion>0.0.0.$(BuildNumber)</FileVersion>
     <InformationalVersion>build-$(BuildNumber)</InformationalVersion>

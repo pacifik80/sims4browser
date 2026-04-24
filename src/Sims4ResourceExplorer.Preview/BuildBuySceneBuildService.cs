@@ -1191,7 +1191,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 var stateTokenStats = BuildSharedPackedStateTokenStats(
                     groupedStates.Select(static group => (group.StateNameHash, group.PropertySummary)).ToArray());
                 groupedStates = groupedStates
-                    .OrderByDescending(static candidate => candidate.Score)
+                    .OrderByDescending(candidate => GetMtstStateSelectionPriority(
+                        candidate.StateNameHash,
+                        HasPortableVisualMaterialPayload(candidate.Material),
+                        candidate.Material.ApproximateBaseColor is { Length: >= 3 }))
+                    .ThenByDescending(static candidate => candidate.Score)
                     .ThenByDescending(candidate => stateTokenStats.GroupSizesByStateHash.TryGetValue(candidate.StateNameHash, out var size) ? size : 0)
                     .ThenByDescending(static candidate => candidate.StateNameHash == 0)
                     .ToList();
@@ -1508,10 +1512,11 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 $"Material approximate base color: rgba=({approximateBaseColor[0]:0.###}, {approximateBaseColor[1]:0.###}, {approximateBaseColor[2]:0.###}, {(approximateBaseColor.Length >= 4 ? approximateBaseColor[3] : 1f):0.###})."));
         }
 
-        var isTransparent = matd.IsTransparent ||
-            matd.TextureReferences.Any(static texture => texture.Slot is "alpha" or "opacity" or "mask" or "cutout") ||
-            !string.IsNullOrWhiteSpace(materialDecode.AlphaSourceSlot) ||
-            (materialDecode.SuggestsAlphaCutout && hasPortableAlphaPayload);
+        var isTransparent = ShouldRenderMaterialTransparent(
+            matd.IsTransparent,
+            materialDecode.FamilyKind,
+            materialDecode.SuggestsAlphaCutout,
+            hasPortableAlphaPayload);
         var usedFallbackTextureApproximation = textures.Count > 0 && matd.TextureReferences.All(static reference => reference.IsHeuristic);
         var hasPortableVisualTexturePayload = textures.Any(static texture => IsVisualColorTextureSlot(texture.Slot));
         var hasOnlyUtilityTexturePayload = textures.Count > 0 && !hasPortableVisualTexturePayload;
@@ -1971,6 +1976,44 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         ReportProgress(progress, $"Building {label}: no portable {textureLabel} found.", LerpProgress(start, end, 0.96));
         return null;
+    }
+
+    internal static int GetMtstStateSelectionPriority(
+        uint stateNameHash,
+        bool hasPortableVisualPayload,
+        bool hasApproximateBaseColor)
+    {
+        if (stateNameHash != 0)
+        {
+            return 0;
+        }
+
+        return hasPortableVisualPayload || hasApproximateBaseColor ? 1 : 0;
+    }
+
+    private static bool HasPortableVisualMaterialPayload(Ts4MaterialInfo materialInfo) =>
+        materialInfo.Textures.Any(static texture => IsVisualColorTextureSlot(texture.Slot)) ||
+        materialInfo.ApproximateBaseColor is { Length: >= 3 };
+
+    internal static bool ShouldRenderMaterialTransparent(
+        bool matdIsTransparent,
+        Ts4MaterialFamilyKind familyKind,
+        bool suggestsAlphaCutout,
+        bool hasPortableAlphaPayload)
+    {
+        if (matdIsTransparent)
+        {
+            return true;
+        }
+
+        if (!suggestsAlphaCutout || !hasPortableAlphaPayload)
+        {
+            return false;
+        }
+
+        return familyKind is Ts4MaterialFamilyKind.AlphaCutout or
+            Ts4MaterialFamilyKind.SeasonalFoliage or
+            Ts4MaterialFamilyKind.DecalMap;
     }
 
     private async Task<CanonicalTexture?> TryResolveManifestTextureAsync(

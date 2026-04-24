@@ -10,7 +10,8 @@ internal enum Ts4MaterialFamilyKind
     StandardSurface = 5,
     ColorMap = 6,
     Projective = 7,
-    SpecularEnvMap = 8
+    SpecularEnvMap = 8,
+    DecalMap = 9
 }
 
 internal sealed record Ts4MaterialSamplingInstruction(
@@ -68,6 +69,7 @@ internal static class Ts4MaterialDecoder
     [
         new SeasonalFoliageMaterialDecodeStrategy(),
         new ProjectiveMaterialDecodeStrategy(),
+        new DecalMapMaterialDecodeStrategy(),
         new AlphaCutoutMaterialDecodeStrategy(),
         new StairRailingsMaterialDecodeStrategy(),
         new SpecularEnvMapMaterialDecodeStrategy(),
@@ -140,6 +142,10 @@ internal static class Ts4MaterialDecoder
                     mapping = packedMapping;
                     notes.Add(packedNote);
                 }
+                else if (!string.IsNullOrWhiteSpace(packedNote))
+                {
+                    notes.Add(packedNote);
+                }
                 else
                 {
                     notes.Add("uvMapping is stored as packed data and is not yet decoded by the generic material pipeline.");
@@ -186,7 +192,7 @@ internal static class Ts4MaterialDecoder
         {
             suggestsAlphaCutout = true;
             alphaModeHint = "alpha-test-or-blend";
-            notes.Add("Material exposes alpha-related texture slots; preview material is flagged for alpha cutout.");
+            notes.Add("Material exposes alpha-related texture slots; preview tracks them as alpha/cutout evidence without forcing blended transparency.");
         }
 
         if (!suggestsAlphaCutout &&
@@ -198,7 +204,7 @@ internal static class Ts4MaterialDecoder
         {
             suggestsAlphaCutout = true;
             alphaModeHint = "alpha-test-or-blend";
-            notes.Add("Shader profile exposes alpha-oriented parameters; preview material is flagged for alpha cutout.");
+            notes.Add("Shader profile exposes alpha-oriented parameters; preview tracks them as alpha/cutout evidence without forcing blended transparency.");
         }
 
         if (!suggestsAlphaCutout && forceAlphaCutout)
@@ -294,6 +300,10 @@ internal static class Ts4MaterialDecoder
                 .ToArray()) == Ts4MaterialCoverageTier.RuntimeDependent &&
         material.Properties.Any(static property => IsProjectiveUvSemantic(property.Name));
 
+    internal static bool IsDecalMapFamily(string familyName, string profileName) =>
+        familyName.Equals("DecalMap", StringComparison.OrdinalIgnoreCase) ||
+        profileName.Equals("DecalMap", StringComparison.OrdinalIgnoreCase);
+
     internal static bool IsAlphaCutoutFamily(string familyName, string profileName, MaterialIr material, ShaderBlockProfile? profile)
     {
         if (familyName.Contains("Alpha", StringComparison.OrdinalIgnoreCase) ||
@@ -303,6 +313,11 @@ internal static class Ts4MaterialDecoder
             IsFoliageFamily(familyName, profileName))
         {
             return true;
+        }
+
+        if (IsColorMapFamily(familyName, profileName))
+        {
+            return false;
         }
 
         if (material.TextureReferences.Any(static reference =>
@@ -1092,6 +1107,13 @@ internal static class Ts4MaterialDecoder
             0,
             property.Category);
 
+        if (string.Equals(property.Name, "uvMapping", StringComparison.OrdinalIgnoreCase) &&
+            LooksLikePackedTextureResourceKeyPayload(property.PackedUInt32Values))
+        {
+            note = "Packed uvMapping payload contains texture resource-key-like words and is not applied as a UV transform.";
+            return false;
+        }
+
         if (!TryDecodePackedUvVector(property, out var packedVector, out var encoding))
         {
             return false;
@@ -1127,6 +1149,18 @@ internal static class Ts4MaterialDecoder
         }
 
         return false;
+    }
+
+    private static bool LooksLikePackedTextureResourceKeyPayload(uint[]? packed)
+    {
+        if (packed is not { Length: >= 3 })
+        {
+            return false;
+        }
+
+        // 0x00B2D882 is the TS4 image resource type. Seeing it inside uvMapping means
+        // this packed payload is texture/key state, not an atlas scale/offset window.
+        return packed.Any(static value => value == 0x00B2D882u);
     }
 
     private static bool IsPlausiblePackedAtlasWindow(float[] values)
@@ -1557,6 +1591,52 @@ internal sealed class ProjectiveMaterialDecodeStrategy : ITs4MaterialDecodeStrat
             profile).ToState();
         state = Ts4MaterialDecoder.ApplyProjectiveStillApproximation(state, material, profileName, familyName);
         return Ts4MaterialDecoder.BuildResult(profileName, familyName, FamilyKind, Name, state);
+    }
+}
+
+internal sealed class DecalMapMaterialDecodeStrategy : ITs4MaterialDecodeStrategy
+{
+    public string Name => nameof(DecalMapMaterialDecodeStrategy);
+    public Ts4MaterialFamilyKind FamilyKind => Ts4MaterialFamilyKind.DecalMap;
+
+    public bool CanHandle(string familyName, MaterialIr material, ShaderBlockProfile? profile) =>
+        Ts4MaterialDecoder.IsDecalMapFamily(familyName, profile?.Name ?? familyName);
+
+    public Ts4MaterialDecodeResult Decode(string profileName, string familyName, MaterialIr material, ShaderBlockProfile? profile)
+    {
+        var state = Ts4MaterialDecoder.DecodeGeneric(profileName, familyName, FamilyKind, Name, material, profile).ToState();
+        if (string.IsNullOrWhiteSpace(state.AlphaSourceSlot) &&
+            TryGetDiffuseLikeTextureSlot(material, out var diffuseSlot))
+        {
+            state = state with
+            {
+                AlphaSourceSlot = diffuseSlot,
+                SuggestsAlphaCutout = true,
+                AlphaModeHint = "alpha-test-or-blend",
+                Notes = state.Notes
+                    .Append("DecalMap has no explicit alpha/opacity/mask texture slot; preview uses the diffuse texture alpha channel as the decal mask.")
+                    .ToArray()
+            };
+        }
+
+        return Ts4MaterialDecoder.BuildResult(profileName, familyName, FamilyKind, Name, state);
+    }
+
+    private static bool TryGetDiffuseLikeTextureSlot(MaterialIr material, out string slot)
+    {
+        foreach (var reference in material.TextureReferences)
+        {
+            if (reference.Slot.Equals("diffuse", StringComparison.OrdinalIgnoreCase) ||
+                reference.Slot.Equals("basecolor", StringComparison.OrdinalIgnoreCase) ||
+                reference.Slot.Equals("albedo", StringComparison.OrdinalIgnoreCase))
+            {
+                slot = reference.Slot;
+                return true;
+            }
+        }
+
+        slot = string.Empty;
+        return false;
     }
 }
 

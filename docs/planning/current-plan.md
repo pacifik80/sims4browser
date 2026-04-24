@@ -56,7 +56,17 @@ Resume from the linked previous thread `019db463-2c27-7591-ad60-4ff246e0b346`, w
 - [x] Fold the outcome back into this live plan, `docs/operations/tooling.md`, and `tmp/uv_misalignment_corpus/analysis-2026-04-24.md`.
 - [x] User requested a safety commit/push before continuing; stage only non-junk project changes and exclude large local `satellites/` capture/build artifacts.
 - [x] Follow-up safety packet: in `satellites/`, stage only lightweight markdown reports plus local ignore rules; keep large captures, raw disassembly, binaries, and build outputs untracked.
-- [ ] Decide the next production packet from the confirmed corpus split.
+- [x] Decide the next production packet from the confirmed corpus split.
+- [x] First verification/fix packet: classify resource-key-like packed `uvMapping` payloads separately from real UV transforms, with fixture-backed tests from cases `002`, `005`, and `006`.
+- [x] Re-run direct `--scene-resource --live-index` probes after the classification change and compare diagnostics against the saved corpus notes.
+- [x] Next simplest visual fix: case `005` alpha policy false transparency.
+- [x] Follow-up viewport fix for build `0179`: default `MainWindow` preview no longer treats an explicit `alpha` slot by itself as the opacity source for an opaque `colorMap7` material; it keeps diffuse alpha as the default cutout source.
+- [x] Case `006` MTST default-state fix: usable default material states now outrank higher-scored non-default variant states when state resolution is otherwise unknown.
+- [x] Case `006` DecalMap semantic cleanup: `DecalMap` now has a dedicated decode strategy and generic overlay textures are no longer treated as emissive maps in the viewport.
+- [x] Fresh verification in this resumed thread: targeted tests passed `79/79`, `ProbeAsset` build passed, direct scene-resource probes for cases `002`, `005`, and `006` were refreshed into `tmp/uv_misalignment_corpus/*-build0180.txt`, and the app project builds cleanly as `build-0180`.
+- [x] Current proof pass from thread `019dc072-6986-7a91-a336-9da80a686a4c`: `Shader_FC5FC212` / `DecalMap` research identified the safe alpha source split for case `006`; production fallback now uses diffuse alpha when no explicit alpha/opacity/mask slot exists and keeps `overlay` as an inspectable layered slot.
+- [x] Decide whether `DecalMap` should join the transparent render-policy family after a separate proof pass: `DecalMap` now renders transparent only when alpha/cutout evidence and portable alpha payload are both present.
+- [ ] Keep case `004` model-root resolution as a later independent packet.
 
 #### Restart Hints
 
@@ -68,7 +78,14 @@ Resume from the linked previous thread `019db463-2c27-7591-ad60-4ff246e0b346`, w
 - The current user asked to study the previous thread; the next concrete work is to continue the interrupted corpus analysis, not the older `Sim Archetype` audit.
 - Existing `--probe-json` expects a logical Build/Buy asset root, so it returns `null` for the saved `Selected LOD root` TGIs. Use the new direct scene-resource probe for the corpus LOD roots instead of widening logical root search.
 - Current probes confirm that packed `uvMapping` is still reported as undecoded in cases `002`, `005`, and `006`, but the payload words repeatedly look resource-key-like, often including `0x00B2D882`, not like plausible atlas scale/offset. Do not force this into UV scale/offset without stronger evidence.
-- Next production split: first tighten semantic diagnostics/resource-key-like packed payload handling, then handle alpha policy (case `005`) and decal/overlay layering (case `006`) as separate packets.
+- The first follow-up fix now classifies `0x00B2D882` packed `uvMapping` payloads as texture resource-key-like words and leaves UV sampling at identity; targeted tests pass and direct probes for cases `002`, `005`, and `006` report the new diagnostic.
+- Case `005` alpha false-transparency is fixed in the current working tree across both layers: `colorMap7 + alpha texture` stays on `ColorMap7MaterialDecodeStrategy`, alpha evidence is retained as diagnostics/source-slot data, direct scene-resource probe reports `alpha=opaque transparent=False`, and default app viewport alpha selection now ignores standalone alpha slots for opaque materials while preserving diffuse-alpha cutout.
+- Case `006` default-state and semantic cleanup is fixed in the current working tree: MTST selection now keeps a usable default state over non-default variant payloads, `DecalMap` reports `DecalMapMaterialDecodeStrategy`, and the app no longer promotes plain `overlay` layers to fake emissive maps.
+- User-facing verification build id is now bumped to `build-0180`; `dotnet build src\Sims4ResourceExplorer.App\Sims4ResourceExplorer.App.csproj --no-restore` passed cleanly and this exact id must be reported for manual UI review.
+- Fresh direct probes confirm the intended diagnostics: case `002` reports resource-key-like packed `uvMapping`; case `005` reports `alpha=opaque transparent=False`; case `006` reports default-state selection, `DecalMapMaterialDecodeStrategy`, and `overlay` as an overlay/layered slot rather than emissive.
+- The latest resumed thread resolved the first `Shader_FC5FC212` / `DecalMap` alpha-source split for case `006`: when there is no explicit alpha/opacity/mask slot, `diffuse` carries the usable alpha channel; `overlay` remains a layered/inspectable texture and must not be generically alpha-composited over diffuse.
+- `case-006-current-scene-resource-build0182.txt` confirms `Material[1]` now reports `alpha=alpha-test-or-blend transparent=True`, `Material alpha source slot: diffuse`, and `Material layered slots: overlay`.
+- Next production split: do not add generic DecalMap overlay composition without stronger sampler evidence; keep model-root resolution (case `004`) separate.
 
 #### Problem
 

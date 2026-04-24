@@ -5689,6 +5689,68 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void MaterialDecoder_ClassifiesResourceKeyLikePackedUvMappingWithoutApplyingTransform()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var shaderParameterType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile");
+        var shaderCategoryType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterCategory");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var representationType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialValueRepresentation");
+
+        var uvCategory = Enum.Parse(shaderCategoryType, "UvMapping");
+        var packedRepresentation = Enum.Parse(representationType, "PackedUInt32");
+        var parameter = Activator.CreateInstance(
+            shaderParameterType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 0x01374601u, 0x80004000u, uvCategory],
+            culture: null)!;
+        var parameters = Array.CreateInstance(shaderParameterType, 1);
+        parameters.SetValue(parameter, 0);
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x0CB82EB8u, "colorMap7", parameters],
+            culture: null)!;
+        var property = Activator.CreateInstance(
+            materialPropertyType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0x420520E9u, "uvMapping", 1u, 1u, 4u, uvCategory, packedRepresentation, "packed32=[0xC0A00000, 0xA245F872, 0x6E5F9EEC, 0x00B2D882]", null, new uint[] { 0xC0A00000u, 0xA245F872u, 0x6E5F9EECu, 0x00B2D882u }, null],
+            culture: null)!;
+        var properties = Array.CreateInstance(materialPropertyType, 1);
+        properties.SetValue(property, 0);
+        var initialMapping = Activator.CreateInstance(
+            uvMappingType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0, 1f, 1f, 0f, 0f],
+            culture: null)!;
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: ["Material_Test", "Shader_Test", properties, Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference"), 0), initialMapping],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var notes = (System.Collections.IEnumerable)decoded.GetType().GetProperty("Notes")!.GetValue(decoded)!;
+        var noteText = string.Join(" | ", notes.Cast<object>());
+        var mapping = decoded.GetType().GetProperty("DiffuseUvMapping")!.GetValue(decoded)!;
+
+        Assert.Contains("resource-key-like", noteText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(mapping)!);
+        Assert.Equal(1f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(mapping)!);
+        Assert.Equal(0f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(mapping)!);
+        Assert.Equal(0f, (float)uvMappingType.GetProperty("UvOffsetV")!.GetValue(mapping)!);
+    }
+
+    [Fact]
     public void MaterialDecoder_UsesFoliageFamilyAsAlphaCutoutHint()
     {
         var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
@@ -6320,6 +6382,191 @@ public sealed class ExplorerTests : IDisposable
 
         Assert.Equal("ColorMap7MaterialDecodeStrategy", strategyName);
         Assert.Equal(Enum.Parse(familyKindType, "ColorMap7"), familyKind);
+    }
+
+    [Fact]
+    public void MaterialDecoder_ColorMap7WithAlphaTextureKeepsColorMap7Strategy()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x49F2DA993DB26795ul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var alphaRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["alpha", key, 0x3A9F5D1Cu], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 2);
+        textureRefs.SetValue(diffuseRef, 0);
+        textureRefs.SetValue(alphaRef, 1);
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xB9105A6Du, "colorMap7", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var strategyName = (string)decoded.GetType().GetProperty("StrategyName")!.GetValue(decoded)!;
+        var familyKind = decoded.GetType().GetProperty("FamilyKind")!.GetValue(decoded)!;
+        var alphaSourceSlot = (string?)decoded.GetType().GetProperty("AlphaSourceSlot")!.GetValue(decoded);
+
+        Assert.Equal("ColorMap7MaterialDecodeStrategy", strategyName);
+        Assert.Equal(Enum.Parse(familyKindType, "ColorMap7"), familyKind);
+        Assert.Equal("alpha", alphaSourceSlot);
+    }
+
+    [Fact]
+    public void MaterialDecoder_DecalMapWithAlphaAndOverlayUsesDecalMapStrategy()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+
+        var key = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x6C7794CE8EBA0C4Dul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", key, 0x1B9D3AC5u], null)!;
+        var alphaRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["alpha", key, 0x3A9F5D1Cu], null)!;
+        var overlayRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["overlay", key, 0x6E56548Au], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 3);
+        textureRefs.SetValue(diffuseRef, 0);
+        textureRefs.SetValue(alphaRef, 1);
+        textureRefs.SetValue(overlayRef, 2);
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_Test",
+                "Shader_Test",
+                Array.CreateInstance(materialPropertyType, 0),
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xFC5FC212u, "DecalMap", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var strategyName = (string)decoded.GetType().GetProperty("StrategyName")!.GetValue(decoded)!;
+        var familyKind = decoded.GetType().GetProperty("FamilyKind")!.GetValue(decoded)!;
+        var alphaSourceSlot = (string?)decoded.GetType().GetProperty("AlphaSourceSlot")!.GetValue(decoded);
+        var layeredSlots = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("LayeredColorSlots")!.GetValue(decoded)!).Cast<string>().ToArray();
+
+        Assert.Equal("DecalMapMaterialDecodeStrategy", strategyName);
+        Assert.Equal(Enum.Parse(familyKindType, "DecalMap"), familyKind);
+        Assert.Equal("alpha", alphaSourceSlot);
+        Assert.Contains("overlay", layeredSlots);
+    }
+
+    [Fact]
+    public void MaterialDecoder_DecalMapWithoutExplicitAlphaUsesDiffuseAlpha()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var shaderProfileType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderBlockProfile");
+        var materialIrType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIr");
+        var materialPropertyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.MaterialIrProperty");
+        var uvMappingType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureUvMapping");
+        var textureReferenceType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4TextureReference");
+        var resourceKeyType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4ResourceKey");
+        var decoderType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialDecoder");
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+
+        var diffuseKey = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0x6C7794CE8EBA0C4Dul], null)!;
+        var overlayKey = Activator.CreateInstance(resourceKeyType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0x00B2D882u, 0u, 0xA4D80FB45AE9066Bul], null)!;
+        var diffuseRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["diffuse", diffuseKey, 0x48372E62u], null)!;
+        var overlayRef = Activator.CreateInstance(textureReferenceType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, ["overlay", overlayKey, 0x6E56548Au], null)!;
+        var textureRefs = Array.CreateInstance(textureReferenceType, 2);
+        textureRefs.SetValue(diffuseRef, 0);
+        textureRefs.SetValue(overlayRef, 1);
+        var material = Activator.CreateInstance(
+            materialIrType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args:
+            [
+                "Material_81DF91C1",
+                "Shader_FC5FC212",
+                Array.CreateInstance(materialPropertyType, 0),
+                textureRefs,
+                Activator.CreateInstance(uvMappingType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [0, 1f, 1f, 0f, 0f], null)!
+            ],
+            culture: null)!;
+        var profile = Activator.CreateInstance(
+            shaderProfileType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [0xFC5FC212u, "DecalMap", Array.CreateInstance(RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.ShaderParameterProfile"), 0)],
+            culture: null)!;
+
+        var decoded = decoderType.GetMethod("Decode", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [material, profile])!;
+        var strategyName = (string)decoded.GetType().GetProperty("StrategyName")!.GetValue(decoded)!;
+        var familyKind = decoded.GetType().GetProperty("FamilyKind")!.GetValue(decoded)!;
+        var alphaSourceSlot = (string?)decoded.GetType().GetProperty("AlphaSourceSlot")!.GetValue(decoded);
+        var layeredSlots = ((System.Collections.IEnumerable)decoded.GetType().GetProperty("LayeredColorSlots")!.GetValue(decoded)!).Cast<string>().ToArray();
+
+        Assert.Equal("DecalMapMaterialDecodeStrategy", strategyName);
+        Assert.Equal(Enum.Parse(familyKindType, "DecalMap"), familyKind);
+        Assert.Equal("diffuse", alphaSourceSlot);
+        Assert.Contains("overlay", layeredSlots);
+    }
+
+    [Fact]
+    public void BuildBuyMaterialTransparency_DoesNotUseAlphaTextureAloneAsTransparency()
+    {
+        var previewAssembly = typeof(BuildBuySceneBuildService).Assembly;
+        var familyKindType = RequireType(previewAssembly, "Sims4ResourceExplorer.Preview.Ts4MaterialFamilyKind");
+        var method = typeof(BuildBuySceneBuildService).GetMethod(
+            "ShouldRenderMaterialTransparent",
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
+
+        Assert.False((bool)method.Invoke(null, [false, Enum.Parse(familyKindType, "ColorMap7"), true, true])!);
+        Assert.True((bool)method.Invoke(null, [false, Enum.Parse(familyKindType, "AlphaCutout"), true, true])!);
+        Assert.True((bool)method.Invoke(null, [false, Enum.Parse(familyKindType, "DecalMap"), true, true])!);
+        Assert.False((bool)method.Invoke(null, [false, Enum.Parse(familyKindType, "DecalMap"), true, false])!);
+        Assert.True((bool)method.Invoke(null, [true, Enum.Parse(familyKindType, "ColorMap7"), false, false])!);
+    }
+
+    [Fact]
+    public void BuildBuyMtstSelection_PrefersUsableDefaultStateOverHigherScoredVariant()
+    {
+        var method = typeof(BuildBuySceneBuildService).GetMethod(
+            "GetMtstStateSelectionPriority",
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
+
+        var defaultPriority = (int)method.Invoke(null, [0u, true, false])!;
+        var variantPriority = (int)method.Invoke(null, [0x2893DBA2u, true, false])!;
+        var emptyDefaultPriority = (int)method.Invoke(null, [0u, false, false])!;
+
+        Assert.True(defaultPriority > variantPriority);
+        Assert.Equal(variantPriority, emptyDefaultPriority);
     }
 
     [Fact]

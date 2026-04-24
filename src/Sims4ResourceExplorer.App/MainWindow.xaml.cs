@@ -1699,7 +1699,7 @@ public sealed partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(selectedSlot))
         {
-            return SelectOpacityTexture(material, baseColorTexture);
+            return SelectDefaultViewportOpacityTexture(material, baseColorTexture);
         }
 
         var scopedAlphaSlot = !string.IsNullOrWhiteSpace(material?.AlphaTextureSlot) &&
@@ -1730,6 +1730,25 @@ public sealed partial class MainWindow : Window
             texture.Slot.Contains("cutout", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static CanonicalTexture? SelectDefaultViewportOpacityTexture(
+        CanonicalMaterial? material,
+        CanonicalTexture? baseColorTexture)
+    {
+        if (material?.IsTransparent == true)
+        {
+            return SelectOpacityTexture(material, baseColorTexture);
+        }
+
+        if (material is null)
+        {
+            return TextureSupportsAlpha(baseColorTexture) ? baseColorTexture : null;
+        }
+
+        return ShouldUseBaseColorAlphaAsOpacityFallback(material, baseColorTexture)
+            ? baseColorTexture
+            : null;
+    }
+
     private static bool ShouldRenderTransparentViewport(
         CanonicalMaterial? material,
         IReadOnlyList<CanonicalTexture> textures,
@@ -1738,7 +1757,7 @@ public sealed partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(selectedSlot))
         {
-            return material?.IsTransparent == true || HasExplicitOpacityTexture(material);
+            return SelectDefaultViewportOpacityTexture(material, baseColorTexture) is not null;
         }
 
         var scopedAlphaSlot = !string.IsNullOrWhiteSpace(material?.AlphaTextureSlot) &&
@@ -1790,10 +1809,6 @@ public sealed partial class MainWindow : Window
                 texture.Slot.Contains("glow", StringComparison.OrdinalIgnoreCase))
             ?? (material.LayeredTextureSlots?.Any(slot => slot.Equals("emissive", StringComparison.OrdinalIgnoreCase)) == true
                 ? baseColorTexture
-                : null)
-            ?? (layeredColorTexture is not null &&
-                !string.Equals(material.AlphaTextureSlot, layeredColorTexture.Slot, StringComparison.OrdinalIgnoreCase)
-                ? layeredColorTexture
                 : null);
     }
 
