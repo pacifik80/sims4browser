@@ -55,6 +55,7 @@ Resume from the linked previous thread `019db463-2c27-7591-ad60-4ff246e0b346`, w
 - [x] Run targeted verification appropriate to that packet: `dotnet build tools\ProbeAsset\ProbeAsset.csproj --no-restore`, plus direct `--scene-resource --live-index` probes for cases `002`, `005`, and `006`.
 - [x] Fold the outcome back into this live plan, `docs/operations/tooling.md`, and `tmp/uv_misalignment_corpus/analysis-2026-04-24.md`.
 - [x] User requested a safety commit/push before continuing; stage only non-junk project changes and exclude large local `satellites/` capture/build artifacts.
+- [x] Follow-up safety packet: in `satellites/`, stage only lightweight markdown reports plus local ignore rules; keep large captures, raw disassembly, binaries, and build outputs untracked.
 - [ ] Decide the next production packet from the confirmed corpus split.
 
 #### Restart Hints

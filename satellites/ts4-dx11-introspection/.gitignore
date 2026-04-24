@@ -1,0 +1,30 @@
+# Large capture and reverse-engineering artifacts.
+captures/live/*.jsonl
+captures/e2e/
+captures/ts4_scene_capture/
+ender_doc/
+docs/raw/
+
+# Build outputs and generated project state.
+native/out/
+companion/bin/
+companion/obj/
+recon/bin/
+recon/obj/
+
+# Binary/generated payloads that should not be versioned here.
+*.rdc
+*.dxbc
+*.asm
+*.dll
+*.exe
+*.pdb
+*.obj
+*.lib
+*.exp
+*.ilk
+*.jsonl
+*.log
+*.tlog
+*.cache
+*.marker
