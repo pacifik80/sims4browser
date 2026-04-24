@@ -700,7 +700,12 @@ public sealed record CanonicalMaterial(
     string? ShaderFamily = null,
     string? DecodeStrategy = null,
     IReadOnlyList<CanonicalMaterialSampling>? Sampling = null,
-    string? VisualPayloadKind = null);
+    string? VisualPayloadKind = null,
+    IReadOnlyList<string>? UtilityTextureSlots = null,
+    string? PreviewCompositorStage = null,
+    int? SortLayer = null,
+    int? CompositionMethod = null,
+    string? CasPartSlotCategory = null);
 
 public sealed record CanonicalMaterialSampling(
     string Slot,

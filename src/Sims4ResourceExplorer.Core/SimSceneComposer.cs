@@ -1024,12 +1024,50 @@ public static class SimSceneComposer
         IReadOnlyList<SimAssemblyMorphTransformOperationData> morphTransformOperations)
     {
         var routeLookup = skintoneRoutes.ToDictionary(static route => route.MaterialIndex);
-        var effectiveMaterials = payloadData.MergedMaterials
-            .Select((material, index) =>
-                routeLookup.TryGetValue(index, out var route)
-                    ? ApplySkintoneRouteToMaterial(material, route)
-                    : material)
-            .ToArray();
+        var effectiveMaterials = new List<CanonicalMaterial>(payloadData.MergedMaterials.Count);
+        var materialIndexExpansions = new Dictionary<int, IReadOnlyList<int>>();
+        for (var index = 0; index < payloadData.MergedMaterials.Count; index++)
+        {
+            var sourceMaterial = payloadData.MergedMaterials[index];
+            var expandedMaterials = routeLookup.TryGetValue(index, out var route)
+                ? ExpandSkintoneRouteToMaterials(sourceMaterial, route)
+                : [sourceMaterial];
+
+            var expandedIndices = new List<int>(expandedMaterials.Count);
+            foreach (var expandedMaterial in expandedMaterials)
+            {
+                expandedIndices.Add(effectiveMaterials.Count);
+                effectiveMaterials.Add(expandedMaterial);
+            }
+
+            materialIndexExpansions[index] = expandedIndices;
+        }
+
+        var effectiveMeshes = new List<CanonicalMesh>(payloadData.MergedMeshes.Count);
+        foreach (var mesh in payloadData.MergedMeshes)
+        {
+            if (!materialIndexExpansions.TryGetValue(mesh.MaterialIndex, out var expandedIndices) || expandedIndices.Count == 0)
+            {
+                effectiveMeshes.Add(mesh);
+                continue;
+            }
+
+            if (expandedIndices.Count == 1)
+            {
+                effectiveMeshes.Add(mesh with { MaterialIndex = expandedIndices[0] });
+                continue;
+            }
+
+            foreach (var expandedMaterialIndex in expandedIndices)
+            {
+                var stage = effectiveMaterials[expandedMaterialIndex].PreviewCompositorStage;
+                effectiveMeshes.Add(mesh with
+                {
+                    Name = string.IsNullOrWhiteSpace(stage) ? mesh.Name : $"{mesh.Name} [{stage}]",
+                    MaterialIndex = expandedMaterialIndex
+                });
+            }
+        }
 
         var appliedMorphSets = morphTransformOperations
             .GroupBy(static operation => new { operation.MeshIndex, operation.MeshName })
@@ -1042,9 +1080,46 @@ public static class SimSceneComposer
             .ToArray();
 
         return new SimAssemblyAppliedPayloadData(
-            effectiveMaterials,
-            payloadData.MergedMeshes,
+            effectiveMaterials.ToArray(),
+            effectiveMeshes,
             appliedMorphSets);
+    }
+
+    private static IReadOnlyList<CanonicalMaterial> ExpandSkintoneRouteToMaterials(
+        CanonicalMaterial material,
+        SimAssemblySkintoneMaterialRouteData route)
+    {
+        var routedMaterial = ApplySkintoneRouteToMaterial(material, route);
+        if (route.ViewportTintColor is null)
+        {
+            return [routedMaterial];
+        }
+
+        var overlayTextures = SelectSkintoneOverlayTextures(routedMaterial);
+        var overlayColorTextures = overlayTextures
+            .Where(static texture => texture.Semantic != CanonicalTextureSemantic.Opacity)
+            .ToArray();
+        if (overlayColorTextures.Length == 0)
+        {
+            return [routedMaterial];
+        }
+
+        var overlaySlots = overlayTextures
+            .Select(static texture => texture.Slot)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var baseTextures = routedMaterial.Textures
+            .Where(texture => !overlaySlots.Contains(texture.Slot))
+            .ToArray();
+        if (baseTextures.Length == 0)
+        {
+            return [CreateSkintoneStageMaterial(routedMaterial, overlayTextures, "sim-skintone-overlay", applyViewportTint: false)];
+        }
+
+        return
+        [
+            CreateSkintoneStageMaterial(routedMaterial, baseTextures, "sim-skintone-base", applyViewportTint: true),
+            CreateSkintoneStageMaterial(routedMaterial, overlayTextures, "sim-skintone-overlay", applyViewportTint: false)
+        ];
     }
 
     private static CanonicalMaterial ApplySkintoneRouteToMaterial(
@@ -1066,11 +1141,65 @@ public static class SimSceneComposer
         return material with
         {
             Approximation = approximation,
+            PreviewCompositorStage = route.ViewportTintColor is not null
+                ? "sim-skintone-base"
+                : material.PreviewCompositorStage,
             SourceKind = route.ViewportTintColor is not null
                 ? CanonicalMaterialSourceKind.ApproximateCas
                 : material.SourceKind,
             ViewportTintColor = route.ViewportTintColor ?? material.ViewportTintColor,
             ApproximateBaseColor = route.ViewportTintColor ?? material.ApproximateBaseColor
+        };
+    }
+
+    private static CanonicalMaterial CreateSkintoneStageMaterial(
+        CanonicalMaterial material,
+        IReadOnlyList<CanonicalTexture> textures,
+        string stage,
+        bool applyViewportTint)
+    {
+        var scopedSlots = textures
+            .Select(static texture => texture.Slot)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var scopedAlphaSlot = !string.IsNullOrWhiteSpace(material.AlphaTextureSlot) &&
+                              scopedSlots.Contains(material.AlphaTextureSlot)
+            ? material.AlphaTextureSlot
+            : null;
+        var scopedLayeredSlots = material.LayeredTextureSlots?
+            .Where(slot => scopedSlots.Contains(slot))
+            .ToArray();
+        if (scopedLayeredSlots is { Length: 0 })
+        {
+            scopedLayeredSlots = null;
+        }
+
+        var scopedSampling = material.Sampling?
+            .Where(sample => scopedSlots.Contains(sample.Slot))
+            .ToArray();
+        if (scopedSampling is { Length: 0 })
+        {
+            scopedSampling = null;
+        }
+
+        var scopedUtilitySlots = material.UtilityTextureSlots?
+            .Where(slot => scopedSlots.Contains(slot))
+            .ToArray();
+        if (scopedUtilitySlots is { Length: 0 })
+        {
+            scopedUtilitySlots = null;
+        }
+
+        return material with
+        {
+            Name = string.IsNullOrWhiteSpace(material.Name) ? stage : $"{material.Name} [{stage}]",
+            Textures = textures,
+            AlphaTextureSlot = scopedAlphaSlot,
+            LayeredTextureSlots = scopedLayeredSlots,
+            Sampling = scopedSampling,
+            UtilityTextureSlots = scopedUtilitySlots,
+            PreviewCompositorStage = stage,
+            ViewportTintColor = applyViewportTint ? material.ViewportTintColor : null,
+            ApproximateBaseColor = applyViewportTint ? material.ApproximateBaseColor : null
         };
     }
 
@@ -1214,6 +1343,23 @@ public static class SimSceneComposer
         }
 
         return material.SourceKind == CanonicalMaterialSourceKind.ApproximateCas;
+    }
+
+    private static IReadOnlyList<CanonicalTexture> SelectSkintoneOverlayTextures(CanonicalMaterial material)
+    {
+        var layeredSlots = material.LayeredTextureSlots?
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            ?? [];
+        var explicitAlphaSlot = string.IsNullOrWhiteSpace(material.AlphaTextureSlot)
+            ? null
+            : material.AlphaTextureSlot;
+        return material.Textures
+            .Where(texture =>
+                layeredSlots.Contains(texture.Slot) ||
+                texture.Semantic is CanonicalTextureSemantic.Overlay or CanonicalTextureSemantic.Opacity ||
+                texture.Slot.Contains("overlay", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(explicitAlphaSlot) && texture.Slot.Equals(explicitAlphaSlot, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
     }
 
     private static IReadOnlyList<SimAssemblyMorphMeshTransformData> BuildMorphMeshTransforms(

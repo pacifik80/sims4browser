@@ -13,6 +13,15 @@ Every active plan in this file must include:
 
 The plan must be updated during the same user request, not only at session closeout.
 
+Additional rule for the browser material-pipeline refactor:
+
+- keep one stable conceptual progress tree with percentages across iterations
+- update the percentages when a meaningful implementation boundary changes
+- always mark:
+  - what is materially solved
+  - what is the current working zone
+  - what is still essentially untouched
+
 Status-reporting rule for this research track:
 
 - use only progress-bearing docs in the user-facing status snapshot:
@@ -47,6 +56,734 @@ This restart contract overrides the common failure mode for that task:
 ## Active Task
 
 Status: `In Progress`
+
+### Current Request Addendum (`2026-04-22`, browser material-pipeline refactor)
+
+#### Problem
+
+The browser preview still flattened too much material meaning before render time:
+
+- shader-family and decode-strategy knowledge stopped at diagnostics instead of reaching viewport decisions
+- slot-level UV intent could still be borrowed across unrelated slots
+- helper, utility, projective, and layered-family inputs could still be misread as ordinary visible surface color
+- there was no restart-safe implementation plan in the repo for continuing this refactor across chats
+
+#### Chosen Approach
+
+- move incrementally from heuristic texture-bag preview toward a canonical material pipeline
+- preserve material authority in `CanonicalMaterial` first, then tighten viewport selection around that richer IR
+- split work by boundary:
+  - authority and decode propagation
+  - viewport slot and UV routing
+  - transparency classification
+  - surface-versus-helper filtering
+- later compositor staging for skintone and overlay/detail families
+- keep the live implementation status in this file so a new chat can resume from repo state instead of reconstructing context manually
+
+#### Conceptual Progress Tree
+
+Status scale:
+
+- `100%` = materially solved for the current browser scope
+- `1-99%` = partially implemented / still approximation-heavy
+- `0%` = not started
+- parent nodes use conservative child rollups instead of momentum-style milestone estimates
+- the root percentage should be read as an approximate weighted rollup, not as “remaining work is only X%”
+
+```text
+Browser Material-Pipeline Refactor [97%]
+├─ 1. Canonical Material Authority And IR [100%]
+│  ├─ 1.1 CanonicalMaterial field coverage [100%]
+│  ├─ 1.2 Decode/scene propagation of authority [100%]
+│  └─ 1.3 Scoped-material provenance preservation [100%]
+├─ 2. Viewport Texture Selection And UV Routing [98%]
+│  ├─ 2.1 Slot-local sampling and UV routing [100%]
+│  ├─ 2.2 Surface vs helper/utility filtering [100%]
+│  └─ 2.3 Selected-slot inspection safety [93%]
+├─ 3. Transparency And Surface Classification [91%]
+│  ├─ 3.1 Family-aware transparency ordering [100%]
+│  ├─ 3.2 Non-visual/helper suppression [100%]
+│  └─ 3.3 Stage-specific transparency policies [72%]
+├─ 4. Preview Compositor Staging [97%]
+│  ├─ 4.1 Stage metadata in scene IR [100%]
+│  ├─ 4.2 Sim skintone base/overlay split [100%]
+│  ├─ 4.3 CAS overlay base/detail split [94%]
+│  ├─ 4.4 High-layer 32|65536 overlay family [93%]
+│  └─ 4.5 Helper/projective staged handling [92%]
+├─ 5. CompositionMethod And SortLayer Behavior [97%]
+│  ├─ 5.1 CompositionMethod 2/3/4 approximation [96%]
+│  ├─ 5.2 CompositionMethod 32 worn-slot lane [99%]
+│  ├─ 5.3 SortLayer pass bucketing [99%]
+│  └─ 5.4 True compositor pass math [100%]
+└─ 6. TS4-Parity Compositor Behavior [84%]
+   ├─ 6.1 Skintone-carried overlay parity [99%]
+   ├─ 6.2 Ordinary CAS overlay/detail parity [99%]
+   └─ 6.3 Runtime-faithful blend/order equivalence [98%]
+```
+
+Current working zone:
+
+- `5.2 CompositionMethod 32 worn-slot lane`
+- `5.3 SortLayer pass bucketing`
+- `6.1 Skintone-carried overlay parity`
+- `6.2 Ordinary CAS overlay/detail parity`
+- `6.3 Runtime-faithful blend/order equivalence`
+
+Not started / essentially untouched:
+- no equally large compositor-family split remains inside the browser preview path; the dominant remaining gap is now exact runtime-faithful behavior layered on top of the separated preview/material paths
+
+Interpretation note for `6.3`:
+
+- work on architecture, pass planning, coarse blend families, and execution-policy cleanup does help `6.3`, but it is counted under `5.4`, `6.1`, and `6.2`
+- `6.3` only moves once source-backed TS4 runtime blend/order rules are explicitly captured and enforced as browser behavior, not just approximated structurally
+
+#### Actions
+
+- [x] Extend `CanonicalMaterial` so shader family, decode strategy, sampling, and visual payload kind survive into viewport code.
+- [x] Stop collapsing viewport materials into one synthetic texture-group before slot selection.
+- [x] Make scoped viewport selection preserve material provenance instead of rebuilding a metadata-poor synthetic material.
+- [x] Prevent per-slot preview from borrowing UV sampling from a different slot when the selected slot has no explicit sampling entry.
+- [x] Use family-aware transparency ordering in the viewport:
+  - object-glass
+  - threshold/cutout
+  - `AlphaBlended`
+  - `SimGlass`
+  - generic fallback
+- [x] Keep non-visual helper/control materials out of normal transparency handling.
+- [x] Propagate `UtilityTextureSlots` into `CanonicalMaterial` and keep them when the material is scoped.
+- [x] Add a separate viewport `surfaceTextures` subset so base/layered/emissive/opacity selection ignores helper or utility inputs while normal/specular selection still sees them.
+- [x] Propagate `CASPart` compositor metadata into `CanonicalMaterial`:
+  - slot category
+  - `CompositionMethod`
+  - `SortLayer`
+- [x] Use that metadata for an initial layer-aware mesh ordering pass in the viewport so shell/body layers and compositor-like rows no longer rely only on source mesh order.
+- [x] Introduce explicit preview compositor stage metadata in `CanonicalMaterial` and propagate it from:
+  - material decode (`surface`, layered surface, helper/projective, non-visual)
+  - `CASPart` compositor metadata (`cas-shell-base`, `cas-overlay`)
+  - skintone routing (`sim-skintone-base`)
+- [x] Make normal preview stage-aware:
+  - helper stages are no longer rendered as ordinary visible geometry in normal `Lit/Flat` preview
+  - helper stages remain available in UV and slot-inspection modes
+- [x] Start replacing single-material stage approximation with stage-specific preview texture behavior:
+  - `cas-overlay` now prefers layered color payload and stage-aware alpha handling instead of default diffuse-first routing
+  - `sim-skintone-base` now supports a first compositor approximation for `tinted base + layered detail (+ opacity)` in normal preview
+- [x] Introduce the first real staged skintone preview split:
+  - skintone-routed materials with both base and overlay payload can now expand into separate `sim-skintone-base` and `sim-skintone-overlay` material passes
+  - viewport ordering now draws `sim-skintone-overlay` after `sim-skintone-base`
+- [x] Introduce the first real staged CAS overlay preview split:
+  - `cas-overlay` materials with both base and detail payload can now expand into separate `cas-overlay-base` and `cas-overlay-detail` preview passes
+  - viewport ordering and overlay-specific alpha/color routing now target `cas-overlay-detail` instead of forcing one merged material path
+- [x] Introduce the first `CompositionMethod`-aware overlay preview behavior:
+  - `CompositionMethod = 3` now uses a grayscale-shading approximation for `cas-overlay-detail`
+  - `CompositionMethod = 2` and `4` now adjust overlay alpha/emphasis as makeup-like preview lanes
+  - `CompositionMethod = 32` now has a separate worn-slot preview policy for `Full Body` / `Top` / `Bottom` / `Shoes` / `Accessory`
+  - `0/1` currently stay in the straight-overlay lane until stronger runtime math is available
+- [x] Start turning `SortLayer` into compositor pass grouping instead of only one numeric tie-break:
+  - `cas-overlay*` stages now split into low cosmetic, standard worn-slot, and `65536+` high-layer pass buckets
+  - the dominant `32|65536` clothing/accessory lane now lands in a dedicated late overlay bucket before final per-layer numeric ordering
+- [x] Start promoting the dominant `32|65536` lane into explicit scene stages:
+  - eligible `CAS` overlay materials now expand into `cas-overlay-highlayer-base` and `cas-overlay-highlayer-detail`
+  - viewport stage ordering now treats those rows as a separate late overlay family instead of only a bucketed sort case
+- [x] Add stage-specific material rules for late high-layer overlays:
+  - `cas-overlay-highlayer-detail` now uses explicit-emissive-only routing instead of generic layered/emissive fallback
+  - the same stage now forces a more matte lit response so high worn-slot overlays stop behaving like cosmetic/detail rows
+- [x] Add stage-specific transparency policy for high-layer overlay bases:
+  - `cas-overlay-highlayer-base` now stays opaque unless an explicit opacity slot exists
+  - high-layer base rows no longer inherit generic alpha-from-color fallback
+- [x] Keep material-detail maps on overlay base passes instead of leaking them into overlay detail passes:
+  - `cas-overlay-detail` and `cas-overlay-highlayer-detail` now exclude `normal/specular/gloss` textures during scene-stage split
+  - material-detail maps stay attached to base-family passes where they belong
+- [x] Mirror that contract in viewport material-detail application:
+  - `cas-overlay-highlayer-detail` now explicitly suppresses `normal/specular` routing in the viewport
+  - `highlayer-detail` is now treated as a color/opacity overlay lane instead of relying on IR split side-effects
+- [x] Add a regression test for the CAS overlay split contract:
+  - `CasOverlayDetailSplit_ExcludesMaterialDetailMapsFromDetailStageSelection` now locks the rule that `normal/specular/gloss` stay out of overlay detail-stage selection
+  - test execution is still blocked by the unrelated `DiscoveredCasPartFact(... GenderLabel)` compile error in `IndexingPipelineTests.cs`
+- [x] Add an explicit inspection contract for helper/projective stages:
+  - `helper-projective`, `helper-layered`, and `helper-utility` now show a plain selected/first texture in inspection instead of surface-like material fallback
+  - those helper stages now suppress emissive/alpha/normal/specular application when they are shown for inspection
+- [x] Split helper inspection selection by helper family instead of one shared fallback:
+  - `helper-projective` now prefers projective/refraction/depth-like slots during inspection
+  - `helper-layered` now prefers layered/reveal/lightmap-like slots during inspection
+  - `helper-utility` now prefers declared utility slots before generic first-texture fallback
+- [x] Split helper sampling and UV routing policy by helper family:
+  - `helper-projective` no longer borrows generic `diffuse/default` sampling fallback during inspection
+  - `helper-layered` now prefers sampling from declared layered slots before any generic fallback
+  - `helper-utility` now prefers sampling from declared utility slots before any generic fallback
+- [x] Split helper UV/apply behavior by helper family:
+  - helper-stage geometry UV selection now uses helper-aware UV reference textures instead of the generic primary-texture scorer
+  - `helper-projective` no longer applies ordinary material UV transforms in preview, so projective helpers stop pretending to be surface UV lanes
+- [x] Route UV preview panels through the helper-aware UV texture selector:
+  - `RawUv` and `MaterialUv` preview panels now group around helper-specific UV reference textures instead of the old generic primary-texture choice
+  - helper inspection is now more consistent between viewport geometry UVs and the generated UV panel preview
+- [x] Add helper-family visual policy to UV inspection preview:
+  - helper UV panels now receive stage-aware accent outlines instead of looking identical to ordinary surface panels
+  - helper wireframes now use family-specific colors so `projective`, `layered`, and `utility` lanes are visually distinguishable in `RawUv/MaterialUv`
+- [x] Add helper-family background and mixed-lane markers to UV inspection preview:
+  - helper UV panels now use family-aware tinted panel backgrounds instead of a single neutral backdrop
+  - mixed helper/surface groupings now get an explicit side marker so ambiguous UV packets stand out during inspection
+- [x] Refine overlay compositor bucketing for cosmetic `CompositionMethod` lanes:
+  - `CompositionMethod 2/3/4` detail overlays on `Head` / `Body` / `Hair` now get their own early cosmetic pass bucket
+  - low nonzero `SortLayer` rows no longer collapse into the same bucket as true zero-layer overlays
+  - high `65536+` / `CompositionMethod 32` worn-slot rows remain isolated as the latest overlay bucket
+- [x] Align high-layer worn-slot bucketing with the actual scene-stage contract:
+  - the latest overlay bucket now applies only to true `CompositionMethod 32` plus `SortLayer >= 65536` worn-slot rows
+  - ordinary worn-slot `CompositionMethod 32` overlays no longer get promoted into the same late bucket as explicit `cas-overlay-highlayer-*` stages
+- [x] Split ordinary worn `CompositionMethod 32` behavior from true high-layer `32|65536` behavior:
+  - ordinary worn-slot `32` overlays now keep a less aggressive transparency fallback than explicit high-layer rows
+  - high-layer rows keep the stricter subdued transparency/emissive contract, while ordinary worn rows use a milder shading response
+- [x] Start consolidating overlay compositor behavior behind one lane classifier:
+  - viewport pass bucket, `CompositionMethod 32` transparency policy, and overlay emissive policy now share the same overlay-lane classification
+  - this is the first explicit bridge into `5.4`: compositor behavior is starting to move from scattered conditionals toward one pass-policy model
+- [x] Extend the overlay lane classifier into alpha/composite policy:
+  - grayscale overlay composite for `CompositionMethod 3` now runs through the shared overlay-lane model instead of a standalone condition
+  - overlay alpha scaling now routes through lane-aware policy instead of a direct `CompositionMethod` switch
+- [x] Replace scattered overlay-lane decisions with one `OverlayCompositorPolicy` object:
+  - pass bucket, grayscale composite usage, alpha scaling, emissive response, and implicit-alpha permission now come from one shared policy builder
+  - this is the first real `5.4` policy object rather than a loose set of helper predicates
+- [x] Extend `OverlayCompositorPolicy` into specular/shininess response:
+  - overlay detail lanes now read lane-specific specular color and shininess from the shared policy instead of local conditional branches
+  - build stays clean after this move, so the policy object now covers nearly all overlay material-response decisions except a true staged blend engine
+- [x] Add the first coarse staged blend model on top of `OverlayCompositorPolicy`:
+  - overlay policy now carries explicit `PassIntent` and `BlendFamily`, instead of only a lane label plus independent booleans
+  - overlay transparency and grayscale-composite decisions now route through those coarse staged blend families, giving `5.4` its first real pass-intent model
+- [x] Extend the coarse staged blend model into overlay color/emissive routing:
+  - overlay lanes now choose explicit-emissive-only vs fallback-emissive behavior from the shared policy object
+  - overlay viewport color selection now follows policy-driven lane routing instead of special-casing high-layer rows inline
+- [x] Add `OverlayExecutionPlan` as the first execution layer above compositor policy:
+  - overlay detail passes now resolve emissive texture, viewport color texture, and alpha-render decision once, then pass that execution plan through the material path
+  - this is the first explicit execution object for overlay detail rendering, not just a policy description
+- [x] Turn `OverlayExecutionPlan` into executable texture/alpha branches:
+  - overlay detail texture creation now routes through explicit execution helpers keyed by `PassIntent`
+  - alpha texture generation now uses the resolved `AlphaSourceTexture` from the execution plan instead of recomputing overlay alpha inputs ad hoc
+- [x] Move final overlay-detail material response into an execution-plan helper:
+  - overlay detail `EmissiveColor`, `RenderEmissiveMap`, `EmissiveMap`, `SpecularColor`, and `SpecularShininess` now come from `OverlayMaterialResponsePlan`
+  - final `PhongMaterial` application for overlay detail is no longer assembled only from inline local conditionals
+- [x] Move final overlay-detail map application into an execution-plan helper:
+  - overlay detail `RenderDiffuseMap`, `DiffuseMap`, `RenderDiffuseAlphaMap`, `DiffuseAlphaMap`, and final overlay map suppression now come from `OverlayMaterialApplicationPlan`
+  - overlay detail no longer falls through the generic `PhongMaterial` map-application path for its final diffuse/emissive/alpha/normal/specular decisions
+- [x] Add the first real multi-pass overlay execution step in the viewport render loop:
+  - eligible worn/high-layer overlay detail rows now emit a late emissive-only secondary pass instead of forcing all overlay behavior through one `PhongMaterial`
+  - the browser now has a coarse two-pass approximation for the strongest overlay family without claiming runtime-faithful TS4 blend math
+- [x] Extend explicit secondary-pass rendering to cosmetic and ordered overlay detail lanes:
+  - `CosmeticDetail` and `OrderedDetail` rows now emit a dedicated late detail pass instead of staying collapsed into one primary material path
+  - the viewport now has separate coarse pass behavior for cosmetic/ordered detail rows versus worn/high-layer rows, which moves ordinary CAS overlay/detail parity forward without claiming exact TS4 blending
+- [x] Move coarse multi-pass rendering from “per-mesh immediate extra draw” to explicit pass phases:
+  - viewport render entries now carry `Primary`, `DetailLate`, and `EmissiveLate` phases instead of appending extra overlay draws only as an inline side effect of one mesh loop
+  - coarse secondary passes are now globally ordered inside the browser render loop, which is a more honest approximation of compositor execution than drawing every extra pass immediately after its primary mesh
+- [x] Add pass-specific alpha policy for coarse secondary overlay passes:
+  - `EmissiveLate` now keeps a stricter alpha contract for worn/high-layer rows instead of inheriting generic secondary-pass transparency
+  - `DetailLate` now uses a separate alpha rule for cosmetic versus ordered detail rows, so secondary overlay passes differ not only by phase but also by coarse opacity behavior
+- [x] Consolidate coarse secondary-pass behavior behind `SecondaryOverlayPassPolicy`:
+  - secondary overlay passes now derive `blend intent`, `alpha scale`, and `emissive response` from one policy builder instead of separate late-pass helper conditionals
+  - `DetailLate` and `EmissiveLate` now differ by explicit coarse blend families, not only by phase ordering and ad hoc alpha checks
+- [x] Rebuild viewport overlay execution around explicit render-pass plans:
+  - viewport now builds `ViewportRenderPassPlan` entries first and sorts them globally by stage, bucket, phase, slot order, `CompositionMethod`, and `SortLayer`
+  - overlay execution is no longer modeled as “iterate meshes, then opportunistically append extras”; it is now a planned pass list
+- [x] Promote `DefaultDetail` into the explicit secondary-pass family:
+  - default overlay-detail rows now use the same explicit `DetailLate` infrastructure as cosmetic and ordered rows
+  - this gives ordinary overlay/detail families a broader coarse multi-pass contract instead of reserving explicit secondary passes only for special lanes
+- [x] Extend explicit render-pass planning into `sim-skintone-overlay`:
+  - skintone overlay rows now emit an explicit `SkintoneLate` pass inside the same planned viewport render-pass list instead of staying a one-material branch
+  - the browser now applies a dedicated skintone late-pass policy with its own blend intent, alpha scale, and emissive response, which materially advances the `sim-skintone` compositor branch beyond the earlier base/overlay split
+- [x] Unify late-pass material construction behind a shared viewport late-pass plan:
+  - `DetailLate`, `EmissiveLate`, and `SkintoneLate` now converge on one `ViewportLatePassMaterialPlan` + one generic late-pass material builder instead of three isolated `PhongMaterial` code paths
+  - skintone late-pass alpha now uses a real alpha-source contract again instead of always falling back to viewport color bytes
+- [x] Add `SkintoneOverlayExecutionPlan` so skintone overlay primary and late passes share one execution seam:
+  - `sim-skintone-overlay` now resolves viewport color and alpha-source textures once before primary/late material application
+  - primary transparency and late-pass alpha routing for skintone overlays now use the same execution data instead of divergent local heuristics
+- [x] Make planned viewport pass phases intent-aware instead of variant-only:
+  - `DetailLate` now separates cosmetic/default/ordered detail rows by pass phase
+  - `EmissiveLate` now separates ordinary worn rows from explicit high-layer rows by pass phase, which makes the planned pass list closer to a compositor execution order
+- [x] Consolidate all late-pass execution behind one shared execution-policy layer:
+  - `SkintoneLate`, `DetailLate`, and `EmissiveLate` now classify into one shared `ViewportLatePassBlendIntent` space instead of keeping separate skintone-vs-overlay pass policy trees
+  - late-pass phase, alpha scaling, alpha enablement, and emissive response are now derived from one `ViewportLatePassExecutionPolicy`
+- [x] Replace parallel skintone/overlay late-pass policy stacks with one coarse compositor contract:
+  - skintone late passes now use the same policy seam as ordinary overlay detail and worn/high-layer late passes
+  - the browser no longer needs separate `SecondaryOverlayPassPolicy` and `SkintoneOverlayPassPolicy` layers to describe late-pass behavior
+- [x] Start `6.3` with the first explicit source-backed compositor ordering rule:
+  - planned viewport render passes now keep `SkintoneLate` ahead of CAS overlay late passes as a parity-specific family rule
+  - within CAS late-pass compositor rows, parity ordering now uses `CompositionMethod` before `SortLayer`, matching the current research packet's strongest safe reference-code-backed rule
+- [x] Tighten `6.3` so ordinary CAS late rows no longer let blend-intent phases override composition-order evidence:
+  - ordinary `DetailLate` rows now stay in one coarse pass phase, so source-backed `CompositionMethod -> SortLayer` ordering can actually govern their internal order
+  - the browser now uses blend-intent phases only for coarse family separation, not as a hidden replacement for documented composition-order precedence
+- [x] Extend `6.3` from parity ordering into parity opacity authority:
+  - planned viewport passes now carry a `ViewportParityRuleProfile` instead of isolated parity integers, so source-backed compositor rules stay attached to the pass all the way into execution policy
+  - documented `CompositionMethod 2` and `4` makeup lanes now stop borrowing plain viewport-color alpha fallback when no separate opacity authority exists
+  - `SkintoneLate` now follows the same stricter parity-opacity contract, so late skintone opacity no longer quietly falls back to generic color-alpha authority
+- [x] Extend `6.3` from parity opacity authority into a parity behavior matrix:
+  - planned viewport passes now classify source-backed late lanes into explicit parity blend families instead of leaving that behavior implicit inside generic late-pass switches
+  - documented `CompositionMethod 2/3/4` lanes now carry distinct runtime-facing late-pass behavior profiles (`makeup primary`, `grayscale`, `makeup secondary`) through the shared execution-policy seam
+  - `SkintoneLate` now participates in the same parity behavior matrix, so skintone and CAS late lanes share one source-backed behavior layer instead of parallel special cases
+- [x] Extend `6.3` from a parity behavior matrix into explicit late-family stack order:
+  - planned viewport passes now carry an explicit `ParityStackOrder`, so late-family precedence is no longer inferred only from coarse phase plus incidental tie-breakers
+  - skintone, ordinary detail, makeup-primary, grayscale, makeup-secondary, worn emissive, and high-layer emissive late families now sit on one explicit stack-order ladder inside the planned renderer
+- [x] Start using the new `6.3` stack contract to suppress unsafe runtime approximations:
+  - makeup-driven `CompositionMethod 2/4` late passes are now dropped when the browser cannot confirm dedicated opacity authority, instead of silently rendering a generic fallback late pass
+  - this removes one concrete parity error where documented makeup-opacity lanes could previously survive as ordinary late overlays even after the new parity-opacity rules said they should not
+- [x] Extend `6.3` from stack/authority rules into late-pass material modes:
+  - source-backed late families now choose explicit late material modes instead of all collapsing into one emissive-only material path
+  - ordinary detail, skintone, and makeup late lanes now render through diffuse-overlay late materials, while worn/high-layer emissive lanes stay on emissive-only late materials
+  - the grayscale late lane now uses its own diffuse-grayscale material mode, so `CompositionMethod 3` is no longer only a policy label on top of the same generic late-pass renderer
+- [x] Extend `6.3` from late-pass material modes into an explicit inter-family stack contract:
+  - late families now carry stack contracts with family-specific tint and alpha-scale multipliers instead of sharing one neutral diffuse/emissive response inside each material mode
+  - skintone, makeup-primary, makeup-secondary, grayscale, generic detail, and emissive late families now coexist through one shared renderer seam with visibly different stack behavior
+  - the renderer now applies those stack contracts directly when building late-pass materials, so inter-family blend approximation no longer lives only in sort order and policy metadata
+- [x] Extend the new `6.3` stack contract into family-specific no-alpha coexistence behavior:
+  - late-pass materials now use family-specific fallback alpha and emissive attenuation instead of one shared no-alpha response
+  - skintone, makeup-primary, makeup-secondary, grayscale, generic detail, and emissive late families now degrade differently when alpha authority is missing, which prevents them from collapsing into one generic fully-opaque late overlay look
+  - this pushes the browser one step closer to a real compositor coexistence model instead of treating “no alpha map” as the same case for every late family
+- [x] Extend `6.3` into an explicit late-pass transparency contract:
+  - planned render passes no longer mark every late family as transparent by default
+  - emissive late families now stay transparent only when they actually have explicit opacity authority, while diffuse-like late families still keep transparent handling
+  - this moves one more compositor distinction out of `PhongMaterial` internals and into the render-plan contract itself
+- [x] Extend `6.3` into an explicit late-pass underlay-carrier contract:
+  - secondary late passes are now planned only when the scene contains a compatible underlay family instead of being emitted unconditionally
+  - skintone late passes now require `sim-skintone-base`, while ordinary detail and emissive late families require shell/surface/base overlay carrier stages
+  - this prevents isolated late overlays from being planned as if they were self-sufficient compositor layers
+- [x] Tighten the underlay-carrier contract for makeup-driven late lanes:
+  - `CompositionMethod 2/4` late passes now require `sim-skintone-base` specifically instead of sharing the same generic overlay underlay rule as ordinary detail rows
+  - this follows the current strongest local packet, where makeup-oriented composition lanes depend on `TONE` makeup opacity inputs rather than behaving like free-standing generic overlay rows
+- [x] Consolidate late-family runtime relations into one explicit contract layer:
+  - stack order, underlay-carrier requirements, and transparency mode for late families now come from one `ViewportLatePassFamilyContract` instead of three separate helper trees
+  - skintone, generic detail, makeup-primary, grayscale, makeup-secondary, emissive-soft, and emissive-restricted late lanes now carry explicit relation tags in code
+  - this turns the remaining `6.3` work from scattered rule edits into a real runtime-gap matrix seam
+- [x] Extend the late-family runtime matrix into scene-aware relation profiles:
+  - planned late passes now carry scene-aware sibling-anchor/coexistence state instead of relying only on family-local defaults
+  - render-plan transparency for late families now uses that relation profile, so emissive families can degrade differently when no earlier diffuse-like late anchor exists in the scene
+  - final late-pass material response now also uses the same relation profile, so skintone, makeup, grayscale, generic detail, and emissive families get scene-aware alpha/emissive attenuation instead of one family-only fallback
+- [x] Add an explicit pairwise runtime-relation matrix for late families:
+  - `GenericDetail` versus `GrayscaleDetail`, `MakeupPrimary` versus `MakeupSecondary`, and `EmissiveSoft` versus `EmissiveRestricted` now have dedicated pairwise relation entries instead of being implied only by base family order
+  - those pairwise relations now feed effective late-pass stack order and scene-aware alpha/emissive modulation, so the browser no longer relies only on family-local defaults when multiple late families coexist
+  - this turns the remaining `6.3` work from “one family at a time” tweaks into a concrete pairwise parity seam that can absorb additional TS4 runtime rules directly
+- [x] Extend the pairwise runtime-relation matrix with skintone and `2 -> 3 -> 4` compositor rules:
+  - `MakeupPrimary` and `MakeupSecondary` now carry explicit pairwise relations against `Skintone`, instead of relying only on a generic skintone underlay requirement
+  - `MakeupPrimary`, `GrayscaleDetail`, and `MakeupSecondary` now also carry explicit pairwise relations that preserve the documented `CompositionMethod 2 -> 3 -> 4` lane ordering as a runtime-facing coexistence rule
+  - those relations now affect effective late-pass stack order plus scene-aware alpha/emissive modulation, so the browser no longer treats that `2/3/4` separation as only a base family-order convention
+- [x] Extend the pairwise runtime-relation matrix with `Skintone -> Generic/Grayscale` late-family rules:
+  - `Skintone` now carries an explicit pairwise relation against `GenericDetail`, instead of relying only on the coarse base family-order gap
+  - `GenericDetail` and `GrayscaleDetail` now also carry explicit pairwise relations against `Skintone`, so ordinary post-skintone CAS detail late rows are represented as runtime-facing coexistence rules rather than only as separate family buckets
+  - this pushes the strongest current “skintone branch before ordinary overlay/detail branch” reading deeper into the actual pairwise matrix seam used by the browser
+- [x] Extend the pairwise runtime-relation matrix with diffuse-like versus emissive late-family rules:
+  - `Skintone`, `GenericDetail`, `MakeupPrimary`, `GrayscaleDetail`, and `MakeupSecondary` now all carry explicit pairwise relations against `EmissiveSoft` and `EmissiveRestricted`
+  - `EmissiveSoft` and `EmissiveRestricted` now also carry reciprocal pairwise relations against those diffuse-like late families, instead of relying only on coarse base stack numbers and family-local fallback logic
+  - this pushes the browser’s “detail/makeup/skintone before emissive late lanes” reading into the real pairwise runtime matrix used for effective late-pass stack order and scene-aware response
+- [x] Extend the pairwise runtime-relation matrix with `GenericDetail <-> Makeup*` ordinary CAS late rules:
+  - `GenericDetail` now carries explicit pairwise relations against `MakeupPrimary` and `MakeupSecondary`, instead of leaving that ordering entirely to coarse family/local stack defaults
+  - `MakeupPrimary` and `MakeupSecondary` now also carry reciprocal pairwise relations against `GenericDetail`, so ordinary CAS late rows are represented more completely inside the matrix rather than split between matrix rules and implicit base-family gaps
+  - this closes most of the remaining safe pairwise ordinary-CAS late relations that were still missing after the earlier `2 -> 3 -> 4` and skintone closures
+- [x] Split documented `CompositionMethod 2/3/4` lanes into explicit preview pass variants:
+  - `MakeupPrimaryLate`, `GrayscaleLate`, and `MakeupSecondaryLate` now exist as separate late-pass variants instead of being hidden inside one generic `DetailLate`
+  - viewport secondary-pass planning now emits those explicit variants directly from `CompositionMethod 2/3/4`, so the renderer distinguishes them at pass-type level before it even reaches blend-intent or parity-policy logic
+  - this is the first direct move from “one generic detail-late approximation with smarter policy” toward real compositor-facing preview stages for ordinary CAS overlay/detail families
+- [x] Split ordinary generic detail late lanes into explicit preview pass variants:
+  - `CosmeticDetailLate`, `DefaultDetailLate`, and `OrderedDetailLate` now exist as separate late-pass variants instead of sharing one catch-all `DetailLate`
+  - viewport secondary-pass planning now emits those explicit variants directly from `OverlayPassIntent`, so ordinary CAS late rows are distinguished at pass-type level before blend-intent/policy resolution
+  - this pushes ordinary CAS overlay/detail families further out of the single-variant approximation path and closer to real compositor-facing preview stages
+- [x] Split emissive late lanes into explicit preview pass variants:
+  - `WornEmissiveLate` and `HighLayerEmissiveLate` now exist as separate late-pass variants instead of sharing one generic `EmissiveLate`
+  - viewport secondary-pass planning now emits those explicit variants directly from `OverlayPassIntent.WornLayer` and `OverlayPassIntent.HighLayer`, so worn/high-layer emissive rows are distinguished at pass-type level before late-pass policy resolution
+  - this completes the current explicit late-pass taxonomy for ordinary CAS overlay/detail families and the `32|65536` high-layer family, pushing preview staging closer to real compositor-facing pass structure
+- [x] Add explicit primary-pass material plans for the strongest base-side compositor carriers:
+  - `sim-skintone-base` and `cas-overlay-highlayer-base` now route through `ViewportPrimaryPassMaterialPlan` instead of surviving only as local branches inside the generic primary `PhongMaterial` builder
+  - those base stages now use explicit carrier-stage rules for lit emissive suppression, alpha authority, and base-side shading response before the fallback generic primary path is even considered
+  - this is the first real primary/base-side execution seam parallel to the already explicit late-pass taxonomy, and it moves `4.2` and `4.4` closer to true preview stages instead of one shared material-path approximation
+- [x] Extend the explicit primary-pass carrier seam to ordinary `cas-overlay-base`:
+  - `cas-overlay-base` now routes through the same `ViewportPrimaryPassMaterialPlan` layer as `sim-skintone-base` and `cas-overlay-highlayer-base`, instead of falling back to the generic primary `PhongMaterial` builder
+  - ordinary overlay-base carriers now use explicit carrier-stage alpha authority and base-side ambient/specular response, which keeps the base/detail split more honest on the primary side before late overlay passes are added on top
+  - this materially advances `4.3`, because ordinary overlay-base is no longer the main unplanned carrier-family while skintone/high-layer already had explicit primary staging
+- [x] Promote strongest base carriers into explicit primary-pass planning families:
+  - `sim-skintone-base`, `cas-overlay-base`, and `cas-overlay-highlayer-base` now resolve through a shared `ViewportPrimaryPassContract` with explicit family identity and primary stack order before the renderer reaches material assembly
+  - `ViewportRenderPassPlan` now carries primary-family ordering, so these carrier stages differ already at planning/sort time instead of only diverging later inside `CreateMaterial(...)`
+  - this turns the new primary carrier seam into a compositor-facing planning layer, not just a material-builder refactor, and pushes `4.2/4.3/4.4` closer to true preview stages
+- [x] Split strongest base carriers into explicit primary pass variants:
+  - `SkintoneBasePrimary`, `OverlayBasePrimary`, and `HighLayerBasePrimary` now exist as explicit renderer-facing primary pass variants instead of being folded into one generic `Primary`
+  - viewport render-pass planning now emits those explicit primary variants up front, and `CreateMaterial(...)` resolves primary carrier contracts through the variant itself instead of relying only on stage-local branching
+  - this makes the strongest base carriers match the explicit late-pass taxonomy shape and materially advances the browser toward real preview stages rather than one generic primary material path with smarter contracts
+- [x] Add explicit base-pass execution plans for strongest primary carriers:
+  - `SkintoneBasePrimary`, `OverlayBasePrimary`, and `HighLayerBasePrimary` now resolve through `ViewportPrimaryPassExecutionPlan`, so strongest base carriers differ not only by variant and contract but also by an explicit execution seam before final material assembly
+  - `BuildViewportPrimaryPassMaterialPlan(...)` now consumes `ViewportPrimaryPassExecutionPlan` instead of deciding all primary map application inline, which makes the base side structurally closer to the already explicit late-pass execution layer
+  - this materially advances `4.2/4.3/4.4`, because the strongest base carriers now have explicit pass type, explicit contract, and explicit execution plan instead of only one of those layers
+- [x] Split strongest primary carriers into response/application plans:
+  - strongest base carriers now go through `ViewportPrimaryPassResponsePlan` and `ViewportPrimaryPassApplicationPlan`, not just one `ViewportPrimaryPassExecutionPlan`
+  - `BuildViewportPrimaryPassMaterialPlan(...)` now consumes explicit primary execution, response, and application layers before final `PhongMaterial` assembly, which makes the base side structurally parallel to the overlay late-pass architecture instead of stopping at one generic base-material builder
+  - this materially advances `4.2/4.3/4.4`, because skintone/overlay/highlayer base carriers now have explicit pass type, contract, execution, response, and application seams
+- [x] Add family-specific primary carrier behavior on the base side:
+  - `SkintoneCarrier`, `OverlayCarrier`, and `HighLayerCarrier` now differ in primary alpha scaling and detail-map application, instead of only sharing the same plans with different tags
+  - skintone base now keeps a softer alpha profile and suppresses primary specular-map application, ordinary overlay-base keeps the full detail-map lane, and high-layer base keeps a more attenuated alpha profile
+  - this pushes the strongest base carriers from “structurally explicit” to “behaviorally distinct” and is the first real family-specific base-pass behavior layer parallel to the late-pass family contracts
+- [x] Add contract-level primary response scales for strongest base carriers:
+  - `SkintoneCarrier`, `OverlayCarrier`, and `HighLayerCarrier` now differ in diffuse/ambient/specular response through explicit contract scales and shininess multipliers, instead of relying only on a few local `if` branches
+  - skintone base now carries a softer specular and slightly warmer ambient response, ordinary overlay-base stays near-neutral, and high-layer base keeps a flatter/more attenuated specular response
+  - this pushes the strongest base carriers from merely explicit primary staging into explicit family-level primary response behavior, and effectively closes the main base-side staging seam for `4.2` and `4.3`
+- [x] Promote helper/projective families into explicit primary-pass contracts:
+  - `helper-projective`, `helper-layered`, and `helper-utility` now resolve through explicit `Helper*Primary` pass variants plus dedicated `ViewportPrimaryPassFamily` / `ViewportPrimaryPassIntent` entries instead of falling through one generic primary path
+  - helper primary families now have their own stack order, execution plan, and family-specific base response/application behavior, including suppressed alpha/normal/specular routing and non-shadowing inspection-style rendering
+  - this materially advances `4.5`, because helper/projective handling now reaches compositor-facing primary planning and behavior layers instead of stopping at slot-inspection-only heuristics
+- [x] Move primary transparency onto the explicit primary-pass contract:
+  - primary render-pass planning now resolves transparency through `ViewportPrimaryPassContract` instead of always deferring to the generic `IsTransparentMaterial(...)` fallback
+  - helper primary families are now forced opaque as inspection carriers, while `skintone-base`, `overlay-base`, and `highlayer-base` only become transparent when their own explicit opacity-authority rules allow it
+  - this is a correctness-first boundary: material families now keep their own transparency semantics even if that means the old preview UX stops getting permissive alpha fallback for convenience
+- [x] Move primary alpha-map assembly onto the explicit primary-pass contract:
+  - `CreateMaterial(...)` now routes primary `renderAlphaMap` and primary alpha-texture creation through the same `ViewportPrimaryPassContract` rules instead of letting base carriers silently keep the old generic alpha fallback in material assembly
+  - `skintone-base`, `overlay-base`, `highlayer-base`, and helper primary families now use one shared primary transparency truth layer for both pass planning and actual `PhongMaterial` alpha application
+  - this removes a real correctness bug where primary carrier contracts could already say “explicit opacity only” while the assembled material still inherited alpha from the generic viewport path
+- [x] Move primary-pass inclusion onto the explicit primary-family contract:
+  - viewport render-pass planning no longer drops whole materials through the old `ShouldRenderViewportStage(...)` stage-switch before pass expansion; instead, primary passes are included per-pass through the resolved `ViewportPrimaryPassContract`
+  - helper primary families are now excluded from normal `Lit/Flat` planning because their own primary-family contract says they are helper carriers, not because the old Preview stage gate happened to hard-code helper stage names
+  - this pushes `4.5` further away from legacy UX-driven gating and toward true pass-based planning, which is the right correctness boundary before any future Preview UX rewrite
+- [x] Move primary render-stage ordering onto the explicit primary-family contract:
+  - primary `ViewportRenderPassPlan.RenderStage` no longer depends on `PreviewCompositorStage` alone when a resolved primary-family contract already exists; `SkintoneBase`, `OverlayBase`, `HighLayerOverlayBase`, and helper primary families now carry their own explicit render-stage order
+  - this means primary pass ordering is now contract-backed at the same planning layer as primary inclusion, transparency, and stack order, instead of still leaning on the legacy stage-string switch for final ordering
+  - this is another correctness-first step toward real pass planning: the primary pipeline is now materially less coupled to old Preview stage labels even before the UX is rewritten around it
+- [x] Move skintone-base texture composite selection onto the explicit primary-family contract:
+  - the primary texture-composite path no longer checks raw `PreviewCompositorStage == sim-skintone-base` to decide whether to build the tinted skintone base composite; it now keys off resolved `ViewportPrimaryPassContract.Family`
+  - this means primary-side texture composition is now more consistent with the already contract-driven primary inclusion, transparency, stack order, and render-stage rules
+  - this effectively closes the main structural seam for `4.2`: skintone base behavior on the primary side is now routed through the explicit primary-family contract instead of lingering as a stage-string-only special case
+- [x] Move helper inspection behavior inside `CreateMaterial(...)` onto the explicit primary-family contract:
+  - helper inspection texture selection, helper inspection suppression, and projective zero-UV behavior on the primary path no longer derive their identity from raw `IsHelper*Stage(...)` checks alone; they now key off resolved helper primary families from `ViewportPrimaryPassContract`
+  - this means helper primary material assembly is now more aligned with the already contract-driven helper pass inclusion, transparency, stack order, render stage, and execution behavior
+  - this pushes `4.5` further away from legacy stage-bool branching inside the primary material path and makes the remaining helper/projective gap much narrower and more isolated
+- [x] Centralize primary-family resolution and move helper sampling onto the explicit primary-family contract:
+  - strongest primary families now resolve through one `ResolveViewportPrimaryPassVariant(...)` seam before `BuildViewportPrimaryPassContract(...)`, instead of repeating raw `passVariant || Is*Stage(...)` checks inside the contract builder itself
+  - helper sampling in the core primary material path now accepts the resolved `ViewportPrimaryPassContract` and keys its projective/layered/utility behavior off explicit helper families rather than re-deriving that identity only from scattered `IsHelper*Stage(...)` branches
+  - this narrows the remaining `4.5` gap further: the primary/base path is now more consistently contract-driven across variant resolution, contract assembly, helper inspection behavior, and helper UV/sampling behavior
+- [x] Move high-layer base transparency through the resolved primary-family contract across both primary and shared alpha helpers:
+  - high-layer base transparency on the primary path no longer falls back to `IsCasOverlayHighLayerBaseStage(...)`; `CreateMaterial(...)`, `ShouldRenderViewportPrimaryTransparency(...)`, and the shared `CreateViewportAlphaTextureModel(...)` helper now all route through the resolved `ViewportPrimaryPassContract`
+  - this removes another split-brain seam where high-layer base transparency could already be contract-driven in one primary path but still be stage-driven in shared alpha assembly helpers
+  - this pushes `4.4` further away from raw stage-string/base-stage booleans and keeps high-layer base behavior more consistently aligned with the new contract-driven primary pipeline
+- [x] Move helper UV routing in the core preview path onto the explicit primary-family contract:
+  - `SelectTextureCoordinates(...)`, `SelectViewportUvTexture(...)`, and `SelectViewportSampling(...)` now resolve helper projective/layered/utility behavior through `ViewportPrimaryPassContract` instead of re-deriving helper identity only from raw `IsHelper*Stage(...)` checks
+  - this means the core preview UV/material path now treats helper families the same way the primary material path already does: through resolved family identity first, with stage-string helpers remaining mostly isolated to UV-panel cosmetics and restart-safe legacy fallbacks
+  - this narrows the remaining `4.5` gap again, because helper/projective handling is now more consistently contract-driven across inclusion, transparency, material assembly, sampling, UV texture selection, and UV transform suppression
+- [x] Move helper UV preview styling and wireframe coloring onto the explicit primary-family contract:
+  - `GetUvPreviewPanelStyle(...)`, `GetUvPreviewWireframeColor(...)`, and the legacy `IsHelperInspectionStage(...)` helper now resolve helper identity through `ViewportPrimaryPassContract` / `ViewportPrimaryPassFamily` instead of reading helper stage names directly
+  - this isolates raw helper stage-string checks even further: helper-family recognition for UV preview cosmetics now uses the same contract seam as pass planning, transparency, material assembly, and UV routing
+  - this pushes `4.5` close to closure for the current browser scope, with remaining helper-stage raw checks now mostly concentrated inside the primary-family resolver itself and a few intentionally legacy fallbacks
+- [x] Isolate strongest primary-family stage-string logic behind one resolver:
+  - the old raw helpers for `sim-skintone-base`, `cas-overlay-base`, `cas-overlay-highlayer-base`, and helper `projective/layered/utility` no longer exist as six separate mini-predicates; strongest primary-family fallback now routes through `ResolveViewportPrimaryPassFamilyFromStage(...)`
+  - `ResolveViewportPrimaryPassVariant(...)`, helper inspection detection, and overlay-pass stage checks now all consume that shared family resolver instead of repeating separate stage-name tests
+  - this is the cleanest remaining `4.5` cleanup boundary for the current browser scope: raw stage-string logic for strongest primary families is now largely isolated to one resolver/fallback seam instead of being scattered across the material and preview code
+- [x] Make `SortLayer` bucketing explicit and separate ordinary worn `CompositionMethod 32` from ordered rows:
+  - overlay pass classification now resolves through an explicit `OverlaySortLayerBucket` helper instead of re-deriving `SortLayer` thresholds ad hoc in multiple places
+  - ordinary worn `CompositionMethod 32` rows now receive their own later pass bucket instead of sharing the same approximate bucket value as `OrderedHigh` rows, which makes `5.2` and `5.3` less entangled
+  - generic detail late-family stack order no longer hangs on the old `100 + CompositionMethod` shortcut; it now resolves through explicit `blend-intent + SortLayerBucket` rules so ordered detail rows carry a clearer compositor-facing stack contract
+- [x] Centralize `CompositionMethod 2/3/4` into one shared composition-rule layer:
+  - `MakeupPrimary`, `Grayscale`, and `MakeupSecondary` no longer get decoded through three separate local switch trees; `BuildViewportCompositionRuleProfile(...)` now resolves their pass variant, late blend-intent, parity opacity authority, parity blend family, and composition order in one place
+  - `GetViewportSecondaryPassVariants(...)`, `BuildViewportParityRuleProfile(...)`, and `GetViewportLatePassBlendIntent(...)` now all consume that shared composition-rule profile instead of repeating parallel `2/3/4` mappings
+  - this is a real `5.1` boundary rather than a cosmetic refactor: explicit `CompositionMethod 2/3/4` stages, parity behavior, and late-pass intent are now less likely to drift apart because they share one rule source
+- [x] Extend the shared `CompositionMethod 2/3/4` rule layer into late-family contract and parity behavior:
+  - `BuildViewportLatePassFamilyContract(...)` and `BuildViewportParityBehaviorMatrixEntry(...)` now consume `ViewportCompositionRuleProfile(...)` for makeup-primary, grayscale, and makeup-secondary lanes instead of keeping separate local stacks/material-mode/opacity-contract numbers for those same three methods
+  - this means `CompositionMethod 2/3/4` now share one rule source across pass variant, late blend-intent, parity profile, late-family stack contract, and parity behavior matrix
+  - this materially reduces drift risk in `5.1`: those explicit compositor lanes are now driven by one richer rule profile instead of multiple parallel switch blocks with duplicated constants
+- [x] Extend the shared `CompositionMethod 2/3/4` rule layer into pass phase and initial alpha gating:
+  - `GetViewportParityPassPhase(...)` now resolves `2/3/4` pass phases through `ViewportCompositionRuleProfile(...)` instead of keeping dedicated local parity-blend-family branches for those methods
+  - `BuildViewportLatePassExecutionPolicy(...)` now resolves initial alpha-render gating for makeup-primary, grayscale, and makeup-secondary through the same shared profile instead of a separate local `blendIntent` switch
+  - this narrows the remaining `5.1` gap further: the explicit `2/3/4` lanes now drive pass variant, blend intent, parity profile, family contract, behavior matrix, pass phase, and initial alpha gating from one shared rule source
+- [x] Extend the shared `CompositionMethod 2/3/4` rule layer into coarse overlay policy:
+  - `BuildOverlayCompositorPolicy(...)` no longer keeps separate local `2/3/4` special-cases for grayscale blend-family selection, makeup opacity scale, and makeup emissive response; those now resolve from `ViewportCompositionRuleProfile(...)`
+  - this means explicit `2/3/4` lanes now influence not only late-pass staging and parity behavior but also the earlier coarse overlay material-policy layer through the same shared rule source
+  - this is another real `5.1` boundary: `CompositionMethod 2/3/4` are now materially less fragmented across the browser compositor pipeline because overlay policy, pass selection, parity profile, family contract, behavior matrix, pass phase, and initial alpha gating all consume the same richer profile
+- [x] Align the shared `CompositionMethod 2/3/4` rule layer with the cosmetic-lane classifier:
+  - `BuildViewportCompositionRuleProfile(...)` now only activates for the same cosmetic lane contract that `ClassifyOverlayCompositorLane(...)` uses, instead of firing for every `cas-overlay-detail` row with `CompositionMethod 2/3/4`
+  - this removes a real drift seam where explicit makeup/grayscale stages could have been emitted more broadly than the overlay lane classifier considered valid for cosmetic composition rows
+  - this makes `5.1` more trustworthy: the shared `2/3/4` rule source is now not only richer but also better aligned with the lane-classification boundary that feeds the rest of the compositor policy stack
+- [x] Extend the shared `CompositionMethod 2/3/4` rule layer into early overlay alpha-source and transparency routing:
+  - `BuildOverlayExecutionPlan(...)`, `CreateViewportAlphaTextureModel(...)`, and `ShouldRenderOverlayPolicyTransparency(...)` now consume `ViewportCompositionRuleProfile(...)` when deciding whether a `2/3/4` overlay row may render transparency at all and whether it may borrow alpha from the viewport color texture
+  - this removes another split-brain seam where late-pass execution already respected `RequiresDedicatedOpacityInput` / `AllowsImplicitAlphaFallback`, but the earlier overlay execution path could still quietly fall back to generic color-alpha behavior
+  - this is a real `5.1` correctness boundary: explicit makeup/grayscale lanes now use the same shared rule source for early overlay alpha-source selection, transparency gating, pass selection, parity profile, family contract, behavior matrix, pass phase, and coarse overlay policy
+- [x] Centralize `SortLayer` bucket semantics behind one shared bucket profile:
+  - `BuildOverlaySortLayerBucketProfile(...)` now owns the default lane, pass-bucket, ordinary-worn pass-bucket, and generic detail stack-order semantics for `Default`, `OrderedLow`, `OrderedHigh`, and `HighLayer` rows instead of leaving those numbers split across multiple local switch blocks
+  - `ClassifyOverlayCompositorLane(...)`, `BuildOverlayCompositorPolicy(...)`, and `GetViewportGenericDetailStackOrder(...)` now all consume that same bucket profile, so ordered-row routing and stack ordering no longer drift independently
+  - this is a real `5.3` boundary: `SortLayer` handling is now less fragmented across overlay lane classification, pass bucketing, and generic detail stack order
+- [x] Make generic overlay parity ordering bucket-aware instead of raw-`CompositionMethod`-aware:
+  - `BuildViewportParityRuleProfile(...)` now resolves generic overlay `CompositionOrder` through `GetViewportGenericOverlayParityOrder(...)`, so ordinary default/ordered/emissive rows no longer reuse raw `CompositionMethod` as their late-pass parity ordering key
+  - `BuildViewportParityBehaviorMatrixEntry(...)` now reuses that same bucket-aware parity order for generic overlay stack-order fallback instead of reconstructing a separate `100 + CompositionOrder` heuristic
+  - this is another real `5.3/6.3` boundary: generic overlay ordering is now better aligned across pass-plan tie-breaking, parity ordering, and generic overlay behavior fallback
+- [x] Restrict raw `SortLayer` / `CompositionMethod` final sort tie-breakers to the overlay rows that still need them:
+  - `BuildViewportRenderPassPlans(...)` now routes its final `SortLayer` and `CompositionMethod` fields through `GetViewportMaterialSortLayerTieBreaker(...)` and `GetViewportMaterialCompositionTieBreaker(...)` instead of always carrying the raw material values into the last sort stages
+  - ordinary cosmetic/default late overlay rows no longer quietly inherit raw `SortLayer` / `CompositionMethod` as universal final ordering keys once bucket-aware parity and stack-order decisions have already been made; raw `SortLayer` is now kept mainly for ordered/worn/high-layer rows where it still acts as an intra-bucket tie-break
+  - this is another real `5.3/6.3` boundary: final pass-plan ordering is now less dependent on raw material numerics and more aligned with the resolved overlay lane/bucket contract
+- [x] Centralize `CompositionMethod 32` worn/high-layer lane semantics behind one shared worn-lane profile:
+  - `BuildOverlayWornLaneProfile(...)` now owns the explicit worn/high-layer `32` lane mapping for pass intent, pass variant, late blend intent, blend family, pass bucket, parity order, emissive/specular response, and alpha/emissive fallback rules instead of leaving those decisions split across several late/overlay switch blocks
+  - `GetViewportSecondaryPassVariants(...)`, `BuildOverlayCompositorPolicy(...)`, `GetViewportLatePassBlendIntent(...)`, and `GetViewportGenericOverlayParityOrder(...)` now all consume that same worn-lane profile, so ordinary worn and high-layer worn rows no longer re-derive their behavior independently at each stage
+  - this is a real `5.2` boundary: the dominant `CompositionMethod 32` worn-slot lane is now materially less approximate and less fragmented across variant selection, coarse overlay policy, late-pass intent, and parity ordering
+- [x] Extend the shared worn-lane profile into late-family contract and parity behavior:
+  - `BuildViewportLatePassFamilyContract(...)` and `BuildViewportParityBehaviorMatrixEntry(...)` now also consume `BuildOverlayWornLaneProfile(...)`, so ordinary worn and high-layer worn rows no longer fall back to separate local `EmissiveSoft/Restricted` family/stack/material heuristics after the earlier overlay-policy stage has already resolved them
+  - this means the dominant `CompositionMethod 32` lane now carries one shared source for pass variant, pass intent, late blend intent, family identity, stack order, material mode, alpha scale, emissive response, and alpha-fallback rules
+  - this is another real `5.2` boundary: worn/high-layer `32` behavior is now less fragmented not only in selection/policy but also in late-family contract and parity behavior assembly
+- [x] Extend the shared worn-lane profile into scene-level coexistence fallback:
+  - `BuildViewportLatePassSceneRelationProfile(...)` now also consumes `BuildOverlayWornLaneProfile(...)` for the no-diffuse-sibling fallback of `EmissiveSoft` and `EmissiveRestricted`, instead of keeping separate local transparency/alpha/emissive attenuation numbers for those two worn/high-layer lanes
+  - this pushes the dominant `CompositionMethod 32` lane one step deeper into a single rule source: scene-level coexistence now reuses the same worn/high-layer contract that already drives pass variant, coarse policy, late intent, family contract, and parity behavior
+  - this is another real `5.2/6.2` boundary: worn/high-layer `32` coexistence fallback is now less fragmented and less dependent on standalone local emissive-lane heuristics
+- [x] Extend the shared worn-lane profile into late-pass phase selection:
+  - `BuildOverlayWornLaneProfile(...)` now carries explicit `PassPhase` for ordinary worn and high-layer worn `32` lanes, and `GetViewportParityPassPhase(...)` now consumes that shared phase instead of relying only on the generic local `EmissiveSoft/Restricted => 3/4` switch
+  - this removes one more residual split between the shared worn/high-layer contract and the late-pass phase layer, so those lanes now reuse the same rule source for phase as well as variant, policy, family contract, parity behavior, and scene-level coexistence fallback
+  - this is another narrow but real `5.2/6.2` boundary: the dominant `CompositionMethod 32` lane is now less fragmented even in late-pass phase selection
+- [x] Isolate emissive worn/high-layer coexistence rules behind a dedicated late-family helper:
+  - emissive-family base stack order and all `EmissiveSoft` / `EmissiveRestricted` pairwise coexistence rules now flow through `BuildViewportLateEmissiveFamilyProfile(...)` and `BuildViewportEmissiveLatePairwiseRelation(...)` instead of remaining embedded directly inside the large generic late-family pairwise switch
+  - this keeps the worn/high-layer `32` coexistence layer easier to evolve independently from generic detail/makeup relations and makes the remaining `6.2` cleanup more targeted
+  - this is another narrow but real `5.2/6.2` boundary: emissive worn/high-layer coexistence is now less scattered across the late-family relation layer
+- [x] Extend the shared emissive fallback profile into pass-variant, parity-order, family-contract, and behavior-matrix fallback:
+  - `BuildViewportLateEmissiveFamilyProfile(...)` now also owns the fallback `PassVariant`, `PassPhase`, `MaterialMode`, `TransparencyMode`, underlay contract, and relation tag for `EmissiveSoft` / `EmissiveRestricted`, instead of leaving those `300/400` emissive semantics split across `GetViewportSecondaryPassVariants(...)`, `GetViewportGenericOverlayParityOrder(...)`, `BuildViewportLatePassFamilyContract(...)`, and `BuildViewportParityBehaviorMatrixEntry(...)`
+  - this removes another residual split-brain seam between the dedicated worn/high-layer profile and the generic emissive fallback path: when the material has already resolved to an emissive late family, the browser now reuses one shared emissive fallback source for pass selection, fallback parity order, late-family contract, and fallback parity behavior
+  - this is another narrow but real `5.2/6.2` boundary: emissive worn/high-layer fallback behavior is now less fragmented even when execution falls back from the full worn-lane profile to the generic late-emissive family layer
+- [x] Extend the shared emissive fallback profile into actual fallback execution behavior:
+  - `BuildViewportLateEmissiveFamilyProfile(...)` now also owns fallback `AlphaScale`, emissive-color attenuation, and the `renderAlphaMap` gating contract (`RequiresExplicitOpacityForRenderAlpha`, `DisallowViewportColorAlphaSource`) for `EmissiveSoft` / `EmissiveRestricted`, instead of leaving those execution semantics in local `BuildViewportParityBehaviorMatrixEntry(...)` and `BuildViewportLatePassExecutionPolicy(...)` switch branches
+  - this means the generic emissive fallback path now reuses one source not only for routing/order/family identity, but also for actual fallback alpha/emissive behavior and alpha-source acceptance rules
+  - this is another narrow but real `5.2/6.2` boundary: emissive worn/high-layer fallback behavior is now less fragmented at execution time, not just at selection and parity-contract time
+- [x] Extend the shared worn/emissive lane contract into overlay execution/material response:
+  - `BuildOverlayWornLaneProfile(...)` now carries `RequiresDedicatedEmissiveMap`, and `BuildOverlayCompositorPolicy(...)` forwards that into `OverlayCompositorPolicy(...)` instead of leaving high-layer emissive-map behavior as a raw `PassIntent.HighLayer` special-case inside `BuildOverlayMaterialResponsePlan(...)`
+  - `TryCreateOverlayExecutionTextureModel(...)` and `BuildOverlayMaterialApplicationPlan(...)` now also use one shared `IsOverlayExecutionPassIntent(...)` helper instead of repeating the same five-pass raw `PassIntent` allow-list in multiple execution/material-assembly switches
+  - this is another narrow but real `5.2/6.2` boundary: worn/high-layer execution semantics are now slightly less fragmented because overlay execution acceptance and dedicated-emissive-map behavior both flow through the shared worn/policy contract instead of local pass-intent branches
+- [x] Extend the shared emissive fallback profile into scene-level missing-diffuse coexistence fallback:
+  - `BuildViewportLateEmissiveFamilyProfile(...)` now also owns the generic `MissingDiffuseTransparencyMode`, `MissingDiffuseAlphaScaleMultiplier`, and `MissingDiffuseEmissiveScaleMultiplier` contract for `EmissiveSoft` / `EmissiveRestricted`, and `BuildViewportLatePassSceneRelationProfile(...)` now resolves those values through `TryApplyViewportLateEmissiveMissingDiffuseFallback(...)` instead of requiring the full worn-lane profile to be present as the only source of truth
+  - this removes another residual split between the dedicated worn/high-layer profile and the generic late-emissive family layer: scene-level coexistence fallback now has one shared path for emissive missing-diffuse behavior, with the worn profile overriding only when the more specific lane contract is available
+  - this is another narrow but real `5.2/6.2` boundary: emissive worn/high-layer coexistence fallback is now less fragmented even in the scene-level missing-diffuse path
+- [x] Remove dead emissive pairwise duplicates from the generic late-family relation switch:
+  - after `BuildViewportEmissiveLatePairwiseRelation(...)` became the dedicated source for `EmissiveSoft` / `EmissiveRestricted` coexistence rules, the old duplicate emissive cases inside the generic `BuildViewportLatePassPairwiseRelation(...)` switch were left behind as dead fallback logic
+  - the generic late-family switch now keeps only non-emissive relations, while emissive worn/high-layer pairwise ordering lives in one dedicated helper
+  - this is a narrow but honest `5.2/6.2` cleanup boundary: emissive coexistence is now less split not only behaviorally, but also structurally at the relation-source level
+- [x] Remove dead local emissive defaults from parity behavior assembly:
+  - `BuildViewportParityBehaviorMatrixEntry(...)` no longer keeps standalone `EmissiveSoft` / `EmissiveRestricted` entries inside the local `defaultAlphaScale` and `resolvedEmissiveColor` switches once `BuildViewportLateEmissiveFamilyProfile(...)` has already been resolved
+  - fallback alpha scale and emissive-color attenuation for late emissive families now flow through the same shared emissive profile instead of surviving as parallel local defaults beside it
+  - this is another narrow but honest `5.2/6.2` cleanup boundary: shared emissive fallback semantics are now less fragmented even inside parity-behavior assembly
+- [x] Reuse the shared emissive family profile inside the worn-lane profile builder:
+  - `BuildOverlayWornLaneProfile(...)` no longer redefines `PassVariant`, `BlendIntent`, `ParityOrder`, `PassPhase`, `MaterialMode`, `TransparencyMode`, `MissingDiffuse*`, and `RelationTag` for ordinary/high-layer `CompositionMethod 32` lanes from scratch once `BuildViewportLateEmissiveFamilyProfile(...)` is already known
+  - the worn-lane profile still owns lane-specific pieces such as `PassIntent`, `BlendFamily`, pass-bucket selection, emissive/specular surface response, and explicit-vs-fallback emissive usage, but the shared emissive family layer now owns the common family semantics underneath
+  - this is another narrow but real `5.2/6.2` boundary: the dominant `32` worn/high-layer lane is now less fragmented even inside its own profile builder
+- [x] Remove raw emissive pass-variant checks from final ordering and generic parity grouping:
+  - `GetViewportMaterialCompositionTieBreaker(...)`, `GetViewportMaterialSortLayerTieBreaker(...)`, and the generic overlay branch in `BuildViewportParityRuleProfile(...)` now recognize late emissive rows through `IsViewportLateEmissivePassVariant(...)` instead of hard-coding `WornEmissiveLate` / `HighLayerEmissiveLate`
+  - this is a small but useful cleanup seam: final ordering and parity grouping now key off the shared emissive-pass layer rather than repeating explicit late emissive variant lists
+  - this is another narrow `5.2/5.3/6.3` boundary: pass-planning tie-breaks are now slightly less coupled to raw variant enumeration for emissive worn/high-layer rows
+- [x] Centralize generic overlay/emissive late ordering behind one shared late-ordering profile:
+  - `BuildViewportOverlayLateOrderingProfile(...)` now owns parity order plus final `CompositionMethod` and `SortLayer` tie-break semantics for generic overlay late rows and emissive worn/high-layer late rows, instead of leaving `GetViewportGenericOverlayParityOrder(...)`, `GetViewportMaterialCompositionTieBreaker(...)`, and `GetViewportMaterialSortLayerTieBreaker(...)` as three partially overlapping helpers
+  - `BuildViewportParityRuleProfile(...)` and the generic fallback branch in `BuildViewportParityBehaviorMatrixEntry(...)` now also consume that same ordering profile, so generic overlay parity grouping, generic fallback stack order, and final render-pass tie-breaks no longer drift independently
+  - this is a real `5.3/6.3` boundary: final ordering and generic overlay parity fallback are now more consistently driven by one resolved late-ordering contract instead of a scattered mix of raw numerics and helper-local constants
+- [x] Move high-layer overlay alpha gating onto the shared worn/policy contract:
+  - `BuildOverlayWornLaneProfile(...)` now carries `RequiresExplicitOpacityForTransparency` and `DisallowViewportColorAlphaFallback`, and `BuildOverlayCompositorPolicy(...)` forwards those into `OverlayCompositorPolicy(...)` instead of leaving high-layer transparency acceptance as a local `RestrictedHighLayer` branch inside `ShouldRenderOverlayPolicyTransparency(...)`
+  - `ResolveOverlayAlphaSourceTexture(...)` now also consumes that same policy contract, so early overlay alpha-source selection and transparency gating follow one path for worn/high-layer rows instead of splitting into separate render-alpha and alpha-source heuristics
+  - this is another real `5.2/6.2` boundary: high-layer/worn early alpha behavior is now less fragmented because explicit-opacity requirements and viewport-color alpha suppression are driven from the shared lane/policy contract rather than a late local blend-family special-case
+- [x] Centralize ordinary detail-late defaults behind one shared generic-detail profile:
+  - `BuildViewportGenericDetailLateProfile(...)` now owns stack order, pass phase, alpha scale, emissive response, and render-alpha gating constraints for `DetailMasked`, `DetailSoft`, `DetailDefault`, and `OrderedSoft` instead of leaving those values split across `GetViewportGenericDetailStackOrder(...)`, `GetViewportLatePassDefaultPhase(...)`, `BuildViewportParityBehaviorMatrixEntry(...)`, `GetOverlayDetailLatePassEmissiveColor(...)`, and `BuildViewportLatePassExecutionPolicy(...)`
+  - this means the ordinary CAS overlay/detail branch now reuses one source for generic detail stack/default behavior in both late-pass assembly and parity/execution fallback paths, rather than reconstructing the same four-lane semantics in several local switch blocks
+  - this is a real `5.1/5.3/6.2` boundary: ordinary detail-late rows are now less fragmented not only in ordering, but also in alpha/emissive/renderAlpha defaults across the browser compositor path
+- [x] Centralize ordinary detail blend-intent resolution behind shared helpers:
+  - `GetViewportLatePassBlendIntent(...)` no longer keeps a standalone local tuple-switch for ordinary `CosmeticDetailLate` / `DefaultDetailLate` / `OrderedDetailLate`; that mapping now flows through `ResolveViewportOrdinaryDetailBlendIntent(...)`
+  - `ShouldRenderOverlayDetailLatePass(...)` and `GetOverlayDetailLatePassEmissiveColor(...)` now also reuse that same ordinary-detail intent layer instead of repeating local `PassIntent` checks and separate detail-late emissive defaults
+  - this is another narrow but real `5.1/6.2` boundary: ordinary detail rows are now less split between late-pass blend-intent selection and detail-late material helper behavior
+- [x] Replace raw final render-order fields with an explicit final-order profile:
+  - `ViewportRenderPassPlan` no longer carries separate bare `SortLayer` and `CompositionMethod` fields just to feed the final `.ThenBy(...)` chain; instead it now carries `ViewportRenderPassFinalOrderProfile`, built through `BuildViewportRenderPassFinalOrderProfile(...)`
+  - this keeps the final render-pass sort aligned with the existing ordering helpers while making the last ordering layer explicit and easier to evolve beyond raw numerics
+  - this is another honest `5.3/6.3` boundary: final ordering is now slightly less “plan + two leftover material numbers” and slightly more explicit compositor contract
+- [x] Make the final-order profile the only source of final material tie-breaks:
+  - `BuildViewportRenderPassFinalOrderProfile(...)` now resolves overlay late ordering directly from `BuildViewportOverlayLateOrderingProfile(...)` and otherwise falls back to raw material numerics itself; it no longer wraps separate `GetViewportMaterialSortLayerTieBreaker(...)` / `GetViewportMaterialCompositionTieBreaker(...)` helpers
+  - this removes one more “profile on top of wrappers on top of raw numerics” layer from final ordering and leaves the final material-order contract in one place
+  - this is another honest `5.3/6.3` cleanup boundary: the last render-order layer is now more explicit and less mechanically layered
+- [x] Extract late-pass render-stage resolution into its own seam:
+  - `GetViewportMaterialRenderStage(...)` now resolves late overlay/skintone stages through `ResolveViewportLatePassRenderStage(...)` before falling back to raw `PreviewCompositorStage`, so late-pass stage routing is no longer mixed directly into the general material-stage fallback path
+  - behavior is intentionally preserved for now, but this creates a proper seam for the next pass over overlay/high-layer stage ordering instead of forcing those changes into the broad generic render-stage helper
+  - this is a narrow but useful `4.3/4.4/6.3` preparation boundary: late-pass stage resolution is now more explicit and easier to evolve independently from primary/base stage routing
+- [x] Make late-pass render-stage routing family-aware for overlay/high-layer rows:
+  - `ResolveViewportLatePassRenderStage(...)` now resolves through `BuildViewportLatePassStageProfile(...)` instead of bouncing directly from any recognized late pass back to raw `PreviewCompositorStage`
+  - `BuildViewportLatePassStageProfile(...)` gives `SkintoneLate`, ordinary overlay late families, and `EmissiveRestricted` / high-layer late families explicit stage routing (`sim-skintone-overlay`, `cas-overlay-detail`, `cas-overlay-highlayer-detail`) from late family / pass semantics, with raw stage fallback only as the last resort
+  - this is a real `4.4/6.3` step: high-layer late rows are now less dependent on raw stage strings for stage ordering once the browser has already resolved them into explicit late families
+- [x] Centralize primary/base alpha authority and base/high-layer surface response behind explicit primary-family contracts:
+  - primary/base `renderAlphaMap`, alpha-source selection, and primary alpha texture assembly now flow through `BuildViewportPrimaryAlphaProfile(...)` and `ResolveViewportPrimaryAlphaSourceTexture(...)` instead of splitting between `ShouldRenderViewportPrimaryTransparency(...)`, `CreateViewportPrimarySourceAlphaTextureModel(...)`, raw `opacity ?? viewportColor alpha` fallback, and the standalone `ShouldRenderHighLayerBaseTransparency(...)` helper
+  - `ViewportPrimaryPassContract(...)` now also carries `DisallowViewportColorAlphaFallback`, so explicit-opacity primary families (`SkintoneBase`, `OverlayBase`, `HighLayerOverlayBase`) can suppress generic viewport-color alpha fallback from one contract layer rather than reintroducing that rule later in alpha assembly
+  - lit primary/base ambient/specular response for `SkintoneBase`, `OverlayBase`, `HighLayerOverlayBase`, and helper families now flows through `BuildViewportPrimarySurfaceResponseProfile(...)` instead of staying distributed across local `isSkintoneBase/isOverlayBase/isHighLayerBase/helper` branches inside `BuildViewportPrimaryPassResponsePlan(...)`
+  - this is a real `4.3/4.4/6.1` boundary: base/high-layer primary behavior is now less fragmented because primary-family authority covers alpha acceptance, alpha-source resolution, and base-surface response together instead of leaving those three seams partially disconnected
+- [x] Centralize strongest primary-family identity and stage-local texture composite rules behind shared primary-family profiles:
+  - `BuildViewportPrimaryFamilyProfile(...)` and `BuildViewportPrimaryFamilyProfileFromStage(...)` now own the strongest primary-family mapping for `SkintoneBase`, `OverlayBase`, `HighLayerOverlayBase`, and helper families, so `stage -> family`, `family -> pass variant`, and `pass variant -> contract` no longer duplicate the same strongest-primary identity across separate switch layers
+  - `BuildViewportPrimaryPassContract(...)` now reuses that shared primary-family profile instead of redefining the same stack/render/intent/opacity/material-response constants a second time
+  - `CreateViewportTextureModel(...)` now resolves stage-local skintone/swatch composite behavior through `BuildViewportPrimaryTextureCompositeProfile(...)` and `ViewportPrimaryTextureCompositeProfile(...)` instead of mixing one explicit primary-family composite branch with a second raw `ApproximateCas` swatch branch
+  - this is another real `4.3/6.1` boundary: strongest primary families are now less fragmented not only in alpha/response assembly, but also in identity resolution and stage-local texture composite behavior
+- [x] Centralize stage-local primary material behavior behind a shared primary behavior profile:
+  - `CreateMaterial(...)` now resolves `forceOpaqueViewportTexture`, matte-vs-default lit response, and default lit specular/shininess through `BuildViewportPrimaryMaterialBehaviorProfile(...)` instead of keeping those strongest-primary defaults as a local mix of `isHighLayerDetail`, `hasNormal/specular`, and broad fallback booleans
+  - `BuildViewportPrimaryPassApplicationPlan(...)` now also consumes that same `ViewportPrimaryMaterialBehaviorProfile(...)` for `RenderShadowMap` instead of re-deriving helper-family shadow suppression locally
+  - this is another real `4.3/6.1` boundary: strongest primary families now reuse one material-behavior layer for opaque texture forcing, lit ambient/specular defaults, and shadow eligibility instead of reconstructing those decisions across `CreateMaterial(...)` and primary application assembly
+- [x] Centralize strongest primary execution semantics behind a shared primary execution profile:
+  - `BuildViewportPrimaryPassExecutionPlan(...)` no longer keeps six near-duplicate branches for `SkintoneCarrier`, `OverlayCarrier`, `HighLayerCarrier`, and helper carriers; those families now resolve through `BuildViewportPrimaryExecutionProfile(...)`
+  - `ViewportPrimaryExecutionProfile(...)` now owns the primary execution-layer distinctions for alpha-map acceptance, normal/specular execution, auto-tangent eligibility, and execution rule tagging, instead of leaving those semantics embedded directly inside the large primary execution switch
+  - this is another real `4.3/6.1` boundary: strongest primary families are now less fragmented in execution assembly, so the primary path differs more through explicit execution contracts and less through repeated branch-local construction of the same execution plan
+- [x] Centralize stage-local primary/overlay interaction and viewport-color routing behind a shared interaction profile:
+  - `CreateMaterial(...)` no longer reconstructs helper-inspection, `cas-overlay-detail`, `cas-overlay-highlayer-detail`, and `sim-skintone-overlay` interaction semantics as a scattered local boolean cluster; those stage-local decisions now resolve through `BuildViewportStageInteractionProfile(...)` and `ViewportStageInteractionProfile(...)`
+  - stage-local activation of `BuildOverlayExecutionPlan(...)` and `BuildSkintoneOverlayExecutionPlan(...)`, helper inspection gating, `renderEmissiveMap`, `renderAlphaMap`, and generic viewport-color routing now flow through one interaction layer instead of being split across multiple local branches inside `CreateMaterial(...)`
+  - `BuildViewportPrimaryMaterialBehaviorProfile(...)` now also consumes that same shared interaction profile for opaque-texture forcing and high-layer matte-lit behavior instead of taking separate `isCasOverlayDetail/isSimSkintoneOverlay/isCasOverlayHighLayerDetail` booleans
+  - this is another real `4.3/4.4/6.1` boundary: strongest primary/base families are now less fragmented not only in contract/response/execution assembly, but also in the stage-local interaction layer that decides when overlay/skintone execution paths participate in the primary material path at all
+- [x] Reuse one helper-inspection texture selection seam across material preview and UV preview:
+  - helper inspection texture selection for `HelperProjective`, `HelperLayered`, and `HelperUtility` no longer lives as two separate branch clusters in `CreateMaterial(...)` and `SelectViewportUvTexture(...)`; both paths now resolve through `SelectViewportHelperInspectionTexture(...)`
+  - that shared helper preserves selected-slot priority while keeping helper-family-specific inspection routing in one place, instead of letting material-preview and UV-preview helper selection drift independently
+  - this is a smaller but still real `4.5/6.1` cleanup boundary: helper/projective inspection behavior is now less fragmented across preview modes, which makes the eventual helper-stage redesign less likely to reintroduce split helper-selection logic
+- [x] Centralize render-pass stage/bucket/phase selection behind an explicit render-pass ordering profile:
+  - `BuildViewportRenderPassPlans(...)` no longer stitches `RenderStage`, `PassBucket`, and `PassPhase` together from three separate helper calls at the callsite; those ordering inputs now resolve through `BuildViewportRenderPassOrderingProfile(...)` and `ViewportRenderPassOrderingProfile(...)`
+  - this keeps render-stage routing, pass-bucket classification, and pass-phase selection behavior-preserving for now, but makes the remaining `5.3/6.3` ordering work more explicit by turning pass-order assembly itself into a shared contract layer rather than another local tuple of independent helper outputs
+  - this is another real `5.3/6.3` cleanup boundary: the browser's final pass-plan ordering now depends less on scattered stage/bucket/phase reads and more on one render-pass ordering seam that can evolve independently of the rest of `BuildViewportRenderPassPlans(...)`
+- [x] Centralize raw overlay/skintone stage-family detection behind a shared overlay stage profile:
+  - `BuildViewportOverlayStageProfile(...)` and `ViewportOverlayStageProfile(...)` now own the raw `PreviewCompositorStage` mapping for `cas-overlay-detail`, `cas-overlay-highlayer-detail`, `sim-skintone-overlay`, and broader overlay-pass detection, instead of leaving that family detection duplicated across `IsCasOverlayDetailStage(...)`, `IsCasOverlayHighLayerDetailStage(...)`, `IsSimSkintoneOverlayStage(...)`, and their downstream callsites
+  - `GetViewportSecondaryPassVariants(...)`, `BuildViewportLatePassStageProfile(...)`, `BuildViewportStageInteractionProfile(...)`, `BuildSkintoneOverlayExecutionPlan(...)`, `BuildSkintoneLatePassPlan(...)`, and ordinary detail/skintone late blend-intent helpers now reuse that one stage-family seam instead of each rediscovering the same overlay/skintone stage identity from raw stage strings
+  - this is another real `4.3/4.4/6.1/6.3` boundary: overlay/high-layer/skintone stage identity is now less fragmented across the late/base bridge, which makes the eventual preview-stage split less likely to reintroduce duplicated stage-family detection in both primary and late paths
+- [x] Centralize render-pass participation behind an explicit participation profile:
+  - `BuildViewportRenderPassPlans(...)` no longer assembles inclusion, transparency, and wireframe behavior directly from separate `ShouldIncludeViewportPrimaryPass(...)`, `ShouldIncludeViewportSecondaryPass(...)`, `IsViewportPrimaryPassTransparent(...)`, and `IsViewportLatePassTransparent(...)` calls at the callsite; those pass-participation decisions now flow through `BuildViewportRenderPassParticipationProfile(...)` and `ViewportRenderPassParticipationProfile(...)`
+  - this keeps actual participation behavior unchanged for now, but turns pass admission itself into a shared render-plan seam rather than another local tuple of booleans glued together inside the final LINQ pipeline
+  - this is another real `5.3/6.3` cleanup boundary: final pass-plan participation now depends less on scattered include/transparency helper calls and more on one participation layer that can evolve independently when the remaining runtime-faithful ordering/coexistence work is tackled
+- [x] Centralize late-pass source selection and material binding behind shared late-pass source/binding profiles:
+  - `BuildViewportLatePassMaterialPlan(...)` no longer splits late material-path assembly across separate detail, emissive, and skintone plan builders; those rows now resolve through `BuildViewportLatePassSourceProfile(...)`, `BuildViewportLatePassOverlayEmissiveSourceProfile(...)`, `BuildViewportLatePassOverlayDetailSourceProfile(...)`, and `BuildViewportLatePassSkintoneSourceProfile(...)`, which carry late source texture selection, alpha-source evidence, dedicated-opacity authority, and emissive response through one late material-source seam
+  - `BuildViewportLatePassMaterial(...)` no longer keeps a repeated `PhongMaterial` map-binding switch beside that source assembly; diffuse-vs-emissive map binding now resolves through `BuildViewportLatePassMaterialBindingProfile(...)`, so late material binding is no longer a separate local branch cluster after the late source contract has already been established
+  - this is another real `4.3/6.1/6.3` boundary: late material-path assembly for overlay detail, worn/high-layer emissive rows, and skintone late rows is now less fragmented and closer to an explicit preview-stage/material-path split instead of three partially independent late-material branches
+- [x] Centralize late parity/execution alpha gating behind one shared parity behavior contract:
+  - `BuildViewportParityBehaviorMatrixEntry(...)` now carries not only stack/material/alpha defaults, but also `RequiresExplicitOpacityForRenderAlpha` and `DisallowViewportColorAlphaSource`, so late alpha gating rules for composition-driven rows, ordinary detail rows, and emissive worn/high-layer rows now travel with the same parity behavior contract that already owns their phase/order/material semantics
+  - `BuildViewportLatePassExecutionPolicy(...)` no longer re-runs a second composition/emissive/detail classification pass just to decide `RenderAlphaMap`; it now resolves late alpha acceptance from the shared parity behavior contract plus explicit-opacity / viewport-color evidence
+  - this is another real `5.3/6.3` boundary: late ordering/coexistence and late alpha execution are now slightly less split because render-alpha gating no longer depends on a second scattered family of branch-local rule checks after parity behavior has already been resolved
+- [x] Split stage-local render routing and generic fallback material binding behind explicit stage/fallback plans:
+  - `CreateMaterial(...)` no longer keeps stage-local `renderDiffuseMap`, `renderEmissiveMap`, and `renderAlphaMap` routing as a local boolean cluster beside the final generic `PhongMaterial` fallback; those routing decisions now resolve through `BuildViewportStageRenderRoutingProfile(...)`
+  - the remaining non-primary/non-late `PhongMaterial` assembly path now resolves through `BuildViewportFallbackMaterialPlan(...)` and `BuildViewportFallbackMaterial(...)`, so stage-local fallback material binding for overlay/skintone/helper/generic rows is no longer embedded as one large object initializer inside `CreateMaterial(...)`
+  - this is another real `4.3/6.1` boundary: strongest families and stage-local fallback rows are now closer to an explicit material-path split because stage routing and fallback material binding have become first-class seams instead of the last large in-method fallback cluster
+- [x] Iteration target: close the real preview-stage/material-path split for compositor-facing families instead of routing them back into one `PhongMaterial` approximation:
+  - [x] Pass 1. Skintone-carried late split:
+    - `SkintoneLate` no longer terminates in the same generic late material builder as ordinary overlay/detail rows; late skintone rows now resolve through a dedicated `ViewportLatePassMaterialPathProfile(SkintoneOverlay)` path and `BuildViewportSkintoneLatePassMaterial(...)`
+    - skintone late source selection, alpha authority, material-path selection, and final map binding now terminate in a skintone-specific late material builder instead of rejoining the ordinary late fallback
+    - completion criterion met: `SkintoneLate` no longer shares the generic fallback late material builder with ordinary overlay/detail rows
+  - [x] Pass 2. Ordinary CAS overlay/detail split:
+    - ordinary overlay/detail late families now resolve through explicit `ViewportLatePassMaterialPathProfile(...)` lanes and dedicated builders: `BuildViewportOrdinaryDiffuseLatePassMaterial(...)`, `BuildViewportGrayscaleLatePassMaterial(...)`, and `BuildViewportSoftEmissiveLatePassMaterial(...)`
+    - `CosmeticDetailLate` / `DefaultDetailLate` / `OrderedDetailLate` no longer collapse back into one generic late `PhongMaterial` initializer after routing
+    - completion criterion met: ordinary overlay/detail late families now terminate in dedicated late material builders keyed by resolved late material path rather than the old generic late material builder
+  - [x] Pass 3. High-layer late split:
+    - high-layer `32|65536` late rows no longer terminate in the same generic emissive late builder as ordinary soft emissive rows; they now resolve through `ViewportLatePassMaterialPathProfile(HighLayerEmissiveOverlay)` and `BuildViewportHighLayerEmissiveLatePassMaterial(...)`
+    - high-layer late rows now keep their dedicated high-layer render stage and a dedicated high-layer terminal material path end-to-end instead of only differing by contracts inside a shared late material builder
+    - completion criterion met: high-layer late rows no longer collapse back into the same generic late emissive material builder as ordinary overlay/detail rows
+  - [x] Pass 4. Helper/projective split:
+    - helper/projective/layered/utility inspection rows now resolve through `BuildViewportFallbackMaterialPathProfile(...)` and `ViewportFallbackMaterialPathKind.HelperInspection`, then terminate in `BuildViewportHelperInspectionFallbackMaterial(...)` instead of reusing the generic fallback material builder directly
+    - completion criterion met: helper families no longer reach the generic fallback material builder except through a dedicated helper material path
+  - [x] Pass 5. Final collapse and deletion:
+    - obsolete late reunification for emissive rows has been removed: soft emissive and high-layer emissive lanes no longer pass through one generic late emissive terminal path after routing
+    - fallback planning now resolves through explicit `BuildViewportHelperInspectionFallbackMaterialPlan(...)`, `BuildViewportSkintoneFallbackMaterialPlan(...)`, `BuildViewportOverlayFallbackMaterialPlan(...)`, and `BuildViewportGenericFallbackMaterialPlan(...)`, so compositor-facing fallback rows no longer immediately reunify in one plan-selection branch after path classification
+    - completion criterion met: compositor-facing family splits are now structural at the terminal preview/material-path layer, not just profile-driven inside one fallback material path
+- [x] Centralize the remaining late-side coexistence and parity behavior seams behind explicit profiles:
+  - scene-level late coexistence now resolves through `BuildViewportLatePassCoexistenceProfile(...)` and `BuildViewportLatePassFamilySceneAdjustmentProfile(...)` instead of mixing family-local multipliers and pairwise offsets directly inside `BuildViewportLatePassSceneRelationProfile(...)`
+  - parity behavior matrix assembly now routes through specialized composition, worn-lane, emissive, and fallback builders instead of one large mixed branch
+  - this is a real `5.3/6.1/6.2` boundary: the remaining runtime-faithful ordering/coexistence numerics are now localized behind explicit profile seams rather than scattered across render-plan assembly
+- [x] Collapse late pairwise ordering/coexistence numerics into reusable profile builders:
+  - pairwise late-family interaction now aggregates through `BuildViewportLatePassPairwiseCoexistenceProfile(...)` instead of recomputing stack/alpha/emissive totals directly at the scene-relation callsite
+  - ordinary late-family relations and emissive late-family relations are now split into dedicated builders before aggregation, so the remaining runtime ordering table is no longer one monolithic mixed switch
+  - fallback parity behavior now resolves through `BuildViewportFallbackParityBehaviorProfile(...)`, which keeps default alpha/emissive/order semantics out of the mixed parity matrix assembly path
+- [x] Collapse generic late fallback ordering/defaults into explicit profiles:
+  - generic/skintone late fallback ordering now resolves through `BuildViewportLateFallbackOrderingProfile(...)` instead of living separately inside `BuildViewportOverlayLateOrderingProfile(...)`
+  - generic/skintone late fallback alpha/emissive/order defaults now resolve through `BuildViewportLateFallbackBehaviorDefaultsProfile(...)` instead of keeping `105/110`, `0.72/0.88`, and related defaults in scattered parity fallback switches
+  - this moves another real `5.3/6.1/6.2` seam into reusable truth-layer profiles rather than leaving it as raw numeric glue
+- [x] Unify generic/skintone late fallback phase/order/behavior defaults under one shared defaults profile:
+  - `BuildViewportLateFallbackDefaultsProfile(...)` now feeds fallback `PassPhase`, stack order, alpha scale, emissive color, and tie-break metadata for skintone and generic late lanes
+  - `BuildViewportOverlayLateOrderingProfile(...)`, `GetViewportLatePassDefaultPhase(...)`, and `BuildViewportFallbackParityBehaviorProfile(...)` no longer keep separate local fallback constants for the same late families
+  - this is another real `5.3/6.1/6.2` boundary: the remaining late fallback numerics are more centralized and easier to replace with source-backed runtime rules
+- [x] Extend the shared late fallback defaults profile into late-family contracts:
+  - `BuildViewportLatePassFamilyContract(...)` now uses `BuildViewportLateFallbackDefaultsProfile(...)` for skintone/generic late lanes instead of keeping separate direct family/underlay/transparency constants beside the fallback defaults
+  - skintone and generic late fallback families now share one truth source for family identity, underlay requirement, transparency mode, stack order, phase, and fallback behavior metadata
+  - this removes another direct-constant seam from the runtime truth layer and leaves fewer remaining places where late-family behavior can drift
+- [x] Lift `CompositionMethod` and `SortLayer bucket` defaults into named runtime-default profiles:
+  - `BuildViewportCompositionRuleProfile(...)` now resolves through `BuildViewportCompositionLaneDefaultsProfile(...)`, so the `2/3/4` late-lane constants are no longer embedded directly in the rule builder
+  - `BuildOverlaySortLayerBucketProfile(...)` now resolves through `BuildOverlaySortLayerBucketRuntimeDefaultsProfile(...)`, which isolates the bucket pass/stack defaults from downstream consumers
+  - this is another real `5.1/5.3/6.2` boundary: the remaining runtime math gap is less about hidden constants and more about missing source-backed rules
+- [x] Centralize parity-rule and composition-family contract defaults into explicit profiles:
+  - `BuildViewportParityRuleProfile(...)` now resolves primary, skintone-late, and generic overlay parity defaults through `BuildViewportParityRuleDefaultsProfile(...)` instead of keeping those fallback constructors inline beside the truth layer
+  - `BuildViewportLatePassFamilyContract(...)` now resolves composition-family underlay/relation defaults through `BuildViewportCompositionLateFamilyContractDefaultsProfile(...)` instead of embedding those defaults directly in the contract builder
+  - this is another real `5.1/6.2` boundary: primary/skintone/generic parity defaults and composition-family underlay/relation defaults are now explicit profile data instead of scattered inline constructors
+- [x] Centralize late pairwise relation numerics and ordinary detail defaults into named profiles:
+  - `BuildViewportOrdinaryLatePairwiseRelation(...)` and `BuildViewportEmissiveLatePairwiseRelation(...)` now resolve through dedicated defaults builders instead of carrying their stack/alpha/emissive constants inline in the relation wrappers
+  - `BuildViewportGenericDetailLateProfile(...)` now resolves `DetailMasked`, `DetailSoft`, `DetailDefault`, and `OrderedSoft` defaults through `BuildViewportGenericDetailLateDefaultsProfile(...)` instead of keeping those stack/phase/alpha/emissive constants inline in the detail builder
+  - this is another real `5.3/6.2` boundary: late coexistence math and ordinary detail defaults are more restart-safe and more isolated from downstream render/parity assembly
+- [x] Centralize late emissive-family defaults and generic overlay fallback parity defaults into named profiles:
+  - `BuildViewportLateEmissiveFamilyProfile(...)` now resolves `EmissiveSoft` and `EmissiveRestricted` through `BuildViewportLateEmissiveFamilyDefaultsProfile(...)` instead of carrying that whole alpha/emissive/transparency/missing-diffuse contract inline
+  - `BuildViewportLateFallbackBehaviorDefaultsProfile(...)` now resolves the final generic-overlay fallback through `BuildViewportGenericOverlayFallbackParityDefaultsProfile(...)` instead of keeping the remaining generic parity defaults inline in the last fallback constructor
+  - this is another real `5.2/6.2` boundary: worn/high-layer late emissive semantics and generic overlay fallback parity behavior are less scattered and easier to replace with source-backed runtime rules
+- [x] Centralize late-family base stack defaults and late fallback seed profiles:
+  - `GetViewportLatePassFamilyBaseStackOrder(...)` now resolves ordinary late-family base orders through `BuildViewportLateFamilyBaseDefaultsProfile(...)` instead of keeping those remaining `10/100/120/130/140` values inline in the family helper
+  - `BuildViewportLateFallbackDefaultsProfile(...)` now routes skintone and generic-detail seed construction through `BuildViewportSkintoneLateFallbackDefaultsProfile(...)` and `BuildViewportGenericDetailLateFallbackDefaultsProfile(...)` instead of mixing those seed constants directly into the main fallback builder
+  - this is another real `6.1/6.2` boundary: late-family base/fallback seeds are now more profile-driven, leaving fewer source-less constants in the runtime truth layer
+- [x] Centralize overlay late ordering assembly behind explicit defaults:
+  - `BuildViewportOverlayLateOrderingProfile(...)` now resolves worn, emissive, and fallback late-ordering paths through `BuildViewportOverlayLateOrderingDefaultsProfile(...)` instead of assembling those branches directly inside the final ordering builder
+  - this is another real `5.3/6.2` boundary: late-ordering truth is more isolated from downstream parity/final-order consumers, leaving fewer mixed numeric branches in the ordering layer
+- [x] Centralize remaining bucket thresholds and generic overlay fallback ordering defaults:
+  - `IsHighLayerComposition32WornOverlayLane(...)` and `ClassifyOverlaySortLayerBucket(...)` now read their `10000/65536` bucket thresholds through `BuildOverlaySortLayerThresholdsProfile(...)` instead of keeping those cut points inline in the helpers
+  - `BuildViewportLateFallbackBehaviorDefaultsProfile(...)` now resolves the last generic overlay fallback stack-order seed through `BuildViewportGenericOverlayFallbackOrderingDefaultsProfile(...)` instead of carrying that ordering fallback inline beside parity assembly
+  - this is another real `5.3/6.3` boundary: the remaining late ordering scaffolding is more explicit, so the open gap is increasingly the missing TS4 runtime truth rather than hidden fallback constants
+- [x] Centralize compositor-stage, slot-category, and broad material fallback stage ordering:
+  - `GetViewportCompositorStageOrder(...)`, `GetViewportCasSlotCategoryOrder(...)`, and the broad fallback branch inside `GetViewportMaterialRenderStage(...)` now resolve through explicit stage-order profiles instead of keeping those stage numerics inline in the helper layer
+  - this is another real `4.3/5.3` cleanup boundary: stage-order truth is more isolated and restart-safe, which makes the remaining gap look more like missing runtime semantics than hidden browser-side constants
+- [x] Collapse late pairwise relation defaults into one shared truth source:
+  - `BuildViewportLatePassPairwiseRelation(...)` now resolves all ordinary and emissive coexistence numerics through `BuildViewportLatePairwiseRelationDefaultsProfile(...)` instead of keeping two parallel defaults tables for the same late-scene relation layer
+  - this is another real `6.2/6.3` cleanup boundary: late coexistence math is more centralized, so the remaining open problem is more directly the approximation values themselves rather than split truth sources
+- [x] Centralize late stack-contract defaults behind one explicit stack-defaults profile:
+  - `BuildViewportLatePassStackContract(...)` now resolves skintone, makeup, grayscale, emissive-only, and generic overlay stack constants through `BuildViewportLatePassStackDefaultsProfile(...)` instead of carrying those alpha/emissive/fallback values inline inside the final stack-contract builder
+  - this is another real `6.3` cleanup boundary: the remaining gap is even more clearly the approximation values themselves, not hidden browser-side stack-contract constructors
+- [x] Centralize family-local late scene adjustments behind explicit defaults:
+  - `BuildViewportLatePassFamilySceneAdjustmentProfile(...)` now resolves ordinary family-local alpha/emissive adjustments through `BuildViewportLateFamilySceneAdjustmentDefaultsProfile(...)` instead of keeping that adjustment switch inline beside the pairwise coexistence layer
+  - this is another real `6.3` cleanup boundary: late coexistence behavior is now more cleanly split into family-local defaults plus pairwise defaults, leaving the remaining open problem closer to the approximation values themselves
+- [x] Resolve final render-pass ordering/participation through one explicit execution contract:
+  - `BuildViewportRenderPassPlans(...)` now resolves pass participation, ordering, parity tie-breaks, and final-order tie-breaks through `BuildViewportResolvedRenderPassContract(...)` instead of reassembling those truth sources piecemeal on the render-plan callsite
+  - this is another real `5.3/6.3` execution boundary: the final execution path now drifts less from the centralized truth layer, so the remaining open problem is even more clearly the approximation values themselves rather than browser-side recomposition of pass-order state
+- [x] Extract stabilized viewport render-pass/compositor planning into a dedicated partial file:
+  - the render-pass planning, late-family ordering, parity, and stage-order layer now lives in `src/Sims4ResourceExplorer.App/MainWindow.ViewportRenderPasses.cs` instead of remaining embedded inside `MainWindow.xaml.cs`
+  - this is a structure-only step, but it makes the remaining functional work and later file-split passes safer because the compositor truth layer is now easier to navigate and isolate
+- [x] Extract the broader viewport material/texture/compositor factory layer into a dedicated partial file:
+  - geometry creation, material assembly, overlay policy/execution planning, late-pass material planning, and the associated viewport records/enums now live in `src/Sims4ResourceExplorer.App/MainWindow.ViewportMaterials.cs` instead of remaining inside `MainWindow.xaml.cs`
+  - this is another structure-only step, but it sharply reduces the size of the main window file and makes the remaining browser-preview debt easier to inspect in isolation before the build review pass
+- [x] Prepare the next user-facing verification release build:
+  - incremented `BuildNumber` in `src/Sims4ResourceExplorer.App/Sims4ResourceExplorer.App.csproj` from `0178` to `0179` because the next step is explicit manual release testing
+  - the release handoff for this packet must name the exact build id and one exact launch command, per repo protocol
+- [x] Publish the manual-test release artifact for build `0179`:
+  - published the app with `dotnet publish ... -c Release -p:Platform=x64 -p:PublishProfile=win-x64`
+  - verified that both the publish exe and the standard `run.ps1` release exe report `ProductVersion = build-0179`
+  - the exact manual-test rerun command for this already-built packet is `.\run.ps1 -Configuration Release -NoBuild`
+- [x] Fix the UV preview bitmap/wireframe sampling mismatch and roll a fresh verification build:
+  - `BlitScaledBgra(...)` now maps scaled destination pixels onto the same inclusive endpoint grid used by `DrawUvWireframe(...)`, which removes the small top-left bias that could make the UV overlay appear shifted right/down relative to the bitmap
+  - incremented `BuildNumber` again from `0179` to `0180` because this is another user-facing visual verification packet and must ship as a distinct runnable build
+- [ ] Replace the initial mesh-order approximation with true `CompositionMethod` / `SortLayer` compositor staging and blend behavior for CAS overlay/detail families.
+- [ ] Revisit `Projective`, `ShaderDayNightParameters`, reveal/lightmap, and related helper families so selected-slot inspection stays available without promoting those helpers into ordinary surface authority.
+
+#### Restart Hints
+
+- The current implementation seam is centered in:
+  - `src/Sims4ResourceExplorer.App/MainWindow.xaml.cs`
+  - `src/Sims4ResourceExplorer.App/MainWindow.ViewportRenderPasses.cs`
+  - `src/Sims4ResourceExplorer.App/MainWindow.ViewportMaterials.cs`
+  - `src/Sims4ResourceExplorer.Preview/BuildBuySceneBuildService.cs`
+  - `src/Sims4ResourceExplorer.Preview/BuildBuySceneBuildService.Cas.cs`
+  - `src/Sims4ResourceExplorer.Core/Domain.cs`
+- The current viewport model is now stronger at:
+  - preserving canonical material provenance during scoping
+  - honoring slot-local sampling
+  - consuming one resolved viewport UV contract for both `3D` and `MaterialUv` paths instead of letting each path reinterpret channel/transform independently
+  - filtering utility/helper inputs out of general surface-color selection
+  - keeping transparency classification family-aware
+  - carrying `CASPart` compositor metadata into scene materials and using it for initial mesh ordering
+  - carrying explicit preview compositor stages across decode, CAS, and Sim routing
+  - suppressing helper stages from normal preview while keeping them available for inspection modes
+  - approximating `sim-skintone-base` as a stage-local texture composite instead of a plain tint multiplier
+  - treating `cas-overlay` as overlay-first color/alpha routing instead of plain diffuse fallback
+  - isolating the stabilized render-pass/compositor planning layer in `MainWindow.ViewportRenderPasses.cs` so future work no longer has to search one monolithic window file for every late-pass/order rule
+  - isolating the broader viewport material/texture/compositor factory layer in `MainWindow.ViewportMaterials.cs`, leaving `MainWindow.xaml.cs` much closer to actual window/UI glue
+- Functional debt intentionally deferred until visual build review now lives in:
+  - `docs/planning/technical-debt.md`
+  - expanding eligible routed skintone materials into separate base and overlay passes instead of one merged preview material
+  - expanding eligible `cas-overlay` materials into separate base and detail passes before viewport rendering
+  - applying the first `CompositionMethod`-aware viewport behavior for `cas-overlay-detail` without overclaiming exact TS4 math
+  - keeping the dominant `32|65536` clothing/accessory lane out of the overly-cosmetic generic overlay fallback path
+  - grouping `SortLayer` into overlay pass buckets instead of relying only on one flat numeric sort
+  - expressing the dominant high worn-slot overlay lane as explicit `highlayer` stages in scene IR
+  - giving `cas-overlay-highlayer-detail` a separate material-application policy instead of only a different stage order
+- The current honest boundary is still:
+  - no full skintone/compositor parity
+  - no true `CompositionMethod` / `SortLayer` blend math yet; current `2/3/4/32` handling is an explicit approximation
+  - current `SortLayer` handling is bucketed ordering, not exact runtime compositor pass math
+  - compositor-facing family split is now structural in the browser preview path, but the browser still approximates TS4 runtime behavior through separated `PhongMaterial`-backed lanes rather than true compositor-native preview stages
+  - preview consumption is now much less heuristic, but preview-side truth still depends on earlier decode/state choices such as `MTST` default-state selection, UV decode-mode heuristics, and any still-unused mesh `ScaleOffsetReference` data
+- The most valuable next implementation move is:
+  - capture the remaining source-backed runtime ordering/coexistence rules for the separated late families instead of widening architectural family routing again
+- Use these docs before widening the next implementation packet:
+  - `docs/workflows/material-pipeline/overlay-detail-family-authority-table.md`
+  - `docs/workflows/material-pipeline/skintone-and-overlay-compositor.md`
+  - `docs/workflows/material-pipeline/family-sheets/shader-daynight-parameters.md`
+  - `docs/workflows/material-pipeline/family-sheets/projection-reveal-lightmap.md`
 
 ### Current Request Addendum (`2026-04-22`, browser-facing pass filtering contract)
 

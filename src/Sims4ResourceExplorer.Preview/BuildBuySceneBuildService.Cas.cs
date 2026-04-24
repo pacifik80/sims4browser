@@ -108,6 +108,14 @@ public sealed partial class BuildBuySceneBuildService
             CreateReadProgressReporter(progress, 0.15, 0.35, geometryPackageName)).ConfigureAwait(false);
         geometryReadElapsed = readStopwatch.Elapsed;
         var diagnostics = new List<string>();
+        var casPartSlotCategory = TryExtractCasPartSummaryField(logicalRootResource.Description, "slot");
+        var casPartSortLayer = TryExtractCasPartSummaryInt(logicalRootResource.Description, "sortLayer");
+        var casPartCompositionMethod = TryExtractCasPartSummaryInt(logicalRootResource.Description, "compositionMethod");
+        if (!string.IsNullOrWhiteSpace(casPartSlotCategory) || casPartSortLayer.HasValue || casPartCompositionMethod.HasValue)
+        {
+            diagnostics.Add(
+                $"CAS compositor metadata: slot={casPartSlotCategory ?? "(unknown)"} | composition={casPartCompositionMethod?.ToString() ?? "(none)"} | sortLayer={casPartSortLayer?.ToString() ?? "(none)"}.");
+        }
 
         Ts4GeomResource geom;
         try
@@ -183,6 +191,12 @@ public sealed partial class BuildBuySceneBuildService
                     CanonicalMaterialSourceKind.ApproximateCas)
             ];
         }
+
+        materials = ApplyCasPartCompositorMetadata(
+            materials,
+            casPartSlotCategory,
+            casPartSortLayer,
+            casPartCompositionMethod);
         var textures = materials.SelectMany(static material => material.Textures).ToArray();
         textureResolveElapsed = textureStopwatch.Elapsed;
 
@@ -213,12 +227,14 @@ public sealed partial class BuildBuySceneBuildService
             0,
             skinWeights);
 
+        var (expandedMaterials, expandedMeshes) = ExpandCasPreviewSceneMaterials(materials, [mesh]);
+
         var scene = new CanonicalScene(
             logicalRootResource.Name ?? geometryResource.Name ?? $"Cas_{logicalRootResource.Key.FullInstance:X16}",
-            [mesh],
-            materials,
+            expandedMeshes,
+            expandedMaterials,
             bones,
-            ComputeBounds([mesh]));
+            ComputeBounds(expandedMeshes));
 
         diagnostics.Insert(0, $"Selected geometry root: {geometryResource.Key.FullTgi}");
         diagnostics.Add(
@@ -229,6 +245,253 @@ public sealed partial class BuildBuySceneBuildService
             : SceneBuildStatus.SceneReady;
         return new SceneBuildResult(true, scene, diagnostics, status);
     }
+
+    private static (IReadOnlyList<CanonicalMaterial> Materials, IReadOnlyList<CanonicalMesh> Meshes) ExpandCasPreviewSceneMaterials(
+        IReadOnlyList<CanonicalMaterial> materials,
+        IReadOnlyList<CanonicalMesh> meshes)
+    {
+        if (materials.Count == 0 || meshes.Count == 0)
+        {
+            return (materials, meshes);
+        }
+
+        var expandedMaterials = new List<CanonicalMaterial>(materials.Count);
+        var materialIndexExpansions = new Dictionary<int, IReadOnlyList<int>>();
+        for (var materialIndex = 0; materialIndex < materials.Count; materialIndex++)
+        {
+            var materialExpansions = ExpandCasOverlayMaterial(materials[materialIndex]);
+            var expansionIndices = new List<int>(materialExpansions.Count);
+            foreach (var expandedMaterial in materialExpansions)
+            {
+                expansionIndices.Add(expandedMaterials.Count);
+                expandedMaterials.Add(expandedMaterial);
+            }
+
+            materialIndexExpansions[materialIndex] = expansionIndices;
+        }
+
+        var expandedMeshes = new List<CanonicalMesh>(meshes.Count);
+        foreach (var mesh in meshes)
+        {
+            if (!materialIndexExpansions.TryGetValue(mesh.MaterialIndex, out var expansionIndices) || expansionIndices.Count == 0)
+            {
+                expandedMeshes.Add(mesh);
+                continue;
+            }
+
+            if (expansionIndices.Count == 1)
+            {
+                expandedMeshes.Add(mesh with { MaterialIndex = expansionIndices[0] });
+                continue;
+            }
+
+            foreach (var expandedMaterialIndex in expansionIndices)
+            {
+                var stage = expandedMaterials[expandedMaterialIndex].PreviewCompositorStage;
+                expandedMeshes.Add(mesh with
+                {
+                    Name = string.IsNullOrWhiteSpace(stage) ? mesh.Name : $"{mesh.Name} [{stage}]",
+                    MaterialIndex = expandedMaterialIndex
+                });
+            }
+        }
+
+        return (expandedMaterials.ToArray(), expandedMeshes);
+    }
+
+    private static IReadOnlyList<CanonicalMaterial> ApplyCasPartCompositorMetadata(
+        IReadOnlyList<CanonicalMaterial> materials,
+        string? slotCategory,
+        int? sortLayer,
+        int? compositionMethod)
+    {
+        if (materials.Count == 0 ||
+            string.IsNullOrWhiteSpace(slotCategory) &&
+            !sortLayer.HasValue &&
+            !compositionMethod.HasValue)
+        {
+            return materials;
+        }
+
+        return materials
+            .Select(material => material with
+            {
+                PreviewCompositorStage = DetermineCasPartPreviewCompositorStage(
+                    material.PreviewCompositorStage,
+                    slotCategory,
+                    compositionMethod),
+                SortLayer = sortLayer ?? material.SortLayer,
+                CompositionMethod = compositionMethod ?? material.CompositionMethod,
+                CasPartSlotCategory = slotCategory ?? material.CasPartSlotCategory
+            })
+            .ToArray();
+    }
+
+    private static string DetermineCasPartPreviewCompositorStage(
+        string? existingStage,
+        string? slotCategory,
+        int? compositionMethod)
+    {
+        if (string.Equals(existingStage, "helper-nonvisual", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(existingStage, "helper-projective", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(existingStage, "helper-layered", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(existingStage, "helper-utility", StringComparison.OrdinalIgnoreCase))
+        {
+            return existingStage!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(slotCategory))
+        {
+            return slotCategory switch
+            {
+                "Full Body" or "Body" or "Head" => "cas-shell-base",
+                "Top" or "Bottom" or "Shoes" or "Hair" or "Accessory" => "cas-overlay",
+                _ when compositionMethod.HasValue && compositionMethod.Value != 0 => "cas-overlay",
+                _ => existingStage ?? "surface"
+            };
+        }
+
+        if (compositionMethod.HasValue && compositionMethod.Value != 0)
+        {
+            return "cas-overlay";
+        }
+
+        return existingStage ?? "surface";
+    }
+
+    private static IReadOnlyList<CanonicalMaterial> ExpandCasOverlayMaterial(CanonicalMaterial material)
+    {
+        if (!string.Equals(material.PreviewCompositorStage, "cas-overlay", StringComparison.OrdinalIgnoreCase))
+        {
+            return [material];
+        }
+
+        var detailTextures = SelectCasOverlayDetailTextures(material);
+        var detailColorTextures = detailTextures
+            .Where(static texture => texture.Semantic != CanonicalTextureSemantic.Opacity)
+            .ToArray();
+        if (detailColorTextures.Length == 0)
+        {
+            return [material];
+        }
+
+        var detailSlots = detailTextures
+            .Select(static texture => texture.Slot)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var baseTextures = material.Textures
+            .Where(texture => !detailSlots.Contains(texture.Slot))
+            .ToArray();
+        if (baseTextures.Length == 0)
+        {
+            return [CreateCasOverlayStageMaterial(material, detailTextures, GetExpandedCasOverlayStageName(material, isDetailStage: true))];
+        }
+
+        return
+        [
+            CreateCasOverlayStageMaterial(material, baseTextures, GetExpandedCasOverlayStageName(material, isDetailStage: false)),
+            CreateCasOverlayStageMaterial(material, detailTextures, GetExpandedCasOverlayStageName(material, isDetailStage: true))
+        ];
+    }
+
+    private static string GetExpandedCasOverlayStageName(CanonicalMaterial material, bool isDetailStage)
+    {
+        if (IsHighLayerCasOverlayLane(material))
+        {
+            return isDetailStage
+                ? "cas-overlay-highlayer-detail"
+                : "cas-overlay-highlayer-base";
+        }
+
+        return isDetailStage
+            ? "cas-overlay-detail"
+            : "cas-overlay-base";
+    }
+
+    private static CanonicalMaterial CreateCasOverlayStageMaterial(
+        CanonicalMaterial material,
+        IReadOnlyList<CanonicalTexture> textures,
+        string stage)
+    {
+        var scopedSlots = textures
+            .Select(static texture => texture.Slot)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var scopedAlphaSlot = !string.IsNullOrWhiteSpace(material.AlphaTextureSlot) &&
+                              scopedSlots.Contains(material.AlphaTextureSlot)
+            ? material.AlphaTextureSlot
+            : null;
+        var scopedLayeredSlots = material.LayeredTextureSlots?
+            .Where(slot => scopedSlots.Contains(slot))
+            .ToArray();
+        if (scopedLayeredSlots is { Length: 0 })
+        {
+            scopedLayeredSlots = null;
+        }
+
+        var scopedSampling = material.Sampling?
+            .Where(sample => scopedSlots.Contains(sample.Slot))
+            .ToArray();
+        if (scopedSampling is { Length: 0 })
+        {
+            scopedSampling = null;
+        }
+
+        var scopedUtilitySlots = material.UtilityTextureSlots?
+            .Where(slot => scopedSlots.Contains(slot))
+            .ToArray();
+        if (scopedUtilitySlots is { Length: 0 })
+        {
+            scopedUtilitySlots = null;
+        }
+
+        var approximation = string.IsNullOrWhiteSpace(material.Approximation)
+            ? $"CAS overlay split -> {stage}"
+            : $"{material.Approximation} | CAS overlay split -> {stage}";
+        return material with
+        {
+            Name = string.IsNullOrWhiteSpace(material.Name) ? stage : $"{material.Name} [{stage}]",
+            Textures = textures,
+            AlphaTextureSlot = scopedAlphaSlot,
+            LayeredTextureSlots = scopedLayeredSlots,
+            Sampling = scopedSampling,
+            UtilityTextureSlots = scopedUtilitySlots,
+            PreviewCompositorStage = stage,
+            Approximation = approximation
+        };
+    }
+
+    private static IReadOnlyList<CanonicalTexture> SelectCasOverlayDetailTextures(CanonicalMaterial material)
+    {
+        var layeredSlots = material.LayeredTextureSlots?
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            ?? [];
+        var explicitAlphaSlot = string.IsNullOrWhiteSpace(material.AlphaTextureSlot)
+            ? null
+            : material.AlphaTextureSlot;
+        return material.Textures
+            .Where(texture =>
+                !IsCasOverlayMaterialDetailTexture(texture) &&
+                layeredSlots.Contains(texture.Slot) ||
+                (!IsCasOverlayMaterialDetailTexture(texture) &&
+                 (texture.Semantic is CanonicalTextureSemantic.Overlay or CanonicalTextureSemantic.Opacity ||
+                  texture.Slot.Contains("overlay", StringComparison.OrdinalIgnoreCase) ||
+                  texture.Slot.Contains("detail", StringComparison.OrdinalIgnoreCase))) ||
+                (!string.IsNullOrWhiteSpace(explicitAlphaSlot) && texture.Slot.Equals(explicitAlphaSlot, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+    }
+
+    private static bool IsCasOverlayMaterialDetailTexture(CanonicalTexture texture) =>
+        texture.Semantic is CanonicalTextureSemantic.Normal or CanonicalTextureSemantic.Specular or CanonicalTextureSemantic.Gloss ||
+        texture.Slot.Contains("normal", StringComparison.OrdinalIgnoreCase) ||
+        texture.Slot.Contains("bump", StringComparison.OrdinalIgnoreCase) ||
+        texture.Slot.Contains("spec", StringComparison.OrdinalIgnoreCase) ||
+        texture.Slot.Contains("gloss", StringComparison.OrdinalIgnoreCase) ||
+        texture.Slot.Contains("rough", StringComparison.OrdinalIgnoreCase) ||
+        texture.Slot.Contains("smooth", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsHighLayerCasOverlayLane(CanonicalMaterial material) =>
+        material.CompositionMethod == 32 &&
+        (material.SortLayer ?? 0) >= 65536 &&
+        material.CasPartSlotCategory is "Full Body" or "Top" or "Bottom" or "Shoes" or "Accessory";
 
     private async Task<IReadOnlyList<CanonicalMaterial>> ResolveCasMaterialsFromMaterialResourcesAsync(
         ResourceMetadata geometryResource,
@@ -300,7 +563,9 @@ public sealed partial class BuildBuySceneBuildService
                     ShaderFamily: materialInfo.ShaderFamily,
                     DecodeStrategy: materialInfo.DecodeStrategy,
                     Sampling: materialInfo.SamplingInstructions,
-                    VisualPayloadKind: materialInfo.VisualPayloadKind));
+                    VisualPayloadKind: materialInfo.VisualPayloadKind,
+                    UtilityTextureSlots: materialInfo.UtilityTextureSlots,
+                    PreviewCompositorStage: materialInfo.PreviewCompositorStage));
             }
             catch (Exception ex)
             {
@@ -314,6 +579,34 @@ public sealed partial class BuildBuySceneBuildService
         }
 
         return resolvedMaterials;
+    }
+
+    private static int? TryExtractCasPartSummaryInt(string? description, string key)
+    {
+        var value = TryExtractCasPartSummaryField(description, key);
+        return int.TryParse(value, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static string? TryExtractCasPartSummaryField(string? description, string key)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return null;
+        }
+
+        foreach (var part in description.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!part.StartsWith($"{key}=", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return part[(key.Length + 1)..].Trim();
+        }
+
+        return null;
     }
 
     private async Task<IReadOnlyList<CanonicalMaterial>> ResolveCasMaterialsFromManifestAsync(

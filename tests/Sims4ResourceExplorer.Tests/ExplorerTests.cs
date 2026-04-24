@@ -8341,6 +8341,35 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void CasOverlayDetailSplit_ExcludesMaterialDetailMapsFromDetailStageSelection()
+    {
+        var material = new CanonicalMaterial(
+            "OverlayMaterial",
+            [
+                new CanonicalTexture("diffuse", "diffuse.png", TestAssets.OnePixelPng, Semantic: CanonicalTextureSemantic.BaseColor),
+                new CanonicalTexture("overlay_detail", "overlay_detail.png", TestAssets.OnePixelPng, Semantic: CanonicalTextureSemantic.Overlay),
+                new CanonicalTexture("detail_normal", "detail_normal.png", TestAssets.OnePixelPng, Semantic: CanonicalTextureSemantic.Normal),
+                new CanonicalTexture("detail_specular", "detail_specular.png", TestAssets.OnePixelPng, Semantic: CanonicalTextureSemantic.Specular),
+                new CanonicalTexture("overlay_alpha", "overlay_alpha.png", TestAssets.OnePixelPng, Semantic: CanonicalTextureSemantic.Opacity)
+            ],
+            LayeredTextureSlots: ["overlay_detail", "detail_normal"],
+            AlphaTextureSlot: "overlay_alpha",
+            PreviewCompositorStage: "cas-overlay");
+
+        var method = typeof(BuildBuySceneBuildService).GetMethod(
+            "SelectCasOverlayDetailTextures",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var detailTextures = Assert.IsAssignableFrom<IReadOnlyList<CanonicalTexture>>(method!.Invoke(null, [material]));
+
+        Assert.Contains(detailTextures, texture => texture.Slot == "overlay_detail");
+        Assert.Contains(detailTextures, texture => texture.Slot == "overlay_alpha");
+        Assert.DoesNotContain(detailTextures, texture => texture.Slot == "detail_normal");
+        Assert.DoesNotContain(detailTextures, texture => texture.Slot == "detail_specular");
+    }
+
+    [Fact]
     public async Task CasLogicalAsset_FallsBackWhenCasPartParsingFails()
     {
         var packagePath = Path.Combine(tempRoot, "cas-fallback.package");

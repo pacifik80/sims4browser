@@ -503,10 +503,12 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                         materialInfo.ApproximateBaseColor is { Length: >= 3 } color
                             ? new CanonicalColor(color[0], color[1], color[2], color.Length >= 4 ? color[3] : 1f)
                             : null,
-                        ShaderFamily: materialInfo.ShaderFamily,
-                        DecodeStrategy: materialInfo.DecodeStrategy,
-                        Sampling: materialInfo.SamplingInstructions,
-                        VisualPayloadKind: materialInfo.VisualPayloadKind));
+                    ShaderFamily: materialInfo.ShaderFamily,
+                    DecodeStrategy: materialInfo.DecodeStrategy,
+                    Sampling: materialInfo.SamplingInstructions,
+                    VisualPayloadKind: materialInfo.VisualPayloadKind,
+                    UtilityTextureSlots: materialInfo.UtilityTextureSlots,
+                    PreviewCompositorStage: materialInfo.PreviewCompositorStage));
                 }
 
                 ReportProgress(progress, $"Building {meshLabel}: decoding vertices...", meshStart + (meshSpan * 0.62));
@@ -1580,6 +1582,13 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     ? "The selected material state exposes no portable texture or color payload; preview falls back to a neutral approximation."
                     : null;
 
+        var previewCompositorStage = DeterminePreviewCompositorStage(
+            materialDecode.ShaderFamilyName,
+            materialDecode.StrategyName,
+            visualPayloadKind,
+            materialDecode.LayeredColorSlots,
+            materialDecode.UtilityTextureSlots);
+
         return new Ts4MaterialInfo(
             !string.IsNullOrWhiteSpace(matd.MaterialName) ? matd.MaterialName : $"Material_{matd.MaterialNameHash:X8}",
             matd.ShaderName,
@@ -1612,7 +1621,50 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             materialDecode.LayeredColorSlots,
             visualPayloadKind,
             approximation,
-            usedFallbackTextureApproximation || usedPortableColorApproximation ? CanonicalMaterialSourceKind.FallbackCandidate : sourceKind);
+            usedFallbackTextureApproximation || usedPortableColorApproximation ? CanonicalMaterialSourceKind.FallbackCandidate : sourceKind,
+            materialDecode.UtilityTextureSlots,
+            previewCompositorStage);
+    }
+
+    private static string DeterminePreviewCompositorStage(
+        string? shaderFamily,
+        string decodeStrategy,
+        string visualPayloadKind,
+        IReadOnlyList<string> layeredSlots,
+        IReadOnlyList<string> utilitySlots)
+    {
+        if (string.Equals(visualPayloadKind, "non-visual", StringComparison.OrdinalIgnoreCase))
+        {
+            return "helper-nonvisual";
+        }
+
+        if (decodeStrategy.Contains("Projective", StringComparison.OrdinalIgnoreCase) ||
+            shaderFamily?.Contains("Project", StringComparison.OrdinalIgnoreCase) == true ||
+            shaderFamily?.Contains("Refraction", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return "helper-projective";
+        }
+
+        if (shaderFamily?.Contains("ShaderDayNightParameters", StringComparison.OrdinalIgnoreCase) == true ||
+            shaderFamily?.Contains("Reveal", StringComparison.OrdinalIgnoreCase) == true ||
+            shaderFamily?.Contains("LightMap", StringComparison.OrdinalIgnoreCase) == true ||
+            shaderFamily?.Contains("GenerateSpotLightmap", StringComparison.OrdinalIgnoreCase) == true ||
+            shaderFamily?.Contains("NextFloorLightMapXform", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return "helper-layered";
+        }
+
+        if (layeredSlots.Count > 0)
+        {
+            return "surface-layered";
+        }
+
+        if (utilitySlots.Count > 0 && !string.Equals(visualPayloadKind, "textured", StringComparison.OrdinalIgnoreCase))
+        {
+            return "helper-utility";
+        }
+
+        return "surface";
     }
 
     internal static bool LooksLikeNonVisualHelperMaterial(Ts4MaterialDecodeResult materialDecode, string shaderName)
@@ -2920,7 +2972,9 @@ internal sealed record Ts4MaterialInfo(
     IReadOnlyList<string> LayeredTextureSlots,
     string VisualPayloadKind,
     string? Approximation,
-    CanonicalMaterialSourceKind SourceKind)
+    CanonicalMaterialSourceKind SourceKind,
+    IReadOnlyList<string>? UtilityTextureSlots = null,
+    string? PreviewCompositorStage = null)
 {
     public static Ts4MaterialInfo CreateFallback(string name, string reason) =>
         new(
@@ -2941,7 +2995,9 @@ internal sealed record Ts4MaterialInfo(
             [],
             "unsupported",
             "Material fell back to a placeholder because the source material chunk was unsupported.",
-            CanonicalMaterialSourceKind.Unsupported);
+            CanonicalMaterialSourceKind.Unsupported,
+            [],
+            "helper-nonvisual");
 }
 
 internal readonly record struct Ts4TextureReference(string Slot, Ts4ResourceKey Key, uint PropertyHash, bool IsHeuristic = false)
