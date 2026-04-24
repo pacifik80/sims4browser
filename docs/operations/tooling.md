@@ -13,6 +13,7 @@ Repo-level working rules live in `AGENT.md`. This file only defines durable tool
   - launches through `run.ps1`, attaches `dotnet-trace`, and writes trace output under `tmp/`
 - `tools/ProbeAsset/`
   - command-line probe tool for package/resource inspection, coverage surveys, batch probes, focused diagnostics, and live `Sim Archetype` body-shell audits
+  - use `--scene-resource <packagePath> <resourceTgi> [--live-index]` for focused scene diagnostics from a direct `Model`, `ModelLOD`, or `Geometry` resource when no logical asset root is available
 - `tests/Sims4ResourceExplorer.Tests`
   - regression and integration verification layer
 

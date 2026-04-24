@@ -31,6 +31,14 @@ if (args.Length > 0 && string.Equals(args[0], "--inspect-resource", StringCompar
     return await InspectResourceAsync(packagePathToInspect, resourceTgiToInspect);
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--scene-resource", StringComparison.OrdinalIgnoreCase))
+{
+    var scenePackagePath = args.Length > 1 ? args[1] : string.Empty;
+    var sceneResourceTgi = args.Length > 2 ? args[2] : string.Empty;
+    var useLiveIndex = args.Any(static arg => string.Equals(arg, "--live-index", StringComparison.OrdinalIgnoreCase));
+    return await RunSceneResourceAsync(scenePackagePath, sceneResourceTgi, useLiveIndex);
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--find-stbl-hash", StringComparison.OrdinalIgnoreCase))
 {
     var searchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
@@ -472,6 +480,109 @@ static async Task<int> InspectResourceAsync(string packagePath, string fullTgi)
     Console.WriteLine("== Raw Bytes ==");
     DumpHex(rawBytes, 256);
     return 0;
+}
+
+static async Task<int> RunSceneResourceAsync(string packagePath, string fullTgi, bool useLiveIndex)
+{
+    if (string.IsNullOrWhiteSpace(packagePath) || !File.Exists(packagePath))
+    {
+        Console.Error.WriteLine($"Package not found: {packagePath}");
+        return 1;
+    }
+
+    if (!TryParseTgi(fullTgi, out var key))
+    {
+        Console.Error.WriteLine("Usage: --scene-resource <packagePath> <resourceTgi> [--live-index]");
+        return 2;
+    }
+
+    key = key with { TypeName = GuessSceneResourceTypeName(key.Type) };
+    if (key.TypeName is not ("Model" or "ModelLOD" or "Geometry"))
+    {
+        Console.Error.WriteLine($"Unsupported scene resource type 0x{key.Type:X8}. Expected Model, ModelLOD, or Geometry.");
+        return 3;
+    }
+
+    ICacheService cache = useLiveIndex
+        ? new FileSystemCacheService()
+        : new ProbeCacheService(Path.Combine(AppContext.BaseDirectory, "probe-cache-scene-resource"));
+    cache.EnsureCreated();
+
+    var store = new SqliteIndexStore(cache);
+    await store.InitializeAsync(CancellationToken.None);
+
+    var catalog = new LlamaResourceCatalogService();
+    ResourceMetadata? resource = null;
+
+    if (useLiveIndex)
+    {
+        resource = await store.GetResourceByTgiAsync(packagePath, key.FullTgi, CancellationToken.None);
+        resource ??= (await store.GetResourcesByTgiAsync(key.FullTgi, CancellationToken.None))
+            .FirstOrDefault();
+    }
+    else
+    {
+        var source = new DataSourceDefinition(
+            Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            "ProbeSceneResource",
+            Path.GetDirectoryName(packagePath) ?? packagePath,
+            SourceKind.Game);
+        var graphBuilder = new ExplicitAssetGraphBuilder(catalog);
+        var scan = await catalog.ScanPackageAsync(source, packagePath, progress: null, CancellationToken.None);
+        var assets = graphBuilder.BuildAssetSummaries(scan);
+        await store.ReplacePackageAsync(scan, assets, CancellationToken.None);
+        resource = scan.Resources.FirstOrDefault(candidate => candidate.Key.FullTgi.Equals(key.FullTgi, StringComparison.OrdinalIgnoreCase));
+    }
+
+    resource ??= new ResourceMetadata(
+        Guid.NewGuid(),
+        Guid.Empty,
+        SourceKind.Game,
+        packagePath,
+        key,
+        Path.GetFileNameWithoutExtension(packagePath),
+        CompressedSize: null,
+        UncompressedSize: null,
+        IsCompressed: null,
+        PreviewKind.Scene,
+        IsPreviewable: true,
+        IsExportCapable: true,
+        AssetLinkageSummary: string.Empty,
+        Diagnostics: "Synthetic resource metadata created by ProbeAsset --scene-resource.");
+
+    Console.WriteLine("== Direct Scene Resource ==");
+    Console.WriteLine($"Package: {packagePath}");
+    Console.WriteLine($"Resource: {resource.Key.FullTgi} ({resource.Key.TypeName})");
+    Console.WriteLine($"Index: {(useLiveIndex ? "live read-only" : "probe cache")}");
+    Console.WriteLine($"Metadata source: {(resource.Diagnostics.Contains("Synthetic resource metadata", StringComparison.OrdinalIgnoreCase) ? "synthetic" : "indexed/scan")}");
+
+    Console.WriteLine();
+    Console.WriteLine("== Resource Summary ==");
+    ResourceMetadata resolvedResource;
+    byte[] rawBytes;
+    try
+    {
+        await DumpRcolChunkSummary(catalog, resource);
+        resolvedResource = await ResolveCompanionResourceAsync(catalog, resource);
+        rawBytes = await catalog.GetResourceBytesAsync(resolvedResource.PackagePath, resolvedResource.Key, raw: false, CancellationToken.None);
+    }
+    catch (Exception ex) when (ex is KeyNotFoundException or InvalidDataException or NotSupportedException)
+    {
+        Console.Error.WriteLine($"Resource bytes could not be resolved for {resource.Key.FullTgi}: {ex.Message}");
+        return 4;
+    }
+
+    Console.WriteLine(PreviewDebugProbe.InspectModelLod(rawBytes));
+    Console.WriteLine("Material summary:");
+    Console.WriteLine(PreviewDebugProbe.InspectMaterialChunks(rawBytes));
+
+    Console.WriteLine();
+    Console.WriteLine("== Scene Result ==");
+    var sceneBuilder = new BuildBuySceneBuildService(catalog, store);
+    var sceneResult = await sceneBuilder.BuildSceneAsync(resource, CancellationToken.None);
+    WriteSceneResult(sceneResult);
+
+    return sceneResult.Success ? 0 : 4;
 }
 
 static async Task<int> FindStringTableHashAsync(string searchRoot, string hashText, int maxPackages)
@@ -2557,6 +2668,14 @@ static bool TryParseTgi(string fullTgi, out ResourceKeyRecord key)
     key = new ResourceKeyRecord(type, group, instance, type.ToString("X8"));
     return true;
 }
+
+static string GuessSceneResourceTypeName(uint type) => type switch
+{
+    var value when value == (uint)ResourceType.Model => "Model",
+    var value when value == (uint)ResourceType.ModelLOD => "ModelLOD",
+    var value when value == (uint)ResourceType.Geometry => "Geometry",
+    _ => type.ToString("X8")
+};
 
 static void WriteSceneResult(SceneBuildResult result)
 {

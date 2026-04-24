@@ -35,6 +35,42 @@ Status: `In Progress`
 
 #### Problem
 
+Resume from the linked previous thread `019db463-2c27-7591-ad60-4ff246e0b346`, which ended during analysis of user-supplied Build/Buy UV/material preview failures. Six cases were collected under `tmp/uv_misalignment_corpus/`; the previous turn was interrupted while comparing the corpus against the material/UV/alpha code paths. The strongest observed pattern is that several failing cases expose `uvMapping: UvMapping/PackedUInt32`, while the preview still reports material sampling as `scale=(1,1) offset=(0,0)`, and separate cases point at alpha/layer/decal handling plus one Build/Buy model-root regression.
+
+#### Chosen Approach
+
+- Keep this as a corpus-driven diagnosis packet before changing production behavior.
+- Use the saved case files as the failure set and inspect current material decode / UV routing / alpha-late-pass code to find shared seams.
+- Separate likely fixes into bounded tracks: packed `uvMapping` decode/application, texture/MTST state selection, alpha cutout vs blend policy, decal/overlay layering, and the unrelated model-root resolution regression.
+- Only implement a narrow first fix if the corpus and code show one authoritative behavior gap; otherwise document the next probe needed.
+
+#### Actions
+
+- [x] Re-read `AGENT.md`, `docs/planning/current-plan.md`, and handoff/tooling docs.
+- [x] Open the linked previous thread from the local Codex session file and identify the true resume point.
+- [x] Inspect the saved `tmp/uv_misalignment_corpus/` case files.
+- [x] Summarize the recurring failure signatures across the six cases in `tmp/uv_misalignment_corpus/analysis-2026-04-24.md`.
+- [x] Inspect the current code paths for packed `uvMapping`, material sampling transform propagation, alpha policy, decal/overlay layering, and Build/Buy model-root resolution.
+- [x] Decide the narrow first implementation or probe packet: add a `ProbeAsset --scene-resource` mode that can build diagnostics directly from a package + `Model`/`ModelLOD`/`Geometry` TGI, with an optional live-index read mode for cross-package texture lookup parity.
+- [x] Run targeted verification appropriate to that packet: `dotnet build tools\ProbeAsset\ProbeAsset.csproj --no-restore`, plus direct `--scene-resource --live-index` probes for cases `002`, `005`, and `006`.
+- [x] Fold the outcome back into this live plan, `docs/operations/tooling.md`, and `tmp/uv_misalignment_corpus/analysis-2026-04-24.md`.
+- [x] User requested a safety commit/push before continuing; stage only non-junk project changes and exclude large local `satellites/` capture/build artifacts.
+- [ ] Decide the next production packet from the confirmed corpus split.
+
+#### Restart Hints
+
+- The previous thread title is `Оценить шейдеры и материалы`; its local session file is `%USERPROFILE%\.codex\sessions\2026\04\22\rollout-2026-04-22T11-51-31-019db463-2c27-7591-ad60-4ff246e0b346.jsonl`.
+- The collected corpus is `tmp/uv_misalignment_corpus/` with cases `001` through `006`.
+- Treat the prior shader/material research as a required truth source for this packet, not optional background. Start from `docs/shared-ts4-material-texture-pipeline.md`, `docs/workflows/material-pipeline/research-restart-guide.md`, `shader-family-registry.md`, `buildbuy-material-authority-matrix.md`, `edge-family-matrix.md`, and the live-proof queue before changing material semantics.
+- The expectation inherited from that research is that authoritative material discovery and shader-family interpretation should already be mostly correct; new fixes should identify where the current implementation diverges from the researched contract, not replace it with one-off corpus guesses.
+- Case `001` is the bench with visible Material UV shift and `uvMapping: FloatVector`; cases `002`, `003`, `005`, and `006` explicitly report packed `uvMapping` not decoded; case `006` adds `DecalMap` and `overlay`; case `004` is a separate Build/Buy model-root regression.
+- The current user asked to study the previous thread; the next concrete work is to continue the interrupted corpus analysis, not the older `Sim Archetype` audit.
+- Existing `--probe-json` expects a logical Build/Buy asset root, so it returns `null` for the saved `Selected LOD root` TGIs. Use the new direct scene-resource probe for the corpus LOD roots instead of widening logical root search.
+- Current probes confirm that packed `uvMapping` is still reported as undecoded in cases `002`, `005`, and `006`, but the payload words repeatedly look resource-key-like, often including `0x00B2D882`, not like plausible atlas scale/offset. Do not force this into UV scale/offset without stronger evidence.
+- Next production split: first tighten semantic diagnostics/resource-key-like packed payload handling, then handle alpha policy (case `005`) and decal/overlay layering (case `006`) as separate packets.
+
+#### Problem
+
 The repo now has a dense `CAS/Sim` authority companion, but `Build/Buy` authority is still split between the shared guide, edge-family packets, and source notes. That makes the strongest object-side contract harder to reuse and leaves the `Full Build/Buy family authority order` open question broader than it needs to be. The next bounded gap is a dedicated external-first `Build/Buy` material authority matrix that turns the already-proved base path and current family deviations into one restart-safe deep dive.
 
 #### Chosen Approach
