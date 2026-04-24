@@ -1,5 +1,7 @@
 # Large capture and reverse-engineering artifacts.
-captures/live/*.jsonl
+captures/live/*
+!captures/live/reports/
+!captures/live/reports/*.md
 captures/e2e/
 captures/ts4_scene_capture/
 ender_doc/
