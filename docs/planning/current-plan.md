@@ -66,7 +66,7 @@ Resume from the linked previous thread `019db463-2c27-7591-ad60-4ff246e0b346`, w
 - [x] Fresh verification in this resumed thread: targeted tests passed `79/79`, `ProbeAsset` build passed, direct scene-resource probes for cases `002`, `005`, and `006` were refreshed into `tmp/uv_misalignment_corpus/*-build0180.txt`, and the app project builds cleanly as `build-0180`.
 - [x] Current proof pass from thread `019dc072-6986-7a91-a336-9da80a686a4c`: `Shader_FC5FC212` / `DecalMap` research identified the safe alpha source split for case `006`; production fallback now uses diffuse alpha when no explicit alpha/opacity/mask slot exists and keeps `overlay` as an inspectable layered slot.
 - [x] Decide whether `DecalMap` should join the transparent render-policy family after a separate proof pass: `DecalMap` now renders transparent only when alpha/cutout evidence and portable alpha payload are both present.
-- [ ] Keep case `004` model-root resolution as a later independent packet.
+- [x] Case `004` model-root resolution: `ObjectDefinition` swap32 Model references are now resolved from same-package resources before cross-package index lookup, allowing `sculptWall_EP18BIKEparts_01_set1` to open from its identity root.
 
 #### Restart Hints
 
@@ -85,7 +85,8 @@ Resume from the linked previous thread `019db463-2c27-7591-ad60-4ff246e0b346`, w
 - Fresh direct probes confirm the intended diagnostics: case `002` reports resource-key-like packed `uvMapping`; case `005` reports `alpha=opaque transparent=False`; case `006` reports default-state selection, `DecalMapMaterialDecodeStrategy`, and `overlay` as an overlay/layered slot rather than emissive.
 - The latest resumed thread resolved the first `Shader_FC5FC212` / `DecalMap` alpha-source split for case `006`: when there is no explicit alpha/opacity/mask slot, `diffuse` carries the usable alpha channel; `overlay` remains a layered/inspectable texture and must not be generically alpha-composited over diffuse.
 - `case-006-current-scene-resource-build0182.txt` confirms `Material[1]` now reports `alpha=alpha-test-or-blend transparent=True`, `Material alpha source slot: diffuse`, and `Material layered slots: overlay`.
-- Next production split: do not add generic DecalMap overlay composition without stronger sampler evidence; keep model-root resolution (case `004`) separate.
+- Case `004` now resolves `C0DB5AE7:00000000:000000000006FDEA` to same-package model root `01661233:00000000:28A8125661B366E4`; `case-004-current-probe-identity-after-local-swap32.txt` reports `Success: True`, `Status: Partial`, and `Scene: BuildBuy_28A8125661B366E4`.
+- Next production split: do not add generic DecalMap overlay composition without stronger sampler evidence; remaining corpus work should focus on case `001` visible `FloatVector` UV shift or fresh UI validation.
 
 #### Problem
 

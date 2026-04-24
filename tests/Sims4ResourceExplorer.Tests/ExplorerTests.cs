@@ -3861,6 +3861,78 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_UsesSamePackageSwap32ModelRootWithoutIndexStore()
+    {
+        var packagePath = Path.Combine(tempRoot, "objectdefinition-local-swap32.package");
+        var sourceId = Guid.NewGuid();
+        var objectDefinition = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectDefinition", 0x6FDEA);
+        var objectCatalog = CreateResource(sourceId, packagePath, SourceKind.Game, "ObjectCatalog", 0x6FDEA);
+        var resolvedModel = new ResourceMetadata(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            packagePath,
+            new ResourceKeyRecord(0x01661233u, 0, 0x28A8125661B366E4ul, "Model"),
+            "ResolvedLocalModel",
+            1,
+            1,
+            false,
+            PreviewKind.Scene,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+        var resolvedModelLod = new ResourceMetadata(
+            Guid.NewGuid(),
+            sourceId,
+            SourceKind.Game,
+            packagePath,
+            new ResourceKeyRecord((uint)Enum.Parse<LlamaLogic.Packages.ResourceType>("ModelLOD"), 0, resolvedModel.Key.FullInstance, "ModelLOD"),
+            "ResolvedLocalModelLod",
+            1,
+            1,
+            false,
+            PreviewKind.Scene,
+            true,
+            true,
+            string.Empty,
+            string.Empty);
+        var resources = new[]
+        {
+            objectCatalog,
+            objectDefinition,
+            resolvedModel,
+            resolvedModelLod
+        };
+
+        var catalog = new FakeResourceCatalogService(
+            new Dictionary<string, byte[]>
+            {
+                [resolvedModel.Key.FullTgi] = [],
+                [objectDefinition.Key.FullTgi] = CreateSyntheticObjectDefinitionBytes(
+                    "sculptWall_EP18BIKEparts_01_set1",
+                    2,
+                    227,
+                    0x00000004u,
+                    0x28A81256u,
+                    0x61B366E4u,
+                    0x01661233u,
+                    0x00000000u)
+            },
+            new Dictionary<string, string?>());
+        var builder = new ExplicitAssetGraphBuilder(catalog);
+
+        var summary = builder.BuildAssetSummaries(new PackageScanResult(sourceId, SourceKind.Game, packagePath, 0, DateTimeOffset.UtcNow, resources, []))
+            .First(asset => asset.RootKey.FullTgi == objectDefinition.Key.FullTgi);
+        var graph = await builder.BuildAssetGraphAsync(summary, resources, CancellationToken.None);
+
+        Assert.Equal(resolvedModel.Key.FullTgi, graph.BuildBuyGraph!.ModelResource.Key.FullTgi);
+        Assert.Contains(graph.BuildBuyGraph.ModelLodResources, resource => resource.Key.FullTgi == resolvedModelLod.Key.FullTgi);
+        Assert.Contains(graph.Diagnostics, message => message.Contains("ObjectDefinition swap32-resolved references:", StringComparison.Ordinal));
+        Assert.Contains(graph.Diagnostics, message => message.Contains("Using swap32-resolved ObjectDefinition model root:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AssetGraphBuilder_BuildsExplicitBuildBuyGraph_IncludesObjectCatalogHeuristicDiagnostics()
     {
         var packagePath = Path.Combine(tempRoot, "objectcatalog.package");

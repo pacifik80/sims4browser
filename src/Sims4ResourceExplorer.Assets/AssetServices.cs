@@ -4308,42 +4308,57 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     diagnostics.Add($"ObjectDefinition reference candidates: {string.Join("; ", referenceSummary)}");
                 }
 
+                var resolvedSamePackageReferences = ResolvePackageLocalObjectDefinitionResources(parsedObjectDefinition, packageResources);
+                var resolvedReferenceResources = resolvedSamePackageReferences;
+
                 if (indexStore is not null)
                 {
-                    var resolvedReferenceResources = await ResolveCrossPackageObjectDefinitionResourcesAsync(parsedObjectDefinition, cancellationToken).ConfigureAwait(false);
-                    var resolvedReferenceSummary = resolvedReferenceResources
-                        .Take(8)
-                        .Select(static match => $"{match.Key.TypeName} -> {match.Key.FullTgi} @ {Path.GetFileName(match.PackagePath)}")
+                    var resolvedCrossPackageReferences = await ResolveCrossPackageObjectDefinitionResourcesAsync(parsedObjectDefinition, cancellationToken).ConfigureAwait(false);
+                    resolvedReferenceResources = resolvedSamePackageReferences
+                        .Concat(resolvedCrossPackageReferences)
+                        .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+                        .Select(static group => group.First())
                         .ToArray();
-                    if (resolvedReferenceSummary.Length > 0)
-                    {
-                        diagnostics.Add($"ObjectDefinition swap32-resolved references: {string.Join("; ", resolvedReferenceSummary)}");
-                    }
+                }
 
-                    var resolvedModelRoot = resolvedReferenceResources
-                        .FirstOrDefault(static resource => resource.Key.TypeName == "Model");
-                    if (resolvedModelRoot is not null &&
-                        effectiveRoot.Key.FullTgi != resolvedModelRoot.Key.FullTgi &&
-                        modelLods.Length == 0 &&
-                        embeddedLodLabels.Length == 0)
-                    {
-                        effectiveRoot = resolvedModelRoot;
-                        var resolvedLinked = await indexStore
+                var resolvedReferenceSummary = resolvedReferenceResources
+                    .Take(8)
+                    .Select(static match => $"{match.Key.TypeName} -> {match.Key.FullTgi} @ {Path.GetFileName(match.PackagePath)}")
+                    .ToArray();
+                if (resolvedReferenceSummary.Length > 0)
+                {
+                    diagnostics.Add($"ObjectDefinition swap32-resolved references: {string.Join("; ", resolvedReferenceSummary)}");
+                }
+
+                var resolvedModelRoot = resolvedReferenceResources
+                    .FirstOrDefault(static resource => resource.Key.TypeName == "Model");
+                if (resolvedModelRoot is not null &&
+                    effectiveRoot.Key.FullTgi != resolvedModelRoot.Key.FullTgi &&
+                    modelLods.Length == 0 &&
+                    embeddedLodLabels.Length == 0)
+                {
+                    effectiveRoot = resolvedModelRoot;
+                    var resolvedLinked = indexStore is null
+                        ? packageResources
+                            .Where(resource =>
+                                resource.Key.FullTgi != resolvedModelRoot.Key.FullTgi &&
+                                resource.Key.FullInstance == resolvedModelRoot.Key.FullInstance)
+                            .ToArray()
+                        : await indexStore
                             .GetResourcesByInstanceAsync(resolvedModelRoot.PackagePath, resolvedModelRoot.Key.FullInstance, cancellationToken)
                             .ConfigureAwait(false);
-                        linkedResources = linkedResources
-                            .Concat(resolvedLinked.Where(resource => resource.Key.FullTgi != resolvedModelRoot.Key.FullTgi))
-                            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
-                            .Select(static group => group.First())
-                            .OrderBy(static resource => BuildBuyLinkOrder(resource.Key.TypeName))
-                            .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
-                            .ToList();
+                    linkedResources = linkedResources
+                        .Concat(resolvedLinked.Where(resource => resource.Key.FullTgi != resolvedModelRoot.Key.FullTgi))
+                        .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+                        .Select(static group => group.First())
+                        .OrderBy(static resource => BuildBuyLinkOrder(resource.Key.TypeName))
+                        .ThenBy(static resource => resource.Key.TypeName, StringComparer.Ordinal)
+                        .ToList();
 
-                        modelLods = linkedResources.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
-                        textures = linkedResources.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
-                        materialResources = linkedResources.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
-                        diagnostics.Add($"Using swap32-resolved ObjectDefinition model root: {resolvedModelRoot.Key.FullTgi} from {Path.GetFileName(resolvedModelRoot.PackagePath)}.");
-                    }
+                    modelLods = linkedResources.Where(static resource => resource.Key.TypeName == "ModelLOD").ToArray();
+                    textures = linkedResources.Where(static resource => IsTextureType(resource.Key.TypeName)).ToArray();
+                    materialResources = linkedResources.Where(static resource => resource.Key.TypeName is "MaterialDefinition").ToArray();
+                    diagnostics.Add($"Using swap32-resolved ObjectDefinition model root: {resolvedModelRoot.Key.FullTgi} from {Path.GetFileName(resolvedModelRoot.PackagePath)}.");
                 }
             }
             catch (Exception ex)
@@ -5415,6 +5430,27 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         }
 
         return resources
+            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .ToArray();
+    }
+
+    private static ResourceMetadata[] ResolvePackageLocalObjectDefinitionResources(
+        Ts4ObjectDefinition objectDefinition,
+        IReadOnlyList<ResourceMetadata> packageResources)
+    {
+        var swap32Tgis = objectDefinition.ReferenceCandidates
+            .Where(static candidate => candidate.Swap32Key.TypeName is "Model" or "Footprint")
+            .Take(8)
+            .Select(static candidate => candidate.Swap32Key.FullTgi)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (swap32Tgis.Count == 0)
+        {
+            return [];
+        }
+
+        return packageResources
+            .Where(resource => swap32Tgis.Contains(resource.Key.FullTgi))
             .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
             .Select(static group => group.First())
             .ToArray();
