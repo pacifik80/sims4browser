@@ -10,6 +10,10 @@ Primary rule:
 
 Use it when the task is about texture linkage, shader/material decoding, UV routing, viewport rendering, or export for `BuildBuy`, `CAS`, or `Sim`.
 
+When local package probes or manual UI checks reveal shader-family behavior that is not publicly documented, record it under
+[Shader Family Registry / Local Confirmed Findings](workflows/material-pipeline/shader-family-registry.md#local-confirmed-findings).
+Those entries are allowed only as clearly labelled project findings, not as public EA/Maxis specification claims.
+
 Related docs:
 
 - [Knowledge map](knowledge-map.md)

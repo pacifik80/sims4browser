@@ -6,8 +6,9 @@ namespace Sims4ResourceExplorer.Assets;
 
 public sealed record Ts4SimInfoSeedMetadata(string DisplayName, string Description);
 
-internal sealed record Ts4SimModifierEntry(byte ChannelId, float Value);
+internal sealed record Ts4SimModifierEntry(byte ChannelId, float Value, ResourceKeyRecord? ModifierKey = null);
 internal sealed record Ts4SimOutfitPart(uint BodyType, ulong PartInstance);
+internal sealed record Ts4SimGeneticPart(uint BodyType, ulong PartInstance);
 internal sealed record Ts4SimOutfit(uint CategoryValue, IReadOnlyList<Ts4SimOutfitPart> Parts)
 {
     public string CategoryLabel => FormatCategory(CategoryValue);
@@ -62,7 +63,8 @@ internal sealed record Ts4SimInfo(
     IReadOnlyList<Ts4SimModifierEntry> GeneticFaceModifiers,
     IReadOnlyList<Ts4SimModifierEntry> GeneticBodyModifiers,
     IReadOnlyList<uint> GeneticPartBodyTypes,
-    IReadOnlyList<uint> GrowthPartBodyTypes)
+    IReadOnlyList<uint> GrowthPartBodyTypes,
+    IReadOnlyList<Ts4SimGeneticPart> GeneticParts)
 {
     public string SpeciesLabel => FormatSpecies(SpeciesValue);
     public string AgeLabel => FormatAge(AgeFlags);
@@ -258,6 +260,7 @@ internal static class Ts4SimInfoParser
         var geneticBodyModifiers = new List<Ts4SimModifierEntry>();
         var geneticPartCount = 0;
         var geneticPartBodyTypes = new List<uint>();
+        var geneticParts = new List<Ts4SimGeneticPart>();
         var growthPartCount = 0;
         var growthPartBodyTypes = new List<uint>();
         var traitCount = 0;
@@ -293,23 +296,56 @@ internal static class Ts4SimInfoParser
             }
 
             sculptCount = reader.ReadByte();
-            for (var index = 0; index < sculptCount; index++)
+            // EA-shipped SimInfos (e.g. SimulationFullBuild0.package) store sculpts AND the
+            // face/body modifiers as ONE unified stream of 5-byte records — NOT as the
+            // [count][1-byte sculpt indices][count][5-byte face mods][count][5-byte body mods]
+            // layout TS4SimRipper documents. Verified via --probe-siminfo-trace (build 0247):
+            // a global counter byte at byte+1 of each record increments through the entire
+            // stream (sculpts use counters 0x0D..0x28, modifiers continue with 0x29..0x4E).
+            // TS4SimRipper's reader matches their save-game protobuf write-back format, not
+            // EA's binary read format, which is why they never noticed.
+            //
+            // Older save-game-style SimInfos (and our synthetic test data) follow TS4SimRipper's
+            // separated layout. We auto-detect: if a counter pattern is visible at byte+1 of the
+            // first few records, use the unified parser; otherwise fall back to legacy.
+            if (LooksLikeUnifiedModifierStream(stream, sculptCount))
             {
-                sculptChannels.Add(reader.ReadByte());
-            }
+                var streamRecords = ReadUnifiedModifierStream(reader, stream, sculptCount, linkTable);
+                sculptChannels.AddRange(streamRecords.SculptChannels);
+                faceModifiers.AddRange(streamRecords.Modifiers);
+                faceModifierCount = streamRecords.Modifiers.Count;
+                // body list stays empty — modifiers all go through the face list since the
+                // binary doesn't distinguish them. BondMorphResolver iterates both lists.
+                bodyModifierCount = 0;
 
-            faceModifierCount = reader.ReadByte();
-            for (var index = 0; index < faceModifierCount; index++)
+                SkipBytes(stream, streamRecords.GapBytes, "SimInfo modifier-section trailing gap");
+            }
+            else
             {
-                faceModifiers.Add(new Ts4SimModifierEntry(reader.ReadByte(), reader.ReadSingle()));
-            }
+                // Legacy TS4SimRipper format: 1-byte sculpts, then separated face/body sections.
+                for (var index = 0; index < sculptCount; index++)
+                {
+                    sculptChannels.Add(reader.ReadByte());
+                }
 
-            bodyModifierCount = reader.ReadByte();
-            for (var index = 0; index < bodyModifierCount; index++)
-            {
-                bodyModifiers.Add(new Ts4SimModifierEntry(reader.ReadByte(), reader.ReadSingle()));
-            }
+                faceModifierCount = reader.ReadByte();
+                for (var index = 0; index < faceModifierCount; index++)
+                {
+                    var linkIndex = reader.ReadByte();
+                    var weight = reader.ReadSingle();  // legacy uses LE float
+                    _ = TryResolveLink(linkTable, linkIndex, out var modifierKey);
+                    faceModifiers.Add(new Ts4SimModifierEntry(linkIndex, weight, modifierKey));
+                }
 
+                bodyModifierCount = reader.ReadByte();
+                for (var index = 0; index < bodyModifierCount; index++)
+                {
+                    var linkIndex = reader.ReadByte();
+                    var weight = reader.ReadSingle();
+                    _ = TryResolveLink(linkTable, linkIndex, out var modifierKey);
+                    bodyModifiers.Add(new Ts4SimModifierEntry(linkIndex, weight, modifierKey));
+                }
+            }
             SkipBytes(stream, 24L, "SimInfo voice and unknown block");
 
             outfitCategoryCount = ReadCount(reader.ReadUInt32(), 65535, "SimInfo outfit category count");
@@ -412,13 +448,17 @@ internal static class Ts4SimInfoParser
 
             for (var index = 0; index < geneticPartCount; index++)
             {
-                if (!TryReadByte(reader, out _) ||
+                if (!TryReadByte(reader, out int linkIndex) ||
                     !TryReadUInt32(reader, out uint bodyType))
                 {
                     return BuildPartial();
                 }
 
                 geneticPartBodyTypes.Add(bodyType);
+                if (TryResolveLink(linkTable, (byte)linkIndex, out var partKey))
+                {
+                    geneticParts.Add(new Ts4SimGeneticPart(bodyType, partKey.FullInstance));
+                }
             }
 
             if (version >= 32)
@@ -507,7 +547,8 @@ internal static class Ts4SimInfoParser
                 geneticFaceModifiers,
                 geneticBodyModifiers,
                 geneticPartBodyTypes,
-                growthPartBodyTypes);
+                growthPartBodyTypes,
+                geneticParts);
     }
 
     public static Ts4SimInfoSeedMetadata BuildSeedMetadata(ResourceMetadata resource, byte[] bytes)
@@ -810,6 +851,150 @@ internal static class Ts4SimInfoParser
         value = reader.ReadSingle();
         return true;
     }
+
+    private static float ReadSingleBigEndian(BinaryReader reader)
+    {
+        Span<byte> raw = stackalloc byte[4];
+        if (reader.Read(raw) != 4)
+        {
+            throw new EndOfStreamException("Truncated big-endian float in SimInfo modifier weight.");
+        }
+
+        return System.Buffers.Binary.BinaryPrimitives.ReadSingleBigEndian(raw);
+    }
+
+    /// <summary>
+    /// Detects whether the bytes from the current position match the EA-shipped unified-stream
+    /// format: 5-byte records with a global counter at byte+1 starting at 0x0D and incrementing.
+    /// We check the counter values of the first 4 records — if all match the expected sequence,
+    /// it's almost certainly unified. Otherwise it's the TS4SimRipper-style legacy layout.
+    /// </summary>
+    private static bool LooksLikeUnifiedModifierStream(Stream stream, int expectedFirstSculptCount)
+    {
+        // Need at least 4 records' worth of bytes (4 × 5 = 20).
+        if (stream.Position + 20 > stream.Length) return false;
+        var saved = stream.Position;
+        try
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                stream.Position = saved + i * 5 + 1;  // counter byte for record i
+                var counter = stream.ReadByte();
+                if (counter != 0x0D + i) return false;
+            }
+            return true;
+        }
+        finally
+        {
+            stream.Position = saved;
+        }
+    }
+
+    /// <summary>
+    /// Reads the EA-shipped SimInfo modifier section: a unified stream of 5-byte records
+    /// (linkIndex byte + big-endian float weight) where each record's second byte carries a
+    /// global incrementing counter starting at 0x0D. The first <paramref name="sculptCount"/>
+    /// records are sculpts; the remainder are face/body morph modifiers (the binary doesn't
+    /// actually distinguish them — only the SMOD's <c>region</c> field tells us face vs body).
+    ///
+    /// Stops when the counter pattern breaks AND a short scan ahead can't find a resumption.
+    /// May skip up to <c>MaxGapScan</c> trailer bytes between contiguous runs (we observed a
+    /// 6-byte gap between counters 0x45 and 0x47 in one v21 SimInfo).
+    /// </summary>
+    private static ReadStreamRecords ReadUnifiedModifierStream(
+        BinaryReader reader,
+        Stream stream,
+        int sculptCount,
+        IReadOnlyList<ResourceKeyRecord> linkTable)
+    {
+        const int MaxRecords = 256;
+        const int MaxGapScan = 12;
+
+        var sculpts = new List<byte>();
+        var modifiers = new List<Ts4SimModifierEntry>();
+        var totalGap = 0L;
+        var nextCounter = (byte)0x0D;
+        var weightBuf = new byte[4];
+
+        for (var recordIndex = 0; recordIndex < MaxRecords; recordIndex++)
+        {
+            if (stream.Position + 5 > stream.Length) break;
+
+            var recordStart = stream.Position;
+            var counterByte = stream.ReadByte() == -1 ? -1 : 0;
+            stream.Position = recordStart;
+            if (recordStart + 1 >= stream.Length) break;
+            var actualCounter = ReadByteAt(stream, recordStart + 1);
+            if (actualCounter != nextCounter)
+            {
+                // Try to find resumption in the next MaxGapScan bytes.
+                var resumed = false;
+                for (var skip = 1; skip <= MaxGapScan; skip++)
+                {
+                    var probePos = recordStart + skip;
+                    if (probePos + 5 > stream.Length) break;
+                    var probeCounter = ReadByteAt(stream, probePos + 1);
+                    if (probeCounter == nextCounter || probeCounter == nextCounter + 1)
+                    {
+                        if (probeCounter == nextCounter + 1) nextCounter++;
+                        totalGap += skip;
+                        stream.Position = recordStart + skip;
+                        resumed = true;
+                        break;
+                    }
+                }
+                if (!resumed)
+                {
+                    // End of section.
+                    stream.Position = recordStart;
+                    break;
+                }
+                // Resumed — replay this iteration.
+                recordIndex--;
+                continue;
+            }
+
+            // Counter matched. Read the 5-byte record at recordStart.
+            stream.Position = recordStart;
+            var linkIndex = (byte)stream.ReadByte();
+            var weightHi = (byte)stream.ReadByte(); // == counter byte
+            var weightB1 = (byte)stream.ReadByte();
+            var weightB2 = (byte)stream.ReadByte();
+            var weightB3 = (byte)stream.ReadByte();
+            weightBuf[0] = weightHi;
+            weightBuf[1] = weightB1;
+            weightBuf[2] = weightB2;
+            weightBuf[3] = weightB3;
+            var weight = System.Buffers.Binary.BinaryPrimitives.ReadSingleBigEndian(weightBuf);
+
+            if (recordIndex < sculptCount)
+            {
+                sculpts.Add(linkIndex);
+            }
+            else
+            {
+                _ = TryResolveLink(linkTable, linkIndex, out var modifierKey);
+                modifiers.Add(new Ts4SimModifierEntry(linkIndex, weight, modifierKey));
+            }
+            nextCounter++;
+        }
+
+        return new ReadStreamRecords(sculpts, modifiers, totalGap);
+    }
+
+    private static int ReadByteAt(Stream stream, long position)
+    {
+        var saved = stream.Position;
+        stream.Position = position;
+        var b = stream.ReadByte();
+        stream.Position = saved;
+        return b;
+    }
+
+    private readonly record struct ReadStreamRecords(
+        IReadOnlyList<byte> SculptChannels,
+        IReadOnlyList<Ts4SimModifierEntry> Modifiers,
+        long GapBytes);
 
     private static bool TryReadUInt32(BinaryReader reader, out uint value)
     {

@@ -13,4 +13,16 @@
     <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Assets\Sims4ResourceExplorer.Assets.csproj" />
     <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Preview\Sims4ResourceExplorer.Preview.csproj" />
   </ItemGroup>
+
+  <!--
+    System.Drawing.Common is Windows-only on .NET 8+; suppressing CA1416 so we can use
+    Bitmap/LockBits without a platform-specific TFM. The probe is Windows-only by nature
+    (it reads the user's local TS4 install + writes PNGs to disk).
+  -->
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
 </Project>

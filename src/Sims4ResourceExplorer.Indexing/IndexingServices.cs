@@ -35,7 +35,12 @@ public sealed class FileSystemCacheService : ICacheService
 public sealed class SqliteIndexStore : IIndexStore
 {
     private const string SeedFactContentVersionMetadataKey = "seed_fact_content_version";
-    private const string SeedFactContentVersion = "2026-04-19.seed-facts-v1";
+    // Bump this whenever seed-fact extraction changes shape OR when an earlier deployment
+    // wiped fact tables without re-triggering a rescan. The version migration also clears
+    // package fingerprints so NeedsRescanAsync returns true for every package on the next
+    // index run, which forces seed facts to be re-extracted instead of staying empty until
+    // a package's mtime happens to change.
+    private const string SeedFactContentVersion = "2026-05-01.seed-facts-v2";
     private const string SecondaryIndexesSql =
         """
         CREATE UNIQUE INDEX IF NOT EXISTS ux_resources_id ON resources(id);
@@ -619,6 +624,71 @@ public sealed class SqliteIndexStore : IIndexStore
             .ToArray();
     }
 
+    public async Task<BodyRecipeAvailabilitySnapshot> ProbeBodyRecipeAvailabilityAsync(SimInfoSummary metadata, CancellationToken cancellationToken)
+    {
+        var shardResults = await Task.WhenAll(
+            GetServingDatabasePaths().Select(path => ProbeBodyRecipeAvailabilityFromDatabaseAsync(path, metadata, cancellationToken)));
+        long Total = 0, B5 = 0, B5Slot = 0, B5Species = 0, B5Age = 0, B5Gender = 0, B5AllLabels = 0;
+        long Def = 0, DefF = 0, DefM = 0, NakedAny = 0, B5Def = 0, B5Naked = 0;
+        foreach (var snapshot in shardResults)
+        {
+            Total += snapshot.TotalFacts;
+            B5 += snapshot.BodyType5Total;
+            B5Slot += snapshot.BodyType5SlotMatch;
+            B5Species += snapshot.BodyType5SpeciesMatch;
+            B5Age += snapshot.BodyType5AgeMatch;
+            B5Gender += snapshot.BodyType5GenderMatch;
+            B5AllLabels += snapshot.BodyType5AllLabelsMatch;
+            Def += snapshot.DefaultBodyTypeAny;
+            DefF += snapshot.DefaultBodyTypeFemaleAny;
+            DefM += snapshot.DefaultBodyTypeMaleAny;
+            NakedAny += snapshot.HasNakedLinkAny;
+            B5Def += snapshot.BodyType5DefaultAny;
+            B5Naked += snapshot.BodyType5NakedLinkAny;
+        }
+        return new BodyRecipeAvailabilitySnapshot(Total, B5, B5Slot, B5Species, B5Age, B5Gender, B5AllLabels, Def, DefF, DefM, NakedAny, B5Def, B5Naked);
+    }
+
+    private async Task<BodyRecipeAvailabilitySnapshot> ProbeBodyRecipeAvailabilityFromDatabaseAsync(string databasePath, SimInfoSummary metadata, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT
+              COUNT(*),
+              SUM(CASE WHEN body_type = 5 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN body_type = 5 AND lower(coalesce(slot_category, '')) IN ('body', 'full body') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN body_type = 5 AND (species_label IS NULL OR species_label = '' OR lower(species_label) = lower($species)) THEN 1 ELSE 0 END),
+              SUM(CASE WHEN body_type = 5 AND (age_label IS NULL OR age_label = '' OR lower(age_label) = 'unknown' OR lower(age_label) LIKE '%' || lower($age) || '%') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN body_type = 5 AND (gender_label IS NULL OR gender_label = '' OR lower(gender_label) = 'unknown' OR lower(gender_label) = 'unisex' OR lower(gender_label) LIKE '%' || lower($gender) || '%') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN body_type = 5
+                        AND (species_label IS NULL OR species_label = '' OR lower(species_label) = lower($species))
+                        AND (age_label IS NULL OR age_label = '' OR lower(age_label) = 'unknown' OR lower(age_label) LIKE '%' || lower($age) || '%')
+                        AND (gender_label IS NULL OR gender_label = '' OR lower(gender_label) = 'unknown' OR lower(gender_label) = 'unisex' OR lower(gender_label) LIKE '%' || lower($gender) || '%')
+                       THEN 1 ELSE 0 END),
+              SUM(CASE WHEN default_body_type = 1 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN default_body_type_female = 1 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN default_body_type_male = 1 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN has_naked_link = 1 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN body_type = 5 AND default_body_type = 1 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN body_type = 5 AND has_naked_link = 1 THEN 1 ELSE 0 END)
+            FROM cas_part_facts;
+            """;
+        command.Parameters.AddWithValue("$species", metadata.SpeciesLabel ?? string.Empty);
+        command.Parameters.AddWithValue("$age", metadata.AgeLabel ?? string.Empty);
+        command.Parameters.AddWithValue("$gender", metadata.GenderLabel ?? string.Empty);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new BodyRecipeAvailabilitySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+        long ReadLong(int ordinal) => reader.IsDBNull(ordinal) ? 0L : Convert.ToInt64(reader.GetValue(ordinal));
+        return new BodyRecipeAvailabilitySnapshot(
+            ReadLong(0), ReadLong(1), ReadLong(2), ReadLong(3), ReadLong(4), ReadLong(5),
+            ReadLong(6), ReadLong(7), ReadLong(8), ReadLong(9), ReadLong(10), ReadLong(11), ReadLong(12));
+    }
+
     public async Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken)
     {
         var shardResults = await Task.WhenAll(
@@ -944,12 +1014,16 @@ public sealed class SqliteIndexStore : IIndexStore
               AND a.has_scene_root = 1
               AND f.body_type = $bodyType
               AND f.slot_category = $slotCategory
+              -- Species filter: require explicit match against the requested species or
+              -- one of its aliases. Empirically (probed against ClientFullBuild* CASParts)
+              -- 100% of BodyType=5 rows ship with an explicit species_label, so the
+              -- previous NULL/empty pass-through wasn't a useful fallback — it was just a
+              -- hole that allowed non-human shells to slip into human Sim body assemblies
+              -- (the dog-body-on-female-Sim regression).
               AND (
-                    f.species_label IS NULL OR
-                    f.species_label = '' OR
                     lower(f.species_label) = lower($speciesLabel) OR
-                    lower(f.species_label) = lower($speciesAlias0) OR
-                    lower(f.species_label) = lower($speciesAlias1)
+                    (length($speciesAlias0) > 0 AND lower(f.species_label) = lower($speciesAlias0)) OR
+                    (length($speciesAlias1) > 0 AND lower(f.species_label) = lower($speciesAlias1))
                   )
               AND (f.age_label IS NULL OR f.age_label = '' OR lower(f.age_label) = 'unknown' OR lower(f.age_label) LIKE '%' || lower($ageLabel) || '%')
               AND (f.gender_label IS NULL OR f.gender_label = '' OR lower(f.gender_label) = 'unknown' OR lower(f.gender_label) = 'unisex' OR lower(f.gender_label) LIKE '%' || lower($genderLabel) || '%')
@@ -1470,6 +1544,10 @@ public sealed class SqliteIndexStore : IIndexStore
             DELETE FROM sim_template_body_parts;
             DELETE FROM sim_template_facts;
             DELETE FROM cas_part_facts;
+            -- Clear package fingerprints so NeedsRescanAsync returns true for every package
+            -- on the next index run; otherwise the wiped seed-fact tables would stay empty
+            -- until a package's file size or mtime happened to change on disk.
+            DELETE FROM packages;
             INSERT INTO cache_metadata(key, value)
             VALUES ($key, $value)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value;

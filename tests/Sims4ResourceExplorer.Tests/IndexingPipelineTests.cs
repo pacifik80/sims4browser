@@ -808,7 +808,7 @@ public sealed class IndexingPipelineTests
     }
 
     [Fact]
-    public async Task SqliteIndexStore_InitializeInvalidatesStaleSeedFactTablesWithoutDroppingPackageFingerprints()
+    public async Task SqliteIndexStore_InitializeInvalidatesStaleSeedFactTablesAndDropsPackageFingerprints()
     {
         var root = CreatePackageRoot();
 
@@ -859,7 +859,7 @@ public sealed class IndexingPipelineTests
                     """;
                 await using var reader = await countCommand.ExecuteReaderAsync(CancellationToken.None);
                 Assert.True(await reader.ReadAsync(CancellationToken.None));
-                Assert.Equal(1, reader.GetInt32(0));
+                Assert.Equal(0, reader.GetInt32(0));
                 Assert.Equal(0, reader.GetInt32(1));
                 Assert.Equal(0, reader.GetInt32(2));
                 Assert.Equal(0, reader.GetInt32(3));
@@ -2319,6 +2319,7 @@ public sealed class IndexingPipelineTests
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
+        public Task<BodyRecipeAvailabilitySnapshot> ProbeBodyRecipeAvailabilityAsync(SimInfoSummary metadata, CancellationToken cancellationToken) => Task.FromResult(new BodyRecipeAvailabilitySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         public Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateFactSummary>>([]);
         public Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateBodyPartFact>>([]);
         public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;

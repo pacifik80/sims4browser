@@ -6,23 +6,27 @@ This file is the single source of truth for repo-level working rules.
 
 1. `AGENT.md`
 2. `docs/planning/current-plan.md`
-3. `docs/planning/big-plan.md`
-4. `docs/README.md`
-5. `docs/operations/multi-agent-workflow.md`
-6. `docs/operations/tooling.md`
-7. `docs/planning/technical-debt.md`
-8. `docs/planning/unknowns-and-non-goals.md`
-9. `docs/architecture.md`
-10. `docs/supported-types.md`
-11. `docs/known-limitations.md`
-12. `docs/references/codex-wiki/README.md`
-13. `docs/sim-domain-roadmap.md` when touching `CAS` or `Sim`
-14. `docs/sim-body-shell-contract.md` when touching `Sim Archetype` body-shell selection, preview, or audit logic
+3. `docs/knowledge-map.md`
+
+Do not read the rest of the documentation set automatically. Use `docs/knowledge-map.md` and the current task wording to choose the smallest relevant next document set.
+
+Open these only when the task actually needs them:
+
+- `docs/planning/big-plan.md` for durable roadmap or priority changes.
+- `docs/README.md` when updating documentation structure.
+- `docs/operations/multi-agent-workflow.md` when coordinating delegated packets.
+- `docs/operations/tooling.md` when choosing probes, scratch space, or verification commands.
+- `docs/planning/technical-debt.md` and `docs/planning/unknowns-and-non-goals.md` when changing known debt, gaps, or deliberate limits.
+- `docs/architecture.md`, `docs/supported-types.md`, and `docs/known-limitations.md` when changing behavior, support labels, or architecture.
+- `docs/references/codex-wiki/README.md` only when low-level format or evidence research is needed.
+- `docs/sim-domain-roadmap.md` when touching `CAS` or `Sim`.
+- `docs/sim-body-shell-contract.md` when touching `Sim Archetype` body-shell selection, preview, or audit logic.
 
 ## Single Sources
 
 - Repo-level rules: `AGENT.md`
 - Live task plan: `docs/planning/current-plan.md`
+- Knowledge and documentation routing: `docs/knowledge-map.md`
 - Durable roadmap: `docs/planning/big-plan.md`
 - Multi-agent operating model: `docs/operations/multi-agent-workflow.md`
 - Tooling, verification ladder, and scratch-space map: `docs/operations/tooling.md`
@@ -50,7 +54,25 @@ Additional rules:
 
 - The same plan must be updated as work progresses inside the current user request. Do not wait until the end of the session.
 - Keep one clear active checklist instead of scattering progress across multiple process documents.
+- Keep `docs/planning/current-plan.md` compact. It is a resume aid, not a full session log.
+- The active plan should normally contain only the current problem, approach, checklist, and restart hints needed for the next continuation.
+- When a completed block needs to remain searchable, move or summarize its details into the relevant durable doc, workflow note, archive file, or issue-style record, then leave only a short pointer in the current plan.
+- Do not append repeated completed request addenda indefinitely. If the current plan is already long, prefer replacing obsolete completed sections with a compact summary and links before adding new detail.
 - When the task is broad enough for delegation, the manager still writes the plan first and then opens agent packets from that plan.
+
+## Context Discipline
+
+Treat context as a limited engineering resource.
+
+- Prefer targeted search, file outlines, and narrow line ranges before opening entire files.
+- Do not read a whole file larger than about 500 lines or 100 KB unless the task genuinely requires full-file review. Start with symbol search, headings, or focused ranges.
+- Do not paste or preserve large logs, JSONL, traces, SQLite dumps, generated code, binary metadata, or command output in the plan or chat. Store them under scratch/artifact locations and summarize the relevant facts.
+- Before recursive scans, exclude `.git`, `bin`, `obj`, `artifacts`, `tmp`, `.external`, `TestResults`, ignored satellite captures, and generated cache folders unless the task is specifically about those paths.
+- Use `git ls-files` when the question is about repository source, because it ignores local build output and scratch files.
+- Use `Get-ChildItem` or other recursive filesystem scans only with explicit exclusions or a narrow root.
+- Read dense docs through `docs/knowledge-map.md` first. Open deep-dive docs only for the domain currently being touched.
+- Preserve important knowledge by linking it from `docs/knowledge-map.md`, the nearest section README, or a durable topic doc rather than duplicating it across plans.
+- If a file has become a frequent full-context dependency, prefer splitting it along real ownership boundaries during the next relevant maintenance packet.
 
 ## Working Rules
 
@@ -92,6 +114,8 @@ For broad work, especially `Sim`, `CAS`, indexing, and cross-layer preview/expor
 
 - Any substantial change to behavior, supported subsets, workflows, limitations, or current priorities must update the relevant docs in the same change set.
 - `docs/planning/current-plan.md` is the live execution plan and must stay current while work is in progress.
+- `docs/planning/current-plan.md` should stay short enough to read on resume without consuming the session. Archive or summarize completed history instead of carrying it forward verbatim.
+- Long-lived knowledge belongs in topic docs, not in the current plan.
 - `docs/planning/big-plan.md` tracks the durable roadmap.
 - `docs/planning/technical-debt.md` tracks debts we know we should pay down.
 - `docs/planning/unknowns-and-non-goals.md` tracks unresolved limits and deliberate non-goals.
@@ -104,6 +128,8 @@ For broad work, especially `Sim`, `CAS`, indexing, and cross-layer preview/expor
 - `tmp/` is scratch space for probe outputs and local experiments, not durable documentation.
 - `junk/local-artifacts/` is the holding area for local files that are likely not worth reusing but are not deleted yet.
 - Useful research material belongs under `docs/references/`, not in root or temp folders.
+- Large local outputs, traces, SQLite caches, RenderDoc captures, build outputs, and generated satellite payloads must remain ignored and should not be used as default search roots.
+- Keep only small, human-readable reports or manifests in Git when preserving evidence from large local artifacts.
 
 ## Current Strategic Frontier
 

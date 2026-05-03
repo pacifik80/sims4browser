@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Sims4ResourceExplorer.Core\Sims4ResourceExplorer.Core.csproj" />
+    <ProjectReference Include="..\Sims4ResourceExplorer.Packages\Sims4ResourceExplorer.Packages.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

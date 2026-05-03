@@ -30,7 +30,7 @@ public static class SimSceneComposer
 
         bodyRigResources ??= [];
         headRigResources ??= [];
-        var rigCompatibility = EvaluateRigCompatibility(bodyRigResources, headRigResources);
+        var rigCompatibility = EvaluateRigCompatibility(bodyRigResources, headRigResources, simMetadata);
         var execution = ExecuteAssemblyStages(
             name,
             bodyPreview,
@@ -381,8 +381,45 @@ public static class SimSceneComposer
 
     private static SimRigCompatibilityResult EvaluateRigCompatibility(
         IReadOnlyList<ResourceMetadata> bodyRigResources,
-        IReadOnlyList<ResourceMetadata> headRigResources)
+        IReadOnlyList<ResourceMetadata> headRigResources,
+        SimInfoSummary? simMetadata)
     {
+        // Plan E (rig basis unification, build 0238). Per TS4SimRipper's design (Form1.cs:520
+        // and PreviewControl.cs:387), TS4 uses ONE canonical rig per Sim by species×age×occult,
+        // then skins ALL meshes (body + head) against it. The 3-bone overlap "seam problem"
+        // documented in the project memory wasn't a bone-overlap problem — it was a rig-basis
+        // mismatch. The fix: prefer the canonical rig for the Sim's species/age before falling
+        // through to per-mesh shared-resource matching, which only finds compatibility when
+        // body and head GEOMs happen to reference the same Rig resource (rare in practice).
+        var canonicalRigInstance = simMetadata is null
+            ? (ulong?)null
+            : Ts4CanonicalRigCatalog.GetRigInstance(simMetadata.SpeciesLabel, simMetadata.AgeLabel, occultLabel: null);
+        if (canonicalRigInstance is { } canonical)
+        {
+            // If either side resolved a Rig that matches the canonical instance, treat as
+            // canonical match. Otherwise, fall through to the legacy resource-shared paths
+            // and finally to canonical-bone fallback (which still implicitly uses the right
+            // rig at render time).
+            var canonicalMatchedBody = bodyRigResources.Any(r => r.Key.FullInstance == canonical);
+            var canonicalMatchedHead = headRigResources.Any(r => r.Key.FullInstance == canonical);
+            if (canonicalMatchedBody || canonicalMatchedHead)
+            {
+                var rigName = Ts4CanonicalRigCatalog.GetRigName(simMetadata!.SpeciesLabel, simMetadata.AgeLabel) ?? $"0x{canonical:X16}";
+                var sides = (canonicalMatchedBody, canonicalMatchedHead) switch
+                {
+                    (true, true) => "body+head",
+                    (true, false) => "body only (head will be skinned against the same canonical rig)",
+                    (false, true) => "head only (body will be skinned against the same canonical rig)",
+                    _ => "neither"
+                };
+                return new SimRigCompatibilityResult(
+                    BasisKind: SimAssemblyBasisKind.SharedRigInstance,
+                    HasAuthoritativeRigMatch: true,
+                    IsDefinitiveMismatch: false,
+                    $"Body/head assembly using canonical rig {rigName} (0x{canonical:X16}); matched on {sides}.");
+            }
+        }
+
         if (bodyRigResources.Count == 0 || headRigResources.Count == 0)
         {
             return new SimRigCompatibilityResult(
@@ -1051,6 +1088,11 @@ public static class SimSceneComposer
         CanonicalMaterial material,
         SimAssemblySkintoneMaterialRouteData route)
     {
+        // Records the TONE/region linkage in Approximation and sets SourceKind/ViewportTintColor
+        // so the App-layer atlas compositor (MainViewModel.BuildSimArchetypePreviewAsync) can
+        // identify skintone-routed materials and rebind them to the composited skin atlas.
+        // Textures are not modified here — both body and head share the single atlas (they only
+        // differ in their UVs) and the compositor runs post-assembly in the App layer.
         var routeNote = route.SkintoneShift.HasValue
             ? $"Sim skintone route {route.SkintoneInstanceHex ?? "(unknown)"} shift {route.SkintoneShift.Value:0.###}"
             : $"Sim skintone route {route.SkintoneInstanceHex ?? "(unknown)"}";
@@ -1060,9 +1102,11 @@ public static class SimSceneComposer
         var sourceNote = string.IsNullOrWhiteSpace(route.SourceLabel)
             ? null
             : $"source {route.SourceLabel}";
+        var notes = new[] { routeNote, regionNote, sourceNote };
         var approximation = string.IsNullOrWhiteSpace(material.Approximation)
-            ? string.Join(" | ", new[] { routeNote, regionNote, sourceNote }.Where(static note => !string.IsNullOrWhiteSpace(note)))
-            : $"{material.Approximation} | {string.Join(" | ", new[] { routeNote, regionNote, sourceNote }.Where(static note => !string.IsNullOrWhiteSpace(note)))}";
+            ? string.Join(" | ", notes.Where(static note => !string.IsNullOrWhiteSpace(note)))
+            : $"{material.Approximation} | {string.Join(" | ", notes.Where(static note => !string.IsNullOrWhiteSpace(note)))}";
+
         return material with
         {
             Approximation = approximation,
@@ -1072,6 +1116,29 @@ public static class SimSceneComposer
             ViewportTintColor = route.ViewportTintColor ?? material.ViewportTintColor,
             ApproximateBaseColor = route.ViewportTintColor ?? material.ApproximateBaseColor
         };
+    }
+
+    private static ResourceKeyRecord? TryParseResourceKeyFromTgi(string tgi)
+    {
+        if (string.IsNullOrWhiteSpace(tgi))
+        {
+            return null;
+        }
+
+        var parts = tgi.Split(':');
+        if (parts.Length != 3)
+        {
+            return null;
+        }
+
+        if (!uint.TryParse(parts[0], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var type) ||
+            !uint.TryParse(parts[1], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var group) ||
+            !ulong.TryParse(parts[2], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var instance))
+        {
+            return null;
+        }
+
+        return new ResourceKeyRecord(type, group, instance, "_IMG");
     }
 
     private static ScenePreviewContent ApplyApplicationDataToPreview(
@@ -1106,15 +1173,38 @@ public static class SimSceneComposer
     {
         if (skintoneRender is not null)
         {
-            if (skintoneRender.ViewportTintColor is null)
+            if (skintoneRender.ViewportTintColor is null && skintoneRender.BaseTexturePngBytes is null)
             {
                 return [];
+            }
+
+            // Build a single shared CanonicalTexture for the resolved base skin texture
+            // (`tone.SkinSets[0].TextureInstance`). Per the SkinBlender chain in
+            // docs/workflows/material-pipeline/skintone-and-overlay-compositor.md, this is the
+            // authoritative source of visible skin color for body-shell-contribution materials.
+            // Body-shell routes attach this texture; head-shell routes do NOT (head CASPart
+            // diffuse already carries portable face detail).
+            CanonicalTexture? baseSkinTexture = null;
+            if (skintoneRender.BaseTexturePngBytes is { Length: > 0 } bytes &&
+                skintoneRender.BaseTextureResourceTgi is { Length: > 0 } tgi)
+            {
+                var baseKey = TryParseResourceKeyFromTgi(tgi);
+                baseSkinTexture = new CanonicalTexture(
+                    Slot: "diffuse",
+                    FileName: $"skintone_base_{tgi}.png",
+                    PngBytes: bytes,
+                    SourceKey: baseKey,
+                    SourcePackagePath: skintoneRender.BaseTexturePackagePath,
+                    Semantic: CanonicalTextureSemantic.BaseColor,
+                    SourceKind: CanonicalTextureSourceKind.ExplicitIndexed);
             }
 
             var routes = new List<SimAssemblySkintoneMaterialRouteData>();
             foreach (var target in ResolveRegionMapAwareSkintoneTargets(payloadData, bodyRegionMaps, headRegionMaps))
             {
                 var material = payloadData.MergedMaterials[target.MaterialIndex];
+                var isBodyShellTarget = target.SourceLabel.Contains("Body shell", StringComparison.OrdinalIgnoreCase) &&
+                                        !target.SourceLabel.Contains("Head shell", StringComparison.OrdinalIgnoreCase);
                 routes.Add(new SimAssemblySkintoneMaterialRouteData(
                     target.MaterialIndex,
                     string.IsNullOrWhiteSpace(material.Name) ? $"Material {target.MaterialIndex + 1}" : material.Name,
@@ -1125,7 +1215,8 @@ public static class SimSceneComposer
                     target.RegionLabels,
                     skintoneRender.SkintoneShift.HasValue
                         ? $"Route material {target.MaterialIndex + 1:N0} through resolved skintone {skintoneRender.SkintoneInstanceHex ?? "(unknown)"} with shift {skintoneRender.SkintoneShift.Value:0.###} across region_map {string.Join(", ", target.RegionLabels)}."
-                        : $"Route material {target.MaterialIndex + 1:N0} through resolved skintone {skintoneRender.SkintoneInstanceHex ?? "(unknown)"} across region_map {string.Join(", ", target.RegionLabels)}."));
+                        : $"Route material {target.MaterialIndex + 1:N0} through resolved skintone {skintoneRender.SkintoneInstanceHex ?? "(unknown)"} across region_map {string.Join(", ", target.RegionLabels)}.",
+                    isBodyShellTarget ? baseSkinTexture : null));
             }
 
             return routes;
@@ -1790,7 +1881,8 @@ internal sealed record SimAssemblySkintoneMaterialRouteData(
     CanonicalColor? ViewportTintColor,
     string SourceLabel,
     IReadOnlyList<string> RegionLabels,
-    string Notes);
+    string Notes,
+    CanonicalTexture? BaseSkinTexture = null);
 
 internal sealed record SimAssemblyMorphMeshTransformData(
     int MeshIndex,

@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:core="using:Sims4ResourceExplorer.Core"
+    xmlns:local="using:Sims4ResourceExplorer.App"
     xmlns:viewModels="using:Sims4ResourceExplorer.App.ViewModels"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -29,104 +30,84 @@
                 <ColumnDefinition x:Name="PreviewColumn" Width="3*" MinWidth="460" />
             </Grid.ColumnDefinitions>
 
+            <!--
+                Left scope panel — simplified pass.
+                Removed:
+                  - "Scope" title (decoration)
+                  - Browser mode toggle (Asset / Raw): Raw mode dropped from UI for now since
+                    its purpose was unclear; the underlying view-model bindings + listview
+                    on the right are kept so we can re-introduce a toggle later if needed.
+                  - Source scope checkboxes (Game / DLC / Mods): unused, queries hit all
+                    indexed sources by default.
+                  - Configured folders list: redundant with the Update Index dialog.
+                  - Asset Browser facets header text + facet summary helper text: noise.
+                  - Whole Raw Resource facets section.
+                Kept visible:
+                  - Domain combo (Sim / BuildBuy / CAS / All) — primary filter, promoted to top.
+                  - Sort combo — small, useful occasionally.
+                Moved into a collapsed "Advanced" Expander (out of the way but reachable):
+                  - Identity facets (Category / Root type / Identity type)
+                  - Structure facets (Geometry / Thumbnail / Package path filters / has-* flags)
+                  - Raw Catalog Signals (Build/Buy-specific; auto-hides for other domains)
+                  - Capabilities (11 has-X checkboxes — debug-grade)
+            -->
             <ScrollViewer Grid.Column="0">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Scope" FontSize="20" FontWeight="SemiBold" />
+                    <ComboBox Header="Domain" ItemsSource="{Binding AssetDomains}" SelectedItem="{Binding AssetDomain, Mode=TwoWay}" HorizontalAlignment="Stretch" />
+                    <ComboBox Header="Sort" ItemsSource="{Binding AssetSortOptions}" SelectedItem="{Binding AssetSort, Mode=TwoWay}" HorizontalAlignment="Stretch" />
 
-                    <ComboBox Header="Browser mode" ItemsSource="{Binding BrowserModes}" SelectedItem="{Binding SelectedBrowserMode, Mode=TwoWay}" />
+                    <Expander Header="Advanced" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                        <StackPanel Spacing="8">
+                            <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Identity" FontWeight="SemiBold" />
+                                    <AutoSuggestBox Header="Category" PlaceholderText="All" Text="{Binding AssetCategoryText, Mode=TwoWay}" ItemsSource="{Binding AssetCategories}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="Category" />
+                                    <AutoSuggestBox Header="Root type" PlaceholderText="All" Text="{Binding AssetRootTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetRootTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="RootType" />
+                                    <AutoSuggestBox Header="Identity type" PlaceholderText="All" Text="{Binding AssetIdentityTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetIdentityTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="IdentityType" />
+                                </StackPanel>
+                            </Border>
 
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Source scope" FontWeight="SemiBold" />
-                        <CheckBox Content="Game" IsChecked="{Binding IncludeGameSources, Mode=TwoWay}" />
-                        <CheckBox Content="DLC" IsChecked="{Binding IncludeDlcSources, Mode=TwoWay}" />
-                        <CheckBox Content="Mods" IsChecked="{Binding IncludeModsSources, Mode=TwoWay}" />
-                    </StackPanel>
+                            <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Structure" FontWeight="SemiBold" />
+                                    <AutoSuggestBox Header="Geometry type" PlaceholderText="All" Text="{Binding AssetPrimaryGeometryTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetPrimaryGeometryTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="GeometryType" />
+                                    <AutoSuggestBox Header="Thumbnail type" PlaceholderText="All" Text="{Binding AssetThumbnailTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetThumbnailTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="ThumbnailType" />
+                                    <TextBox Header="Package path contains" Text="{Binding AssetPackageText, Mode=TwoWay}" />
+                                    <TextBox Header="Package file / folder" PlaceholderText="EP01\\ClientFullBuild0.package" Text="{Binding AssetPackageRelativeText, Mode=TwoWay}" />
+                                    <CheckBox Content="Has thumbnail" IsChecked="{Binding AssetHasThumbnailOnly, Mode=TwoWay}" />
+                                    <CheckBox Content="Has variants" IsChecked="{Binding AssetVariantsOnly, Mode=TwoWay}" />
+                                </StackPanel>
+                            </Border>
 
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Configured folders" FontWeight="SemiBold" />
-                        <TextBlock Text="Folders are managed from Update Index. Source kind is inferred from the path and can still be filtered below as Game, DLC, or Mods." Opacity="0.7" TextWrapping="WrapWholeWords" />
-                        <ListView MaxHeight="220" ItemsSource="{Binding DataSources}">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Spacing="2">
-                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding RootPath}" TextWrapping="WrapWholeWords" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                    </StackPanel>
+                            <Border Visibility="{Binding AssetCatalogSignalsVisibility}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Raw Catalog Signals" FontWeight="SemiBold" />
+                                    <TextBlock Text="Build/Buy only. Raw ObjectCatalog values, not decoded gameplay categories." Opacity="0.7" TextWrapping="WrapWholeWords" />
+                                    <AutoSuggestBox Header="Catalog signal 0020" PlaceholderText="All" Text="{Binding AssetCatalogSignal0020Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0020Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0020" />
+                                    <AutoSuggestBox Header="Catalog signal 002C" PlaceholderText="All" Text="{Binding AssetCatalogSignal002CText, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal002CValues}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal002C" />
+                                    <AutoSuggestBox Header="Catalog signal 0030" PlaceholderText="All" Text="{Binding AssetCatalogSignal0030Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0030Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0030" />
+                                    <AutoSuggestBox Header="Catalog signal 0034" PlaceholderText="All" Text="{Binding AssetCatalogSignal0034Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0034Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0034" />
+                                </StackPanel>
+                            </Border>
 
-                    <StackPanel Visibility="{Binding AssetBrowserVisibility}" Spacing="8">
-                        <TextBlock Text="Asset Browser facets" FontWeight="SemiBold" />
-                        <ComboBox Header="Domain" ItemsSource="{Binding AssetDomains}" SelectedItem="{Binding AssetDomain, Mode=TwoWay}" />
-                        <TextBlock Text="{Binding AssetFacetSummaryText}" Opacity="0.7" TextWrapping="WrapWholeWords" />
-
-                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Identity" FontWeight="SemiBold" />
-                                <AutoSuggestBox Header="Category" PlaceholderText="All" Text="{Binding AssetCategoryText, Mode=TwoWay}" ItemsSource="{Binding AssetCategories}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="Category" />
-                                <AutoSuggestBox Header="Root type" PlaceholderText="All" Text="{Binding AssetRootTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetRootTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="RootType" />
-                                <AutoSuggestBox Header="Identity type" PlaceholderText="All" Text="{Binding AssetIdentityTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetIdentityTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="IdentityType" />
-                            </StackPanel>
-                        </Border>
-
-                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Structure" FontWeight="SemiBold" />
-                                <AutoSuggestBox Header="Geometry type" PlaceholderText="All" Text="{Binding AssetPrimaryGeometryTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetPrimaryGeometryTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="GeometryType" />
-                                <AutoSuggestBox Header="Thumbnail type" PlaceholderText="All" Text="{Binding AssetThumbnailTypeText, Mode=TwoWay}" ItemsSource="{Binding AssetThumbnailTypes}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="ThumbnailType" />
-                                <TextBox Header="Package path contains" Text="{Binding AssetPackageText, Mode=TwoWay}" />
-                                <TextBox Header="Package file / folder" PlaceholderText="EP01\\ClientFullBuild0.package" Text="{Binding AssetPackageRelativeText, Mode=TwoWay}" />
-                                <CheckBox Content="Has thumbnail" IsChecked="{Binding AssetHasThumbnailOnly, Mode=TwoWay}" />
-                                <CheckBox Content="Has variants" IsChecked="{Binding AssetVariantsOnly, Mode=TwoWay}" />
-                            </StackPanel>
-                        </Border>
-
-                        <Border Visibility="{Binding AssetCatalogSignalsVisibility}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Raw Catalog Signals" FontWeight="SemiBold" />
-                                <TextBlock Text="Build/Buy only. These are raw ObjectCatalog values, not decoded gameplay categories." Opacity="0.7" TextWrapping="WrapWholeWords" />
-                                <AutoSuggestBox Header="Catalog signal 0020" PlaceholderText="All" Text="{Binding AssetCatalogSignal0020Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0020Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0020" />
-                                <AutoSuggestBox Header="Catalog signal 002C" PlaceholderText="All" Text="{Binding AssetCatalogSignal002CText, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal002CValues}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal002C" />
-                                <AutoSuggestBox Header="Catalog signal 0030" PlaceholderText="All" Text="{Binding AssetCatalogSignal0030Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0030Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0030" />
-                                <AutoSuggestBox Header="Catalog signal 0034" PlaceholderText="All" Text="{Binding AssetCatalogSignal0034Text, Mode=TwoWay}" ItemsSource="{Binding AssetCatalogSignal0034Values}" TextChanged="AssetFacetSuggestBox_TextChanged" SuggestionChosen="AssetFacetSuggestBox_SuggestionChosen" GotFocus="AssetFacetSuggestBox_GotFocus" Tag="CatalogSignal0034" />
-                            </StackPanel>
-                        </Border>
-
-                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Capabilities" FontWeight="SemiBold" />
-                                <CheckBox Content="Has scene root" IsChecked="{Binding AssetRequireSceneRoot, Mode=TwoWay}" />
-                                <CheckBox Content="Has identity metadata" IsChecked="{Binding AssetRequireIdentityMetadata, Mode=TwoWay}" />
-                                <CheckBox Content="Has exact geometry candidate" IsChecked="{Binding AssetRequireExactGeometryCandidate, Mode=TwoWay}" />
-                                <CheckBox Content="Has geometry reference" IsChecked="{Binding AssetRequireGeometryReference, Mode=TwoWay}" />
-                                <CheckBox Content="Has rig reference" IsChecked="{Binding AssetRequireRigReference, Mode=TwoWay}" />
-                                <CheckBox Content="Has material refs" IsChecked="{Binding AssetRequireMaterialReferences, Mode=TwoWay}" />
-                                <CheckBox Content="Has texture refs" IsChecked="{Binding AssetRequireTextureReferences, Mode=TwoWay}" />
-                                <CheckBox Content="Has material candidate" IsChecked="{Binding AssetRequireMaterialResourceCandidate, Mode=TwoWay}" />
-                                <CheckBox Content="Has texture candidate" IsChecked="{Binding AssetRequireTextureResourceCandidate, Mode=TwoWay}" />
-                                <CheckBox Content="Package-local graph" IsChecked="{Binding AssetRequirePackageLocalGraph, Mode=TwoWay}" />
-                                <CheckBox Content="Has diagnostics" IsChecked="{Binding AssetRequireDiagnostics, Mode=TwoWay}" />
-                            </StackPanel>
-                        </Border>
-
-                        <ComboBox Header="Sort" ItemsSource="{Binding AssetSortOptions}" SelectedItem="{Binding AssetSort, Mode=TwoWay}" />
-                    </StackPanel>
-
-                    <StackPanel Visibility="{Binding RawBrowserVisibility}" Spacing="8">
-                        <TextBlock Text="Raw Resource facets" FontWeight="SemiBold" />
-                        <ComboBox Header="Domain" ItemsSource="{Binding RawDomains}" SelectedItem="{Binding RawDomain, Mode=TwoWay}" />
-                        <TextBox Header="Type name contains" Text="{Binding RawTypeNameText, Mode=TwoWay}" />
-                        <TextBox Header="Package path contains" Text="{Binding RawPackageText, Mode=TwoWay}" />
-                        <TextBox Header="Group hex contains" Text="{Binding RawGroupHexText, Mode=TwoWay}" />
-                        <TextBox Header="Instance hex contains" Text="{Binding RawInstanceHexText, Mode=TwoWay}" />
-                        <CheckBox Content="Previewable only" IsChecked="{Binding RawPreviewableOnly, Mode=TwoWay}" />
-                        <CheckBox Content="Export-capable only" IsChecked="{Binding RawExportCapableOnly, Mode=TwoWay}" />
-                        <CheckBox Content="Compression known" IsChecked="{Binding RawCompressedKnownOnly, Mode=TwoWay}" />
-                        <ComboBox Header="Link filter" ItemsSource="{Binding LinkFilters}" SelectedItem="{Binding RawLinkFilter, Mode=TwoWay}" />
-                        <ComboBox Header="Sort" ItemsSource="{Binding RawSortOptions}" SelectedItem="{Binding RawSort, Mode=TwoWay}" />
-                    </StackPanel>
+                            <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Capabilities" FontWeight="SemiBold" />
+                                    <CheckBox Content="Has scene root" IsChecked="{Binding AssetRequireSceneRoot, Mode=TwoWay}" />
+                                    <CheckBox Content="Has identity metadata" IsChecked="{Binding AssetRequireIdentityMetadata, Mode=TwoWay}" />
+                                    <CheckBox Content="Has exact geometry candidate" IsChecked="{Binding AssetRequireExactGeometryCandidate, Mode=TwoWay}" />
+                                    <CheckBox Content="Has geometry reference" IsChecked="{Binding AssetRequireGeometryReference, Mode=TwoWay}" />
+                                    <CheckBox Content="Has rig reference" IsChecked="{Binding AssetRequireRigReference, Mode=TwoWay}" />
+                                    <CheckBox Content="Has material refs" IsChecked="{Binding AssetRequireMaterialReferences, Mode=TwoWay}" />
+                                    <CheckBox Content="Has texture refs" IsChecked="{Binding AssetRequireTextureReferences, Mode=TwoWay}" />
+                                    <CheckBox Content="Has material candidate" IsChecked="{Binding AssetRequireMaterialResourceCandidate, Mode=TwoWay}" />
+                                    <CheckBox Content="Has texture candidate" IsChecked="{Binding AssetRequireTextureResourceCandidate, Mode=TwoWay}" />
+                                    <CheckBox Content="Package-local graph" IsChecked="{Binding AssetRequirePackageLocalGraph, Mode=TwoWay}" />
+                                    <CheckBox Content="Has diagnostics" IsChecked="{Binding AssetRequireDiagnostics, Mode=TwoWay}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Expander>
                 </StackPanel>
             </ScrollViewer>
 
@@ -234,22 +215,107 @@
 
             <Grid x:Name="PreviewPaneGrid" Grid.Column="3" Margin="12,0,0,0" RowSpacing="8">
                 <Grid.RowDefinitions>
+                    <RowDefinition x:Name="PreviewViewportRow" Height="*" MinHeight="240" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition x:Name="PreviewViewportRow" Height="*" MinHeight="180" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="12" />
-                    <RowDefinition x:Name="PreviewDiagnosticsRow" Height="*" MinHeight="120" />
                 </Grid.RowDefinitions>
 
-                <TextBlock Text="{Binding PreviewSurfaceTitle}" FontSize="16" FontWeight="SemiBold" />
-                <Grid x:Name="PreviewSurface" Grid.Row="1">
-                    <Image x:Name="UvPreviewImage" Stretch="Uniform" Visibility="Collapsed" />
+                <Grid x:Name="PreviewSurface" Grid.Row="0">
+                    <!--
+                        UV preview surface. Each texture used by the scene is rendered into its
+                        own panel (image with the UV wireframe baked on top + a label) so the
+                        user can see textures arranged in a grid instead of stacked vertically.
+                        ScrollViewer ZoomMode + scroll modes enable pinch/Ctrl+wheel zoom and
+                        pan via scroll bars or middle-drag.
+                    -->
+                    <!--
+                        Mouse interaction mirrors the 3D viewport:
+                          - wheel = zoom (no Ctrl required)
+                          - click-drag (any mouse button) = pan
+                        Items wrap into rows×columns: UvPreviewHost width is constrained
+                        to the ScrollViewer viewport width in code-behind so UniformGridLayout
+                        has a finite measure (otherwise everything ends up in one row).
+                    -->
+                    <ScrollViewer x:Name="UvPreviewScroll"
+                                  Visibility="Collapsed"
+                                  ZoomMode="Enabled"
+                                  MinZoomFactor="0.25"
+                                  MaxZoomFactor="8"
+                                  HorizontalScrollMode="Enabled"
+                                  VerticalScrollMode="Enabled"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Background="#FF111111"
+                                  SizeChanged="UvPreviewScroll_SizeChanged"
+                                  PointerWheelChanged="UvPreviewScroll_PointerWheelChanged"
+                                  PointerPressed="UvPreviewScroll_PointerPressed"
+                                  PointerMoved="UvPreviewScroll_PointerMoved"
+                                  PointerReleased="UvPreviewScroll_PointerReleased"
+                                  PointerCanceled="UvPreviewScroll_PointerReleased"
+                                  PointerCaptureLost="UvPreviewScroll_PointerReleased">
+                        <ItemsRepeater x:Name="UvPreviewHost" Margin="12">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout MinItemWidth="340"
+                                                   MinItemHeight="340"
+                                                   MinRowSpacing="12"
+                                                   MinColumnSpacing="12"
+                                                   ItemsStretch="Fill" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="local:UvPreviewPanel">
+                                    <Border Background="#FF1A1A1A"
+                                            BorderBrush="#FF2A2A2A"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="8">
+                                        <Grid RowSpacing="6">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Grid.Row="0"
+                                                       Text="{x:Bind Label}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="12"
+                                                       Foreground="#FFE0E0E0"
+                                                       TextWrapping="Wrap" />
+                                            <Image Grid.Row="1"
+                                                   Source="{x:Bind Image}"
+                                                   Stretch="Uniform"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </ScrollViewer>
                     <Image x:Name="PreviewImage" Stretch="Uniform" Source="{Binding PreviewImageSource}" />
                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8" Padding="8" Visibility="{Binding DiagnosticsPreviewVisibility}">
                         <TextBox Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
                     </Border>
+                    <!--
+                        Overlay actions sit on top of the preview image (top-right corner) so they
+                        don't steal vertical space from the viewport. Copy = copy preview image,
+                        Reset = reset 3D camera. Anything export/play/stop-related was removed
+                        because we don't have proper assets to export and audio playback isn't in
+                        scope at this stage.
+                    -->
+                    <StackPanel Orientation="Horizontal" Spacing="4"
+                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Margin="0,8,8,0">
+                        <Button Click="CopyPreviewImage_Click"
+                                ToolTipService.ToolTip="Copy preview image">
+                            <SymbolIcon Symbol="Copy" />
+                        </Button>
+                        <Button x:Name="ResetViewButton" Click="ResetView_Click"
+                                ToolTipService.ToolTip="Reset view"
+                                IsEnabled="{Binding CanResetView}">
+                            <SymbolIcon Symbol="Refresh" />
+                        </Button>
+                    </StackPanel>
                 </Grid>
-                <StackPanel Grid.Row="2" Spacing="8">
+                <StackPanel Grid.Row="1" Spacing="8">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -263,16 +329,6 @@
                                      Foreground="{Binding PreviewLoadBrush}"
                                      VerticalAlignment="Center" />
                     </Grid>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Click="CopyPreviewImage_Click" ToolTipService.ToolTip="Copy preview image" MinWidth="32" Padding="8,4">
-                            <SymbolIcon Symbol="Copy" />
-                        </Button>
-                        <Button Click="ExportRaw_Click" Content="Raw Export" />
-                        <Button Click="ExportAsset_Click" Content="Export Asset" IsEnabled="{Binding CanExportSelectedAsset}" />
-                        <Button x:Name="ResetViewButton" Click="ResetView_Click" Content="Reset View" IsEnabled="{Binding CanResetView}" />
-                        <Button Click="PlayAudio_Click" Content="Play" />
-                        <Button Click="StopAudio_Click" Content="Stop" />
-                    </StackPanel>
                     <Border Visibility="{Binding AssetVariantPickerVisibility}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
@@ -316,22 +372,22 @@
                             </Border>
                         </StackPanel>
                     </Border>
-                    <Border Visibility="{Binding SimArchetypeInspectorVisibility}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="10">
+                    <!--
+                        Sim Archetype inspector now lives in a collapsed-by-default Expander so it
+                        doesn't eat vertical space from the 3D viewport. The Morphs and CAS tabs
+                        were dropped; only the Body tab content survives, so we inline it directly
+                        without a TabView wrapper.
+                    -->
+                    <Expander Visibility="{Binding SimArchetypeInspectorVisibility}"
+                              Header="Sim details"
+                              HorizontalAlignment="Stretch"
+                              HorizontalContentAlignment="Stretch">
                         <StackPanel Spacing="8">
-                            <TextBlock Text="Sim Archetype" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding SimArchetypeInspectorSummary}" Opacity="0.7" TextWrapping="WrapWholeWords" />
-                            <TabView SelectedIndex="{Binding SelectedSimArchetypeTabIndex, Mode=TwoWay}"
-                                     IsAddTabButtonVisible="False"
-                                     CanReorderTabs="False">
-                                <TabViewItem Header="Body" IsClosable="False">
-                                    <ScrollViewer MaxHeight="240"
-                                                  VerticalScrollMode="Auto"
-                                                  VerticalScrollBarVisibility="Auto">
-                                        <StackPanel Spacing="10" Padding="0,4,0,0">
+                            <ScrollViewer MaxHeight="320"
+                                          VerticalScrollMode="Auto"
+                                          VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="10" Padding="0,4,0,0">
                                             <StackPanel Spacing="6">
                                                 <TextBlock Text="Template Variations" FontWeight="SemiBold" />
                                                 <TextBlock Text="Archetypes group multiple SimInfo templates. Pick one template to inspect its body inputs and drive the current base-body preview."
@@ -648,133 +704,67 @@
                                             </StackPanel>
                                         </StackPanel>
                                     </ScrollViewer>
-                                </TabViewItem>
-                                <TabViewItem Header="Morphs" IsClosable="False">
-                                    <ScrollViewer MaxHeight="240"
-                                                  VerticalScrollMode="Auto"
-                                                  VerticalScrollBarVisibility="Auto">
-                                        <StackPanel Spacing="6" Padding="0,4,0,0">
-                                            <TextBlock Text="Morph Groups" FontWeight="SemiBold" />
-                                            <ItemsControl ItemsSource="{Binding SelectedSimMorphGroups}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate x:DataType="core:SimMorphGroupSummary">
-                                                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                                CornerRadius="6"
-                                                                Padding="8"
-                                                                Margin="0,0,0,6">
-                                                            <StackPanel Spacing="4">
-                                                                <Grid ColumnSpacing="8">
-                                                                    <Grid.ColumnDefinitions>
-                                                                        <ColumnDefinition Width="*" />
-                                                                        <ColumnDefinition Width="Auto" />
-                                                                    </Grid.ColumnDefinitions>
-                                                                    <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
-                                                                    <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
-                                                                </Grid>
-                                                                <TextBlock Text="{x:Bind Notes}" Opacity="0.7" TextWrapping="WrapWholeWords" MaxLines="2" TextTrimming="CharacterEllipsis" />
-                                                            </StackPanel>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </StackPanel>
-                                    </ScrollViewer>
-                                </TabViewItem>
-                                <TabViewItem Header="CAS" IsClosable="False">
-                                    <ScrollViewer MaxHeight="240"
-                                                  VerticalScrollMode="Auto"
-                                                  VerticalScrollBarVisibility="Auto">
-                                        <StackPanel Spacing="6" Padding="0,4,0,0">
-                                            <TextBlock Text="Clothing and accessory slots stay secondary for now; body assembly should start from the Body tab foundations and morph stack. Authoritative SimInfo outfit/body-part selections win first here too, with compatibility search only filling the gaps." Opacity="0.7" TextWrapping="WrapWholeWords" />
-                                            <TextBlock Text="CAS Slot Candidates" FontWeight="SemiBold" />
-                                            <ItemsControl ItemsSource="{Binding SelectedSimCasSlotFamilies}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate x:DataType="viewModels:SimCasSlotFamilyPickerItem">
-                                                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                                                CornerRadius="6"
-                                                                Padding="8"
-                                                                Margin="0,0,0,6">
-                                                            <StackPanel Spacing="4">
-                                                                <Grid ColumnSpacing="8">
-                                                                    <Grid.ColumnDefinitions>
-                                                                        <ColumnDefinition Width="*" />
-                                                                        <ColumnDefinition Width="Auto" />
-                                                                    </Grid.ColumnDefinitions>
-                                                                    <TextBlock Text="{x:Bind Label}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
-                                                                    <TextBlock Grid.Column="1" Text="{x:Bind Count}" Opacity="0.85" />
-                                                                </Grid>
-                                                                <TextBlock Text="{x:Bind Notes}" Opacity="0.7" TextWrapping="WrapWholeWords" MaxLines="2" TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock Text="{x:Bind SourceLabel}" Opacity="0.7" TextWrapping="WrapWholeWords" />
-                                                                <ComboBox ItemsSource="{x:Bind Options}"
-                                                                          SelectedItem="{x:Bind SelectedOption, Mode=TwoWay}"
-                                                                          DisplayMemberPath="DisplayLabel"
-                                                                          PlaceholderText="No indexed candidates yet"
-                                                                          IsEnabled="{x:Bind HasOptions}" />
-                                                                <TextBlock Text="{x:Bind SelectedOptionLabel}"
-                                                                           FontWeight="SemiBold"
-                                                                           TextWrapping="NoWrap"
-                                                                           TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock Text="{x:Bind SelectionDetailsText}"
-                                                                           Opacity="0.7"
-                                                                           TextWrapping="WrapWholeWords"
-                                                                           FontFamily="Consolas"
-                                                                           MaxLines="2"
-                                                                           TextTrimming="CharacterEllipsis" />
-                                                            </StackPanel>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </StackPanel>
-                                    </ScrollViewer>
-                                </TabViewItem>
-                            </TabView>
+                            <!--
+                                Morphs and CAS tabs were dropped per UI cleanup pass: at this
+                                stage of body-render development we don't have working body
+                                morph sliders or CAS slot variant pickers integrated, so the
+                                tabs were noise. The view-model bindings (SelectedSimMorphGroups,
+                                SelectedSimCasSlotFamilies) remain populated so future tabs/
+                                panels can rebind without rebuilding the underlying graph.
+                            -->
                         </StackPanel>
-                    </Border>
+                    </Expander>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <ComboBox Width="160" Header="Render" ItemsSource="{Binding SceneRenderModes}" SelectedItem="{Binding SelectedSceneRenderMode, Mode=TwoWay}" />
+                        <ComboBox Width="120" Header="UV" ItemsSource="{Binding SceneUvChannelOverrides}" SelectedItem="{Binding SelectedSceneUvChannel, Mode=TwoWay}" />
+                        <ComboBox Width="220" Header="Variant" ItemsSource="{Binding AvailableSceneVariants}" SelectedItem="{Binding SelectedSceneVariant, Mode=TwoWay}" DisplayMemberPath="Label" IsEnabled="{Binding HasSceneVariantOptions}" />
                         <ComboBox Width="180" Header="Slot" ItemsSource="{Binding AvailableSceneTextureSlots}" SelectedItem="{Binding SelectedSceneTextureSlot, Mode=TwoWay}" IsEnabled="{Binding HasSceneTextureSlotOptions}" />
                         <ComboBox Width="320" Header="LOD" ItemsSource="{Binding AvailableSceneLods}" SelectedItem="{Binding SelectedSceneLod, Mode=TwoWay}" DisplayMemberPath="Label" IsEnabled="{Binding HasSceneLodOptions}" />
                     </StackPanel>
                 </StackPanel>
-                <Grid Grid.Row="3"
-                      Canvas.ZIndex="10"
-                      Background="Transparent"
-                      MinHeight="12"
-                      PointerPressed="PreviewPaneSplitter_PointerPressed"
-                      PointerMoved="PreviewPaneSplitter_PointerMoved"
-                      PointerReleased="PreviewPaneSplitter_PointerReleased"
-                      PointerCanceled="PreviewPaneSplitter_PointerReleased">
-                    <Border Height="4"
-                            VerticalAlignment="Center"
-                            Background="{ThemeResource AccentFillColorSecondaryBrush}"
-                            Opacity="0.35"
-                            IsHitTestVisible="False" />
-                </Grid>
-                <Grid Grid.Row="4" Visibility="{Binding DiagnosticsTabsVisibility}">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <Grid ColumnSpacing="8" Margin="0,0,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Diagnostics" FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Click="CopyDiagnostics_Click" ToolTipService.ToolTip="Copy current tab" MinWidth="32" Padding="8,4">
-                            <SymbolIcon Symbol="Copy" />
+                <!--
+                    Diagnostics moved into a collapsible Expander on Row 2 of the preview pane.
+                    Hidden by default — open it when you need the build log. The single "Copy"
+                    button concatenates BOTH the Preview and Details tabs into the clipboard
+                    (see CopyDiagnostics_Click in MainWindow.xaml.cs); was previously two
+                    separate copy buttons that grabbed only the active tab.
+                    The old splitter row was removed: with diagnostics collapsible, the
+                    viewport (Row 0) takes all the slack space automatically.
+                -->
+                <Expander Grid.Row="2"
+                          Header="Diagnostics"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Stretch"
+                          Visibility="{Binding DiagnosticsTabsVisibility}">
+                    <Grid RowSpacing="6">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Button Grid.Row="0"
+                                Click="CopyDiagnostics_Click"
+                                ToolTipService.ToolTip="Copy Preview + Details to clipboard"
+                                HorizontalAlignment="Right"
+                                Padding="8,4">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <SymbolIcon Symbol="Copy" />
+                                <TextBlock Text="Copy all" />
+                            </StackPanel>
                         </Button>
+                        <TabView Grid.Row="1"
+                                 Height="240"
+                                 SelectedIndex="{Binding SelectedPreviewDiagnosticsTabIndex, Mode=TwoWay}"
+                                 IsAddTabButtonVisible="False"
+                                 CanReorderTabs="False">
+                            <TabViewItem Header="Preview" IsClosable="False">
+                                <TextBox Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
+                            </TabViewItem>
+                            <TabViewItem Header="Details" IsClosable="False">
+                                <TextBox Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
+                            </TabViewItem>
+                        </TabView>
                     </Grid>
-                    <TabView Grid.Row="1" SelectedIndex="{Binding SelectedPreviewDiagnosticsTabIndex, Mode=TwoWay}" IsAddTabButtonVisible="False" CanReorderTabs="False">
-                        <TabViewItem Header="Preview" IsClosable="False">
-                            <TextBox Text="{Binding PreviewText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" />
-                        </TabViewItem>
-                        <TabViewItem Header="Details" IsClosable="False">
-                            <TextBox Text="{Binding DetailsText}" AcceptsReturn="True" IsReadOnly="True" TextWrapping="Wrap" />
-                        </TabViewItem>
-                    </TabView>
-                </Grid>
+                </Expander>
             </Grid>
         </Grid>
 

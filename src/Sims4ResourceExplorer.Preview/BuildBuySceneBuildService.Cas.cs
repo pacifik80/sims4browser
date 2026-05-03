@@ -200,9 +200,23 @@ public sealed partial class BuildBuySceneBuildService
             ? uv0s
             : uv1s;
 
+        var anyVertexId = geom.Vertices.Any(static v => v.VertexId.HasValue);
+        var vertexIds = anyVertexId
+            ? geom.Vertices.Select(static v => v.VertexId ?? 0u).ToArray()
+            : null;
+        var anyTagVal = geom.Vertices.Any(static v => v.TagVal.HasValue);
+        var vertexTags = anyTagVal
+            ? geom.Vertices.Select(static v => v.TagVal ?? 0u).ToArray()
+            : null;
+        var stitchUv1s = geom.StitchUv1ByVertex.Count > 0 ? geom.StitchUv1ByVertex : null;
+        // Build 0272: apply per-vertex bind correction when the mesh was authored against
+        // a different rig than the current one (animal child sims). Translates each vertex
+        // by the weighted sum of (current_bone_world - authoring_bone_world). For child
+        // cats this pulls the ears/tail mesh down from adult-Y=0.4 to child-Y=0.2.
+        var positions = ApplyChildRigBindCorrection(geom, rig.Rig, rig.AuthoringRig);
         var mesh = new CanonicalMesh(
             $"Mesh_{geometryResource.Key.FullInstance:X16}",
-            geom.Vertices.SelectMany(static vertex => vertex.Position).ToArray(),
+            positions,
             geom.Vertices.SelectMany(static vertex => vertex.Normal ?? []).ToArray(),
             geom.Vertices.SelectMany(static vertex => vertex.Tangent ?? []).ToArray(),
             primaryUvs,
@@ -211,7 +225,10 @@ public sealed partial class BuildBuySceneBuildService
             0,
             geom.Indices,
             0,
-            skinWeights);
+            skinWeights,
+            vertexIds,
+            vertexTags,
+            stitchUv1s);
 
         var scene = new CanonicalScene(
             logicalRootResource.Name ?? geometryResource.Name ?? $"Cas_{logicalRootResource.Key.FullInstance:X16}",
@@ -411,11 +428,6 @@ public sealed partial class BuildBuySceneBuildService
                 .OrderBy(static resource => resource.Key.Group),
             isPreferred: false);
 
-        if (candidateResources.Count == 0)
-        {
-            return new Ts4RigResolution(null, ["No exact-instance Rig resource was resolved for this geometry. Bone names will fall back to GEOM hashes."]);
-        }
-
         var geomBoneHashes = geom.BoneHashes.Count == 0
             ? null
             : geom.BoneHashes.ToHashSet();
@@ -424,36 +436,177 @@ public sealed partial class BuildBuySceneBuildService
         var bestOverlap = -1;
         var bestIsExactInstance = false;
         var bestIsPreferred = false;
+        var bestIsCanonical = false;
 
-        foreach (var (resource, isPreferred, isExactInstance) in candidateResources)
+        if (candidateResources.Count == 0)
         {
-            try
+            diagnostics.Add("No exact-instance Rig resource found; trying canonical age/species rigs by FNV-1 name hash.");
+        }
+        else
+        {
+            foreach (var (resource, isPreferred, isExactInstance) in candidateResources)
             {
-                var rigPackageName = Path.GetFileName(resource.PackagePath);
-                var bytes = await resourceCatalogService.GetResourceBytesAsync(
-                    resource.PackagePath,
-                    resource.Key,
-                    raw: false,
-                    cancellationToken,
-                    CreateReadProgressReporter(null, 0d, 1d, rigPackageName)).ConfigureAwait(false);
-                var parsedRig = Ts4RigResource.Parse(bytes);
-                var overlap = geomBoneHashes is null
-                    ? 0
-                    : parsedRig.Bones.Count(bone => geomBoneHashes.Contains(bone.NameHash));
-                if (bestRig is null ||
-                    overlap > bestOverlap ||
-                    (overlap == bestOverlap && isExactInstance && !bestIsExactInstance))
+                try
                 {
-                    bestRig = parsedRig;
-                    bestRigResource = resource;
-                    bestOverlap = overlap;
-                    bestIsExactInstance = isExactInstance;
-                    bestIsPreferred = isPreferred;
+                    var rigPackageName = Path.GetFileName(resource.PackagePath);
+                    var bytes = await resourceCatalogService.GetResourceBytesAsync(
+                        resource.PackagePath,
+                        resource.Key,
+                        raw: false,
+                        cancellationToken,
+                        CreateReadProgressReporter(null, 0d, 1d, rigPackageName)).ConfigureAwait(false);
+                    var parsedRig = Ts4RigResource.Parse(bytes);
+                    var overlap = geomBoneHashes is null
+                        ? 0
+                        : parsedRig.Bones.Count(bone => geomBoneHashes.Contains(bone.NameHash));
+                    if (bestRig is null ||
+                        overlap > bestOverlap ||
+                        (overlap == bestOverlap && isExactInstance && !bestIsExactInstance))
+                    {
+                        bestRig = parsedRig;
+                        bestRigResource = resource;
+                        bestOverlap = overlap;
+                        bestIsExactInstance = isExactInstance;
+                        bestIsPreferred = isPreferred;
+                        bestIsCanonical = false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    diagnostics.Add($"Rig parsing failed for {resource.Key.FullTgi}: {ex.Message}");
                 }
             }
-            catch (Exception ex)
+        }
+
+        if (bestRig is null || bestOverlap == 0)
+        {
+            // Fall back to canonical age/species rigs. TS4 names rigs as GetRigPrefix() + "Rig"
+            // and hashes them with FNV-1 64-bit (lowercase ASCII, multiply-then-XOR). Build 0269
+            // adds species-specific names (acRig, ccRig, adRig, cdRig, alRig, clRig, ahRig,
+            // chRig — see TS4SimRipper PreviewControl.cs:2162 GetRigPrefix). Pick the one with
+            // the most bone-hash overlap with this GEOM. Critical for animals: pet meshes use
+            // species rig bones (e.g. Cat ears reference 7 ear-specific bones that are NOT in
+            // auRig/cuRig but ARE in acRig — verified, full 7/7 overlap).
+            // Build 0270: order matters here. All pet rigs share the same bone hashes
+            // (verified for cat/dog: identical 178-bone set; horse: identical 195-bone
+            // set), so any tied overlap is broken by FIRST-tried-wins. The right rig per
+            // age is determined by an AsyncLocal hint MainViewModel sets via
+            // `BeginSimAgeScope`. Without the hint we fall back to adult-first ordering.
+            var ageHint = CurrentSimAgeHint?.Trim().ToLowerInvariant();
+            var preferChildRigs = ageHint is "child" or "toddler" or "infant" or "kitten" or "puppy" or "foal";
+            var canonicalRigNames = preferChildRigs
+                ? new[]
+                {
+                    "cuRig", "puRig", "nuRig", "auRig",
+                    "ccRig", "acRig",   // child/adult cat
+                    "cdRig", "adRig",   // child/adult dog (large)
+                    "clRig", "alRig",   // child/adult small dog
+                    "chRig", "ahRig",   // child/adult horse
+                }
+                : new[]
+                {
+                    "auRig", "cuRig", "puRig", "nuRig",
+                    "acRig", "ccRig",   // adult/child cat
+                    "adRig", "cdRig",   // adult/child dog (large)
+                    "alRig", "clRig",   // adult/child small dog (& fox-as-small-dog adult)
+                    "ahRig", "chRig",   // adult/child horse
+                };
+            foreach (var rigName in canonicalRigNames)
             {
-                diagnostics.Add($"Rig parsing failed for {resource.Key.FullTgi}: {ex.Message}");
+                var canonicalHash = ComputeTs4Fnv64(rigName);
+                IReadOnlyList<ResourceMetadata> canonicalCandidates;
+                try
+                {
+                    canonicalCandidates = await indexStore.GetResourcesByFullInstanceAsync(canonicalHash, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    diagnostics.Add($"Canonical rig lookup failed for {rigName}: {ex.Message}");
+                    continue;
+                }
+
+                // Build 0269: also probe well-known package paths directly when the index
+                // misses a rig. Pet rigs live in `Data/Client/ClientDeltaBuild0.package` and
+                // its Simulation siblings — verified via brute-force scan of all 4,965 user
+                // packages. The cache index sometimes lacks these packages (partial indexing,
+                // older cache). Fallback ensures animal rendering works even with stale index.
+                var directKey = new ResourceKeyRecord(0x8EAF13DE, 0u, canonicalHash, "Rig");
+                var directProbeRoots = TryResolveGameInstallRoot(geometryResource.PackagePath);
+                IEnumerable<string> directProbePaths = directProbeRoots is null
+                    ? []
+                    : new[]
+                    {
+                        Path.Combine(directProbeRoots, "Data", "Client", "ClientDeltaBuild0.package"),
+                        Path.Combine(directProbeRoots, "Data", "Simulation", "SimulationDeltaBuild0.package"),
+                        Path.Combine(directProbeRoots, "Data", "Simulation", "SimulationPreload.package"),
+                    };
+                foreach (var probePath in directProbePaths.Where(File.Exists))
+                {
+                    if (canonicalCandidates.Any(c => string.Equals(c.PackagePath, probePath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue; // already covered by index
+                    }
+                    try
+                    {
+                        var probeBytes = await resourceCatalogService.GetResourceBytesAsync(
+                            probePath, directKey, raw: false, cancellationToken).ConfigureAwait(false);
+                        if (probeBytes is { Length: > 0 })
+                        {
+                            // Synthesise a ResourceMetadata so the rest of the loop treats it the same.
+                            canonicalCandidates = canonicalCandidates.Concat(new[]
+                            {
+                                new ResourceMetadata(
+                                    Id: Guid.NewGuid(),
+                                    DataSourceId: Guid.Empty,
+                                    SourceKind: SourceKind.Game,
+                                    PackagePath: probePath,
+                                    Key: directKey,
+                                    Name: null,
+                                    CompressedSize: null,
+                                    UncompressedSize: null,
+                                    IsCompressed: null,
+                                    PreviewKind: PreviewKind.Hex,
+                                    IsPreviewable: false,
+                                    IsExportCapable: false,
+                                    AssetLinkageSummary: "Rig",
+                                    Diagnostics: string.Empty)
+                            }).ToList();
+                            break; // one package copy is enough
+                        }
+                    }
+                    catch { /* not in this package */ }
+                }
+
+                foreach (var resource in canonicalCandidates.Where(static r => r.Key.TypeName == "Rig"))
+                {
+                    try
+                    {
+                        var bytes = await resourceCatalogService.GetResourceBytesAsync(
+                            resource.PackagePath,
+                            resource.Key,
+                            raw: false,
+                            cancellationToken,
+                            CreateReadProgressReporter(null, 0d, 1d, Path.GetFileName(resource.PackagePath))).ConfigureAwait(false);
+                        var parsedRig = Ts4RigResource.Parse(bytes);
+                        var overlap = geomBoneHashes is null
+                            ? 0
+                            : parsedRig.Bones.Count(bone => geomBoneHashes.Contains(bone.NameHash));
+                        if (bestRig is null || overlap > bestOverlap)
+                        {
+                            bestRig = parsedRig;
+                            bestRigResource = resource;
+                            bestOverlap = overlap;
+                            bestIsExactInstance = false;
+                            bestIsPreferred = false;
+                            bestIsCanonical = true;
+                        }
+                        break; // one package copy per rig name is sufficient
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics.Add($"Canonical rig parse failed for {rigName} {resource.Key.FullTgi}: {ex.Message}");
+                    }
+                }
             }
         }
 
@@ -466,10 +619,171 @@ public sealed partial class BuildBuySceneBuildService
         var sharedBoneSummary = bestOverlap > 0
             ? $" ({bestOverlap:N0} shared GEOM bone hash(es))"
             : string.Empty;
-        diagnostics.Insert(0, bestIsPreferred && !bestIsExactInstance
-            ? $"Resolved rig from CAS-linked companion resource: {bestRigResource.Key.FullTgi}{sharedBoneSummary}"
-            : $"Resolved rig: {bestRigResource.Key.FullTgi}{sharedBoneSummary}");
-        return new Ts4RigResolution(bestRig, diagnostics);
+        string resolvedFrom = bestIsCanonical
+            ? $"Resolved canonical rig by FNV-1 name hash: {bestRigResource.Key.FullTgi}{sharedBoneSummary}"
+            : bestIsPreferred && !bestIsExactInstance
+                ? $"Resolved rig from CAS-linked companion resource: {bestRigResource.Key.FullTgi}{sharedBoneSummary}"
+                : $"Resolved rig: {bestRigResource.Key.FullTgi}{sharedBoneSummary}";
+        diagnostics.Insert(0, resolvedFrom);
+
+        // Build 0272: when we picked a child pet rig (ccRig/cdRig/clRig/chRig), also load
+        // the adult equivalent. Animal pet CASParts (acHead, acEarsUp, acTailLong, etc.)
+        // have their vertex positions baked at adult-rig world coordinates and are reused
+        // across ages. Without an "authoring rig" reference for child sims, the skinning
+        // math reduces to identity and the mesh stays at adult positions, leaving ears/
+        // tail floating above the smaller child body. The authoring rig lets us compute
+        // a per-bone bind correction that translates each vertex from the adult bone
+        // position to the child bone position. (Only kicks in when the cache is missed —
+        // see CachedSceneBuildService age-keying in build 0271.)
+        Ts4RigResource? authoringRig = null;
+        if (bestIsCanonical && bestRigResource is not null)
+        {
+            var resolvedHash = bestRigResource.Key.FullInstance;
+            var adultEquivalentName = TryGetAdultEquivalentChildRigName(resolvedHash);
+            if (adultEquivalentName is not null)
+            {
+                var adultHash = ComputeTs4Fnv64(adultEquivalentName);
+                authoringRig = await TryLoadCanonicalRigAsync(adultHash, cancellationToken).ConfigureAwait(false);
+                if (authoringRig is not null)
+                {
+                    diagnostics.Add($"Authoring rig for bind-correction: {adultEquivalentName} (0x{adultHash:X16}).");
+                }
+            }
+        }
+
+        return new Ts4RigResolution(bestRig, diagnostics, authoringRig);
+    }
+
+    private static string? TryGetAdultEquivalentChildRigName(ulong childRigInstance)
+    {
+        // FNV-1 64-bit hashes of the four child pet rigs. Map to their adult equivalents.
+        return childRigInstance switch
+        {
+            0xE0FC2EB394790FE3UL => "acRig", // ccRig (child cat) → acRig (adult cat)
+            0xA38013B37167E55AUL => "adRig", // cdRig (child dog) → adRig (adult dog large)
+            0xE85F5BB3984BC762UL => "alRig", // clRig (child little dog) → alRig (adult little dog)
+            0x0C4B17B3AD0032A6UL => "ahRig", // chRig (child horse) → ahRig (adult horse)
+            _ => null
+        };
+    }
+
+    private async Task<Ts4RigResource?> TryLoadCanonicalRigAsync(ulong canonicalHash, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var resources = await indexStore.GetResourcesByFullInstanceAsync(canonicalHash, cancellationToken).ConfigureAwait(false);
+            var rigResource = resources.FirstOrDefault(static r => r.Key.TypeName == "Rig");
+            // Build 0269 fallback: also probe the well-known base-game packages directly
+            // when the index doesn't surface the rig.
+            if (rigResource is null)
+            {
+                var probeRoot = TryResolveGameInstallRoot(@"C:\GAMES\The Sims 4");
+                var probePaths = probeRoot is null ? Array.Empty<string>() : new[]
+                {
+                    Path.Combine(probeRoot, "Data", "Client", "ClientDeltaBuild0.package"),
+                    Path.Combine(probeRoot, "Data", "Simulation", "SimulationDeltaBuild0.package"),
+                    Path.Combine(probeRoot, "Data", "Simulation", "SimulationPreload.package"),
+                };
+                foreach (var probePath in probePaths.Where(File.Exists))
+                {
+                    try
+                    {
+                        var directKey = new ResourceKeyRecord(0x8EAF13DE, 0u, canonicalHash, "Rig");
+                        var bytes = await resourceCatalogService.GetResourceBytesAsync(probePath, directKey, raw: false, cancellationToken).ConfigureAwait(false);
+                        if (bytes is { Length: > 0 })
+                        {
+                            return Ts4RigResource.Parse(bytes);
+                        }
+                    }
+                    catch { }
+                }
+                return null;
+            }
+            var rigBytes = await resourceCatalogService.GetResourceBytesAsync(
+                rigResource.PackagePath, rigResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+            return Ts4RigResource.Parse(rigBytes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static ulong ComputeTs4Fnv64(string name)
+    {
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        var hash = offsetBasis;
+        foreach (var b in System.Text.Encoding.ASCII.GetBytes(name.ToLowerInvariant()))
+        {
+            unchecked { hash *= prime; }
+            hash ^= b;
+        }
+        return hash;
+    }
+
+    private static float[] ApplyChildRigBindCorrection(
+        Ts4GeomResource geom,
+        Ts4RigResource? currentRig,
+        Ts4RigResource? authoringRig)
+    {
+        // Default: copy vertex positions verbatim (3 floats per vertex).
+        var positions = geom.Vertices.SelectMany(static vertex => vertex.Position).ToArray();
+        if (currentRig is null || authoringRig is null) return positions;
+
+        // Compute world translation for every bone in BOTH rigs (parent-walked).
+        var currentByHash = currentRig.Bones.ToDictionary(b => b.NameHash);
+        var authoringByHash = authoringRig.Bones.ToDictionary(b => b.NameHash);
+        var currentWorld = new Dictionary<uint, Matrix4x4>();
+        var authoringWorld = new Dictionary<uint, Matrix4x4>();
+        foreach (var b in currentRig.Bones) ComputeWorldMatrix(b, currentByHash, currentWorld);
+        foreach (var b in authoringRig.Bones) ComputeWorldMatrix(b, authoringByHash, authoringWorld);
+
+        // Per-bone delta = current.translation - authoring.translation. Only for bones
+        // present in BOTH rigs AND used by this geom's skin weights.
+        var deltas = new Dictionary<uint, Vector3>();
+        foreach (var hash in geom.BoneHashes)
+        {
+            if (currentWorld.TryGetValue(hash, out var c) && authoringWorld.TryGetValue(hash, out var a))
+            {
+                var delta = new Vector3(c.M41 - a.M41, c.M42 - a.M42, c.M43 - a.M43);
+                if (delta.LengthSquared() > 1e-8f)
+                {
+                    deltas[hash] = delta;
+                }
+            }
+        }
+        if (deltas.Count == 0) return positions;
+
+        // Apply weighted delta to each vertex. The skin weights are stored on the GEOM
+        // vertex via BlendIndices (indices into geom.BoneHashes) and BlendWeights.
+        for (var v = 0; v < geom.Vertices.Count; v++)
+        {
+            var vertex = geom.Vertices[v];
+            if (vertex.BlendIndices is null || vertex.BlendWeights is null) continue;
+
+            var totalWeight = 0f;
+            for (var i = 0; i < vertex.BlendWeights.Length; i++) totalWeight += MathF.Max(vertex.BlendWeights[i], 0f);
+            if (totalWeight <= 0f) continue;
+
+            var accum = Vector3.Zero;
+            for (var i = 0; i < vertex.BlendIndices.Length && i < vertex.BlendWeights.Length; i++)
+            {
+                var weight = vertex.BlendWeights[i];
+                if (weight <= 0f) continue;
+                var bi = vertex.BlendIndices[i];
+                if (bi < 0 || bi >= geom.BoneHashes.Count) continue;
+                var hash = geom.BoneHashes[bi];
+                if (deltas.TryGetValue(hash, out var d))
+                {
+                    accum += d * (weight / totalWeight);
+                }
+            }
+            positions[v * 3 + 0] += accum.X;
+            positions[v * 3 + 1] += accum.Y;
+            positions[v * 3 + 2] += accum.Z;
+        }
+        return positions;
     }
 
     private static IReadOnlyList<CanonicalBone> BuildCanonicalBones(Ts4GeomResource geom, Ts4RigResource? rig)
@@ -591,6 +905,13 @@ internal sealed class Ts4GeomResource
     public required IReadOnlyList<Ts4GeomVertex> Vertices { get; init; }
     public required IReadOnlyList<int> Indices { get; init; }
     public required IReadOnlyList<uint> BoneHashes { get; init; }
+    /// <summary>
+    /// UV1 stitch entries — per-vertex alternate UV1 coordinates for vertices that sit on a
+    /// UV seam. The DMap morpher prefers the first stitch UV when sampling so that adjacent
+    /// body parts at the seam see the same map cell and stay synchronised. Empty when the
+    /// GEOM doesn't carry any stitches (most non-CAS meshes).
+    /// </summary>
+    public IReadOnlyDictionary<int, float[]> StitchUv1ByVertex { get; init; } = new Dictionary<int, float[]>();
     public bool HasSkinning => Vertices.Any(static vertex => vertex.BlendIndices is not null && vertex.BlendWeights is not null);
 
     public static Ts4GeomResource Parse(byte[] bytes)
@@ -618,13 +939,14 @@ internal sealed class Ts4GeomResource
 
         var indices = ReadSubMeshIndices(reader);
 
+        var stitchUv1ByVertex = new Dictionary<int, float[]>();
         if (version == 0x00000005)
         {
             _ = reader.ReadInt32();
         }
         else if (version >= 0x0000000C)
         {
-            SkipUvStitchData(reader);
+            ReadUvStitchData(reader, stitchUv1ByVertex);
             if (version >= 0x0000000D)
             {
                 SkipSeamStitchData(reader);
@@ -656,7 +978,8 @@ internal sealed class Ts4GeomResource
             Version = version,
             Vertices = vertices,
             Indices = indices,
-            BoneHashes = boneHashes
+            BoneHashes = boneHashes,
+            StitchUv1ByVertex = stitchUv1ByVertex
         };
     }
 
@@ -717,6 +1040,8 @@ internal sealed class Ts4GeomResource
             byte[]? blendIndices = null;
             float[]? blendWeights = null;
             float[]? tangent = null;
+            uint? tagVal = null;
+            uint? vertexId = null;
 
             foreach (var format in formats)
             {
@@ -752,8 +1077,13 @@ internal sealed class Ts4GeomResource
                         tangent = [reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()];
                         break;
                     case 0x07:
+                        // TagVal: per-vertex tag bits used by DMap/BGEO morphers for vertWeight
+                        // ((tag >> 8) & 0xFF for DMap; (tag & 0x003F0000) >> 16 for BGEO faceMorphs).
+                        tagVal = reader.ReadUInt32();
+                        break;
                     case 0x0A:
-                        SkipBytes(reader, 4, $"vertex {index} usage 0x{format.Usage:X8}");
+                        // VertexID: BGEO morphs index per-vertex deltas via this ID.
+                        vertexId = reader.ReadUInt32();
                         break;
                     default:
                         throw new InvalidDataException($"Unsupported GEOM usage 0x{format.Usage:X8}.");
@@ -762,7 +1092,7 @@ internal sealed class Ts4GeomResource
 
             if (position is not null)
             {
-                results.Add(new Ts4GeomVertex(position, normal, tangent, uv0, uv1, blendIndices, blendWeights));
+                results.Add(new Ts4GeomVertex(position, normal, tangent, uv0, uv1, blendIndices, blendWeights, tagVal, vertexId));
             }
         }
 
@@ -801,15 +1131,33 @@ internal sealed class Ts4GeomResource
         return results;
     }
 
-    private static void SkipUvStitchData(BinaryReader reader)
+    private static void ReadUvStitchData(BinaryReader reader, Dictionary<int, float[]> firstStitchByVertex)
     {
+        // UVStitch format mirrored from TS4SimRipper GEOM.cs:4049-4060:
+        //   vertexIndex Int32, count Int32, then count × (2 Single floats = UV1 pair).
+        // We capture the FIRST UV pair per vertex — TS4SimRipper PreviewControl.cs:228-231 uses
+        // stitchList[0] when sampling DMaps, so storing the first is enough for our morph path.
         var stitchCount = ReadNonNegativeInt32(reader, "uv stitch count");
         for (var stitchIndex = 0; stitchIndex < stitchCount; stitchIndex++)
         {
-            EnsureBytesAvailable(reader, sizeof(uint) + sizeof(int), $"uv stitch header #{stitchIndex}");
-            _ = reader.ReadUInt32();
+            EnsureBytesAvailable(reader, sizeof(int) + sizeof(int), $"uv stitch header #{stitchIndex}");
+            var vertexIndex = reader.ReadInt32();
             var coordinateCount = ReadNonNegativeInt32(reader, $"uv stitch coordinate count #{stitchIndex}");
-            SkipBytes(reader, checked((long)coordinateCount * 8), $"uv stitch payload #{stitchIndex}");
+            EnsureBytesAvailable(reader, checked((long)coordinateCount * 8), $"uv stitch payload #{stitchIndex}");
+            float[]? firstUv = null;
+            for (var coordinateIndex = 0; coordinateIndex < coordinateCount; coordinateIndex++)
+            {
+                var u = reader.ReadSingle();
+                var v = reader.ReadSingle();
+                if (coordinateIndex == 0)
+                {
+                    firstUv = new[] { u, v };
+                }
+            }
+            if (vertexIndex >= 0 && firstUv is not null)
+            {
+                firstStitchByVertex[vertexIndex] = firstUv;
+            }
         }
     }
 
@@ -909,7 +1257,9 @@ internal readonly record struct Ts4GeomVertex(
     float[]? Uv0,
     float[]? Uv1,
     byte[]? BlendIndices,
-    float[]? BlendWeights);
+    float[]? BlendWeights,
+    uint? TagVal = null,
+    uint? VertexId = null);
 
 internal sealed class Ts4RigResource
 {
@@ -971,4 +1321,12 @@ internal readonly record struct Ts4RigBone(
     Vector3 Scale,
     uint? ParentHash = null);
 
-internal readonly record struct Ts4RigResolution(Ts4RigResource? Rig, IReadOnlyList<string> Diagnostics);
+internal readonly record struct Ts4RigResolution(
+    Ts4RigResource? Rig,
+    IReadOnlyList<string> Diagnostics,
+    // Build 0272: when the resolved Rig is a child variant (e.g. ccRig) and we suspect
+    // the GEOM vertices are stored at adult-rig world positions (true for animal pet
+    // CASParts shared across ages — acHead, acEarsUp, acTailLong, acShoes_Nude, etc.),
+    // this carries the corresponding adult rig so vertex positions can be corrected
+    // per-bone before the mesh is rendered. Null when no correction is needed.
+    Ts4RigResource? AuthoringRig = null);

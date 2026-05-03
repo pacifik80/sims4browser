@@ -83,6 +83,42 @@ Current concrete live-proof packets:
 - [GenerateSpotLightmap And NextFloorLightMapXform](live-proof-packets/generate-spotlightmap-nextfloorlightmapxform.md)
 - [RefractionMap Live Proof](live-proof-packets/refractionmap-live-proof.md)
 
+## Local Confirmed Findings
+
+This section is intentionally separate from public/reference-backed shader documentation.
+
+Use it for project findings that meet all of these conditions:
+
+- the finding does not contradict the public/reference-backed material above
+- the finding is backed by local package data, probe output, or app diagnostics
+- the finding has been validated in the app or by a user-visible fixture
+- the entry clearly says it is our local finding, not a public EA/Maxis specification
+
+Do not use this section to upgrade a hypothesis into a universal rule. If a finding has not yet been validated visually, mark it as `pending manual confirmation` and keep the production rule conservative.
+
+### `DecalMap` texture-unit split and overlay alpha
+
+Status: local fixture-backed finding; texture-unit split manually improved case `006`; overlay-alpha behavior is implemented and pending manual visual confirmation.
+
+Scope:
+
+- case `006`, `"Beam me up, Blarffy" Novelty Lamp`
+- shader family/profile: `Shader_FC5FC212` / `DecalMap`
+- representative layered texture: `00B2D882:00000000:A4D80FB45AE9066B`
+
+Observed local behavior:
+
+- `DecalMap` can expose `diffuse` and `overlay` as distinct texture units for the same mesh/material section.
+- `diffuse` can carry the alpha/mask role even when `overlay` is the selected visible texture unit.
+- `overlay` remains a distinct visual layer and must not be collapsed into a generic emissive map or blindly composited over diffuse.
+- UV preview and Lit/Flat preview should select from the same material texture-unit model: mesh -> material index -> texture unit -> texture resource + slot/semantic + UV channel/transform.
+- In the case `006` fixture, the `overlay` PNG itself has partial alpha (`188..255`, about `69.68%` non-opaque pixels), so when that overlay texture unit is the selected visual texture, its own alpha is a valid opacity source before falling back to a separate diffuse/alpha mask.
+
+Implementation note:
+
+- Current app preview uses a shared viewport texture selection so `MaterialUv`, `FlatTexture`, and `LitTexture` agree on the selected visual texture unit.
+- This is a local renderer approximation rule, not a claim that we have the full in-game `DecalMap` shader equation.
+
 ## External-backed family packets
 
 ### 1. `SimSkin`

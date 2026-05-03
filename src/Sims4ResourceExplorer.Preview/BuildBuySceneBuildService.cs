@@ -15,13 +15,126 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     private readonly ConcurrentDictionary<(string PackagePath, string FullTgi), Task<byte[]?>> texturePngCache = new();
     private readonly ConcurrentDictionary<string, string[]> siblingClientPackageCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string[]> globalClientPackageCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly uint[] FallbackImageTypes = [0x00B2D882u, 0x2F7D0004u, 0x2BC04EDFu, 0x0988C7E1u, 0x3453CF95u, 0x1B4D2A70u];
+    // Image-type IDs used as fallback texture lookup probes. Values verified against
+    // LlamaLogic.Packages.ResourceType enum (3.8.1): DSTImage, PNGImage, PNGImage2,
+    // LRLEImage, RLE2Image, RLESImage. Pre-0265 this array contained 0x0988C7E1 and
+    // 0x1B4D2A70 — neither is a valid TS4 type ID, so those fallback probes never hit.
+    private static readonly uint[] FallbackImageTypes = [0x00B2D882u, 0x2F7D0004u, 0x2F7D0006u, 0x2BC04EDFu, 0x3453CF95u, 0xBA856C78u];
 
     public BuildBuySceneBuildService(IResourceCatalogService resourceCatalogService, IIndexStore indexStore)
     {
         this.resourceCatalogService = resourceCatalogService;
         this.indexStore = indexStore;
     }
+
+    private static readonly AsyncLocal<SceneBuildTimings?> ambientBuildTimings = new();
+
+    // Build 0270: Sim age hint, used by canonical-rig tie-breaking. All pet rigs (acRig,
+    // ccRig, adRig, cdRig, ...) share the same 178-bone hash set — overlap counts are
+    // identical, so we can't distinguish them by bone-overlap alone. They differ only in
+    // bind-pose POSITIONS (child rigs are smaller/lower than adult rigs). The Sim's age
+    // is the only signal that says which to pick. MainViewModel sets this scope before
+    // each per-layer scene build via `BeginSimAgeScope("Child")` etc.
+    private static readonly AsyncLocal<string?> ambientSimAgeHint = new();
+
+    public static IDisposable BeginSimAgeScope(string? ageLabel)
+    {
+        var previous = ambientSimAgeHint.Value;
+        ambientSimAgeHint.Value = ageLabel;
+        return new SimAgeScopeReset(previous);
+    }
+
+    private sealed class SimAgeScopeReset(string? previous) : IDisposable
+    {
+        public void Dispose() => ambientSimAgeHint.Value = previous;
+    }
+
+    internal static string? CurrentSimAgeHint => ambientSimAgeHint.Value;
+
+    private sealed class SceneBuildTimings
+    {
+        private long indexLookupTicks;
+        private long textureFetchTicks;
+
+        public void AddIndexLookup(long ticks) => Interlocked.Add(ref indexLookupTicks, ticks);
+        public void AddTextureFetch(long ticks) => Interlocked.Add(ref textureFetchTicks, ticks);
+
+        public double IndexLookupMs => indexLookupTicks * 1000d / Stopwatch.Frequency;
+        public double TextureFetchMs => textureFetchTicks * 1000d / Stopwatch.Frequency;
+    }
+
+    private static void AddIndexLookupElapsed(long elapsedTicks) =>
+        ambientBuildTimings.Value?.AddIndexLookup(elapsedTicks);
+
+    private static void AddTextureFetchElapsed(long elapsedTicks) =>
+        ambientBuildTimings.Value?.AddTextureFetch(elapsedTicks);
+
+    private const int SceneCacheCapacity = 8;
+    private readonly object sceneCacheLock = new();
+    private readonly LinkedList<SceneCacheEntry> sceneCacheLru = new();
+
+    private readonly record struct SceneCacheKey(
+        string EntryPoint,
+        string PackagePath,
+        string FullTgi,
+        uint StateHash,
+        string VariantName);
+
+    private sealed record SceneCacheEntry(SceneCacheKey Key, SceneBuildResult Result);
+
+    private SceneBuildResult? TryGetCachedScene(SceneCacheKey key)
+    {
+        lock (sceneCacheLock)
+        {
+            for (var node = sceneCacheLru.First; node is not null; node = node.Next)
+            {
+                if (node.Value.Key.Equals(key))
+                {
+                    var entry = node.Value;
+                    sceneCacheLru.Remove(node);
+                    sceneCacheLru.AddFirst(entry);
+                    return entry.Result;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private void RecordSceneCacheEntry(SceneCacheKey key, SceneBuildResult result)
+    {
+        if (!result.Success || result.Scene is null)
+        {
+            return;
+        }
+
+        lock (sceneCacheLock)
+        {
+            for (var node = sceneCacheLru.First; node is not null; node = node.Next)
+            {
+                if (node.Value.Key.Equals(key))
+                {
+                    sceneCacheLru.Remove(node);
+                    break;
+                }
+            }
+
+            sceneCacheLru.AddFirst(new SceneCacheEntry(key, result));
+            while (sceneCacheLru.Count > SceneCacheCapacity)
+            {
+                sceneCacheLru.RemoveLast();
+            }
+        }
+    }
+
+    private static SceneBuildResult AppendCacheHitDiagnostic(SceneBuildResult cached, double hitElapsedMs) =>
+        cached with
+        {
+            Diagnostics = [
+                .. cached.Diagnostics,
+                FormattableString.Invariant($"[Scene cache hit, returned in {hitElapsedMs:0} ms]")
+            ]
+        };
 
     private Task<IReadOnlyList<ResourceMetadata>> GetPackageInstanceResourcesAsync(
         string packagePath,
@@ -66,11 +179,22 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         cancellationToken.ThrowIfCancellationRequested();
         return texturePngCache.GetOrAdd(
             (packagePath, key.FullTgi),
-            static (cacheKey, state) => state.ResourceCatalogService.GetTexturePngAsync(
-                cacheKey.PackagePath,
-                state.ResourceKey,
-                CancellationToken.None,
-                state.Progress),
+            static async (cacheKey, state) =>
+            {
+                var startTicks = Stopwatch.GetTimestamp();
+                try
+                {
+                    return await state.ResourceCatalogService.GetTexturePngAsync(
+                        cacheKey.PackagePath,
+                        state.ResourceKey,
+                        CancellationToken.None,
+                        state.Progress).ConfigureAwait(false);
+                }
+                finally
+                {
+                    AddTextureFetchElapsed(Stopwatch.GetTimestamp() - startTicks);
+                }
+            },
             (ResourceCatalogService: resourceCatalogService, ResourceKey: key, Progress: progress));
     }
 
@@ -78,42 +202,131 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var stopwatch = Stopwatch.StartNew();
+        var cacheKey = new SceneCacheKey("Default", resource.PackagePath, resource.Key.FullTgi, 0u, string.Empty);
+        if (TryGetCachedScene(cacheKey) is { } cached)
+        {
+            return AppendCacheHitDiagnostic(cached, stopwatch.Elapsed.TotalMilliseconds);
+        }
+        var timings = new SceneBuildTimings();
+        ambientBuildTimings.Value = timings;
         ReportProgress(progress, "Resolving scene root...", 0.02);
 
         SceneBuildResult result;
-        if (resource.Key.TypeName is not ("Model" or "ModelLOD" or "Geometry"))
+        try
         {
-            result = new SceneBuildResult(
-                false,
-                null,
-                [$"Scene reconstruction is currently supported for Model, ModelLOD, and skinned Geometry roots only. Selected type: {resource.Key.TypeName}."],
-                SceneBuildStatus.Unsupported);
+            if (resource.Key.TypeName is not ("Model" or "ModelLOD" or "Geometry"))
+            {
+                result = new SceneBuildResult(
+                    false,
+                    null,
+                    [$"Scene reconstruction is currently supported for Model, ModelLOD, and skinned Geometry roots only. Selected type: {resource.Key.TypeName}."],
+                    SceneBuildStatus.Unsupported);
+            }
+            else
+            {
+                try
+                {
+                    result = resource.Key.TypeName switch
+                    {
+                        "Model" => await BuildModelSceneAsync(resource, cancellationToken, progress),
+                        "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken, progress),
+                        "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken, progress),
+                        _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."], SceneBuildStatus.Unsupported)
+                    };
+                }
+                catch (Exception ex)
+                {
+                    result = new SceneBuildResult(false, null, [$"Scene reconstruction failed for {resource.Key.FullTgi}: {ex.Message}"], SceneBuildStatus.Unsupported);
+                }
+            }
         }
-        else
+        finally
+        {
+            ambientBuildTimings.Value = null;
+        }
+
+        var totalMs = stopwatch.Elapsed.TotalMilliseconds;
+        var indexMs = timings.IndexLookupMs;
+        var fetchMs = timings.TextureFetchMs;
+        var otherMs = Math.Max(0d, totalMs - indexMs - fetchMs);
+        var withTimings = result with
+        {
+            Diagnostics = [
+                .. result.Diagnostics,
+                FormattableString.Invariant($"Scene build timings: total {totalMs:0} ms (index lookups {indexMs:0} ms, texture fetch {fetchMs:0} ms, other {otherMs:0} ms).")
+            ]
+        };
+        RecordSceneCacheEntry(cacheKey, withTimings);
+        return withTimings;
+    }
+
+    public async Task<SceneBuildResult> BuildSceneAsync(BuildBuyAssetGraph buildBuyGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var stopwatch = Stopwatch.StartNew();
+        var cacheKey = new SceneCacheKey(
+            "BuildBuyGraph",
+            buildBuyGraph.ModelResource.PackagePath,
+            buildBuyGraph.ModelResource.Key.FullTgi,
+            buildBuyGraph.MaterialVariantStateHash ?? 0u,
+            buildBuyGraph.MaterialVariantName ?? string.Empty);
+        if (TryGetCachedScene(cacheKey) is { } cached)
+        {
+            return AppendCacheHitDiagnostic(cached, stopwatch.Elapsed.TotalMilliseconds);
+        }
+        var timings = new SceneBuildTimings();
+        ambientBuildTimings.Value = timings;
+        var diagnostics = new List<string>();
+        if (buildBuyGraph.MaterialVariantStateHash is { } stateHash)
+        {
+            diagnostics.Add(
+                string.IsNullOrWhiteSpace(buildBuyGraph.MaterialVariantName)
+                    ? $"Build/Buy graph provided preferred MTST state hash 0x{stateHash:X8}."
+                    : $"Build/Buy graph provided OBJD material variant {buildBuyGraph.MaterialVariantName} -> preferred MTST state hash 0x{stateHash:X8}.");
+        }
+
+        SceneBuildResult result;
+        try
         {
             try
             {
-                result = resource.Key.TypeName switch
-                {
-                    "Model" => await BuildModelSceneAsync(resource, cancellationToken, progress),
-                    "ModelLOD" => await BuildModelLodSceneAsync(resource, resource, cancellationToken, progress),
-                    "Geometry" => await BuildGeometrySceneAsync(resource, resource, cancellationToken, progress),
-                    _ => new SceneBuildResult(false, null, [$"Unsupported scene root {resource.Key.TypeName}."], SceneBuildStatus.Unsupported)
-                };
+                result = await BuildModelSceneAsync(
+                    buildBuyGraph.ModelResource,
+                    cancellationToken,
+                    progress,
+                    buildBuyGraph.MaterialVariantStateHash).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                result = new SceneBuildResult(false, null, [$"Scene reconstruction failed for {resource.Key.FullTgi}: {ex.Message}"], SceneBuildStatus.Unsupported);
+                result = new SceneBuildResult(false, null, [$"Scene reconstruction failed for {buildBuyGraph.ModelResource.Key.FullTgi}: {ex.Message}"], SceneBuildStatus.Unsupported);
             }
         }
-
-        return result with
+        finally
         {
-            Diagnostics = [.. result.Diagnostics, $"Scene build timings: total {stopwatch.Elapsed.TotalMilliseconds:0} ms."]
+            ambientBuildTimings.Value = null;
+        }
+
+        var totalMs = stopwatch.Elapsed.TotalMilliseconds;
+        var indexMs = timings.IndexLookupMs;
+        var fetchMs = timings.TextureFetchMs;
+        var otherMs = Math.Max(0d, totalMs - indexMs - fetchMs);
+        var withTimings = result with
+        {
+            Diagnostics = [
+                .. diagnostics,
+                .. result.Diagnostics,
+                FormattableString.Invariant($"Scene build timings: total {totalMs:0} ms (index lookups {indexMs:0} ms, texture fetch {fetchMs:0} ms, other {otherMs:0} ms).")
+            ]
         };
+        RecordSceneCacheEntry(cacheKey, withTimings);
+        return withTimings;
     }
 
-    private async Task<SceneBuildResult> BuildModelSceneAsync(ResourceMetadata modelResource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress)
+    private async Task<SceneBuildResult> BuildModelSceneAsync(
+        ResourceMetadata modelResource,
+        CancellationToken cancellationToken,
+        IProgress<PreviewBuildProgress>? progress,
+        uint? preferredMtstStateNameHash = null)
     {
         Ts4RcolResource root;
         Ts4ModlChunk modl;
@@ -155,7 +368,9 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     "This usually means the object uses a MODL/MLOD variant outside the currently supported static subset.",
                     $"Parser detail: {ex.Message}"
                 ],
-                cancellationToken);
+                cancellationToken,
+                progress,
+                preferredMtstStateNameHash);
         }
 
         var lodEntries = modl.LodEntries
@@ -168,7 +383,9 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             return await TryIndexedModelLodFallbackAsync(
                 modelResource,
                 [$"Model {modelResource.Key.FullTgi} does not expose any LOD entries."],
-                cancellationToken);
+                cancellationToken,
+                progress,
+                preferredMtstStateNameHash);
         }
 
         var diagnostics = new List<string>
@@ -188,7 +405,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 diagnostics.AddRange(result.Diagnostics);
                 if (result.Resource is not null)
                 {
-                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken, progress);
+                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken, progress, preferredMtstStateNameHash);
                     if (sceneResult.Success)
                     {
                         return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray(), sceneResult.Status);
@@ -203,7 +420,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
-        var embeddedFallback = await TryEmbeddedModelLodFallbackAsync(modelResource, root, diagnostics, cancellationToken).ConfigureAwait(false);
+        var embeddedFallback = await TryEmbeddedModelLodFallbackAsync(modelResource, root, diagnostics, cancellationToken, progress, preferredMtstStateNameHash).ConfigureAwait(false);
         if (embeddedFallback.Success)
         {
             return embeddedFallback;
@@ -211,7 +428,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         diagnostics = embeddedFallback.Diagnostics.ToList();
 
-        var indexedFallback = await TryIndexedModelLodFallbackAsync(modelResource, diagnostics, cancellationToken).ConfigureAwait(false);
+        var indexedFallback = await TryIndexedModelLodFallbackAsync(modelResource, diagnostics, cancellationToken, progress, preferredMtstStateNameHash).ConfigureAwait(false);
         if (indexedFallback.Success)
         {
             return indexedFallback;
@@ -228,7 +445,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 diagnostics.AddRange(result.Diagnostics);
                 if (result.Resource is not null)
                 {
-                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken, progress);
+                    var sceneResult = await BuildModelLodSceneAsync(result.Resource, modelResource, cancellationToken, progress, preferredMtstStateNameHash);
                     if (sceneResult.Success)
                     {
                         return new SceneBuildResult(true, sceneResult.Scene, diagnostics.Concat(sceneResult.Diagnostics).ToArray(), sceneResult.Status);
@@ -250,7 +467,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata modelResource,
         IEnumerable<string> existingDiagnostics,
         CancellationToken cancellationToken,
-        IProgress<PreviewBuildProgress>? progress = null)
+        IProgress<PreviewBuildProgress>? progress = null,
+        uint? preferredMtstStateNameHash = null)
     {
         var diagnostics = existingDiagnostics
             .Where(static message => !string.IsNullOrWhiteSpace(message))
@@ -272,7 +490,7 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         diagnostics.Add($"Falling back to {indexedCandidates.Length} exact-instance indexed ModelLOD candidate(s).");
         foreach (var candidate in indexedCandidates)
         {
-            var candidateResult = await BuildModelLodSceneAsync(candidate, modelResource, cancellationToken, progress).ConfigureAwait(false);
+            var candidateResult = await BuildModelLodSceneAsync(candidate, modelResource, cancellationToken, progress, preferredMtstStateNameHash).ConfigureAwait(false);
             if (candidateResult.Success)
             {
                 return new SceneBuildResult(true, candidateResult.Scene, diagnostics.Concat(candidateResult.Diagnostics).ToArray(), candidateResult.Status);
@@ -289,7 +507,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         Ts4RcolResource root,
         IEnumerable<string> existingDiagnostics,
         CancellationToken cancellationToken,
-        IProgress<PreviewBuildProgress>? progress = null)
+        IProgress<PreviewBuildProgress>? progress = null,
+        uint? preferredMtstStateNameHash = null)
     {
         var diagnostics = existingDiagnostics
             .Where(static message => !string.IsNullOrWhiteSpace(message))
@@ -334,7 +553,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 syntheticResource,
                 modelResource,
                 cancellationToken,
-                progress).ConfigureAwait(false);
+                progress,
+                preferredMtstStateNameHash).ConfigureAwait(false);
 
             if (candidateResult.Success)
             {
@@ -351,7 +571,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata modelLodResource,
         ResourceMetadata logicalRootResource,
         CancellationToken cancellationToken,
-        IProgress<PreviewBuildProgress>? progress)
+        IProgress<PreviewBuildProgress>? progress,
+        uint? preferredMtstStateNameHash = null)
     {
         Ts4RcolResource rcol;
         Ts4MlodChunk mlod;
@@ -389,7 +610,14 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             return new SceneBuildResult(false, null, [$"ModelLOD {modelLodResource.Key.FullTgi} could not be parsed cleanly: {ex.Message}"], SceneBuildStatus.Unsupported);
         }
 
-        return await BuildParsedModelLodSceneAsync(rcol, mlod, modelLodResource, logicalRootResource, cancellationToken, progress).ConfigureAwait(false);
+        return await BuildParsedModelLodSceneAsync(
+            rcol,
+            mlod,
+            modelLodResource,
+            logicalRootResource,
+            cancellationToken,
+            progress,
+            preferredMtstStateNameHash).ConfigureAwait(false);
     }
 
     private async Task<SceneBuildResult> BuildParsedModelLodSceneAsync(
@@ -398,7 +626,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         ResourceMetadata modelLodResource,
         ResourceMetadata logicalRootResource,
         CancellationToken cancellationToken,
-        IProgress<PreviewBuildProgress>? progress)
+        IProgress<PreviewBuildProgress>? progress,
+        uint? preferredMtstStateNameHash = null)
     {
         var diagnostics = new List<string>();
         var meshes = new List<CanonicalMesh>();
@@ -474,7 +703,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     progress,
                     materialStageStart,
                     materialStageEnd,
-                    meshLabel);
+                    meshLabel,
+                    preferredMtstStateNameHash);
                 diagnostics.AddRange(materialInfo.Diagnostics);
 
                 var materialKey = mesh.MaterialReference.Raw;
@@ -502,7 +732,15 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                         materialInfo.SourceKind,
                         materialInfo.ApproximateBaseColor is { Length: >= 3 } color
                             ? new CanonicalColor(color[0], color[1], color[2], color.Length >= 4 ? color[3] : 1f)
-                            : null));
+                            : null,
+                        ViewportTintColor: null,
+                        Variants: materialInfo.Variants?
+                            .Select(variant => new CanonicalMaterialVariant(
+                                variant.StateNameHash,
+                                variant.VariantName,
+                                variant.IsDefault,
+                                variant.Textures))
+                            .ToArray()));
                 }
 
                 ReportProgress(progress, $"Building {meshLabel}: decoding vertices...", meshStart + (meshSpan * 0.62));
@@ -1124,7 +1362,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         IProgress<PreviewBuildProgress>? progress = null,
         double start = 0d,
         double end = 0d,
-        string label = "material")
+        string label = "material",
+        uint? preferredMtstStateNameHash = null)
     {
         if (materialChunk is null)
         {
@@ -1194,7 +1433,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     .OrderByDescending(candidate => GetMtstStateSelectionPriority(
                         candidate.StateNameHash,
                         HasPortableVisualMaterialPayload(candidate.Material),
-                        candidate.Material.ApproximateBaseColor is { Length: >= 3 }))
+                        candidate.Material.ApproximateBaseColor is { Length: >= 3 },
+                        preferredMtstStateNameHash))
                     .ThenByDescending(static candidate => candidate.Score)
                     .ThenByDescending(candidate => stateTokenStats.GroupSizesByStateHash.TryGetValue(candidate.StateNameHash, out var size) ? size : 0)
                     .ThenByDescending(static candidate => candidate.StateNameHash == 0)
@@ -1202,11 +1442,51 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 var selectedGroup = groupedStates[0];
                 var selected = selectedGroup.Best;
                 var materialInfo = selectedGroup.Material;
+
+                // Expose every alternate MTST state's textures as a structured `Variant`
+                // collection so the UI can surface them as a dedicated Variant dropdown.
+                // The selected state stays as `materialInfo.Textures`; non-selected states
+                // become `Ts4MaterialVariantInfo` entries with their own texture lists.
+                var variantInfos = new List<Ts4MaterialVariantInfo>(groupedStates.Count - 1);
+                foreach (var alternateGroup in groupedStates.Skip(1))
+                {
+                    if (alternateGroup.Material.Textures.Count == 0)
+                    {
+                        continue;
+                    }
+                    variantInfos.Add(new Ts4MaterialVariantInfo(
+                        alternateGroup.StateNameHash,
+                        VariantName: null,
+                        IsDefault: false,
+                        Textures: alternateGroup.Material.Textures));
+                }
+                if (variantInfos.Count > 0)
+                {
+                    var defaultVariant = new Ts4MaterialVariantInfo(
+                        selected.Entry.StateNameHash,
+                        VariantName: null,
+                        IsDefault: true,
+                        Textures: materialInfo.Textures);
+                    var combined = new List<Ts4MaterialVariantInfo>(variantInfos.Count + 1) { defaultVariant };
+                    combined.AddRange(variantInfos);
+                    var variantDiagnostic = $"Discovered {combined.Count} MTST state variant(s); switch between them with the Variant dropdown.";
+                    var combinedDiagnostics = new List<string>(materialInfo.Diagnostics.Count + 1);
+                    combinedDiagnostics.AddRange(materialInfo.Diagnostics);
+                    combinedDiagnostics.Add(variantDiagnostic);
+                    materialInfo = materialInfo with
+                    {
+                        Variants = combined,
+                        Diagnostics = combinedDiagnostics
+                    };
+                }
+
                 if (stateCandidates.Count > 1)
                 {
-                    var stateNote = selected.Entry.StateNameHash == 0
-                        ? "MTST exposes multiple material states; preview evaluated the available entries and kept the inferred default state."
-                        : $"MTST exposes multiple material states; preview evaluated the available entries and selected state hash 0x{selected.Entry.StateNameHash:X8} as the best rendered default.";
+                    var stateNote = selected.Entry.StateNameHash == preferredMtstStateNameHash && preferredMtstStateNameHash is not null
+                        ? $"MTST exposes multiple material states; preview selected OBJD material variant state hash 0x{selected.Entry.StateNameHash:X8}."
+                        : selected.Entry.StateNameHash == 0
+                            ? "MTST exposes multiple material states; preview evaluated the available entries and kept the inferred default state."
+                            : $"MTST exposes multiple material states; preview evaluated the available entries and selected state hash 0x{selected.Entry.StateNameHash:X8} as the best rendered default.";
                     var scoreNote = $"State scores: {string.Join(", ", groupedStates.Select(static group => $"0x{group.StateNameHash:X8}={group.Score}"))}.";
                     var tokenNote = BuildMtstTokenClusterNote(stateTokenStats, groupedStates.Count, selected.Entry.StateNameHash);
                     var diffNote = SummarizeMtstStateDifferences(groupedStates.Select(static group => (group.StateNameHash, group.PropertySummary)).ToArray());
@@ -1577,6 +1857,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     ? "The selected material state exposes no portable texture or color payload; preview falls back to a neutral approximation."
                     : null;
 
+        DeduplicateTextureSlots(textures, diagnostics);
+
         return new Ts4MaterialInfo(
             !string.IsNullOrWhiteSpace(matd.MaterialName) ? matd.MaterialName : $"Material_{matd.MaterialNameHash:X8}",
             matd.ShaderName,
@@ -1646,6 +1928,66 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         slot.Equals("detail", StringComparison.OrdinalIgnoreCase) ||
         slot.Equals("decal", StringComparison.OrdinalIgnoreCase) ||
         slot.Equals("dirt", StringComparison.OrdinalIgnoreCase);
+
+    public static void DeduplicateTextureSlots(List<CanonicalTexture> textures, ICollection<string>? diagnostics = null)
+    {
+        if (textures.Count <= 1)
+        {
+            return;
+        }
+
+        var groups = textures
+            .Select((texture, originalIndex) => (Texture: texture, OriginalIndex: originalIndex))
+            .GroupBy(entry => entry.Texture.Slot, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var rebuilt = new List<CanonicalTexture>(textures.Count);
+        foreach (var group in groups)
+        {
+            var ordered = group
+                .OrderBy(entry => SourceKindTrust(entry.Texture.SourceKind))
+                .ThenBy(entry => entry.OriginalIndex)
+                .ToList();
+            var seenIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var primarySlot = group.Key;
+            var slotOccurrence = 0;
+            foreach (var entry in ordered)
+            {
+                var identity = $"{entry.Texture.SourceKey?.FullTgi ?? "<no-key>"}|{entry.Texture.SourcePackagePath ?? "<no-path>"}";
+                if (!seenIdentities.Add(identity))
+                {
+                    diagnostics?.Add(
+                        $"Discarded duplicate texture entry for slot {primarySlot} ({entry.Texture.SourceKey?.FullTgi ?? "<no-key>"}).");
+                    continue;
+                }
+
+                slotOccurrence++;
+                if (slotOccurrence == 1)
+                {
+                    rebuilt.Add(entry.Texture);
+                }
+                else
+                {
+                    var renamedSlot = $"{primarySlot}_{slotOccurrence}";
+                    diagnostics?.Add(
+                        $"Renamed conflicting texture for slot {primarySlot} to {renamedSlot}; kept the higher-trust resolution as the primary slot.");
+                    rebuilt.Add(entry.Texture with { Slot = renamedSlot });
+                }
+            }
+        }
+
+        textures.Clear();
+        textures.AddRange(rebuilt);
+    }
+
+    private static int SourceKindTrust(CanonicalTextureSourceKind kind) => kind switch
+    {
+        CanonicalTextureSourceKind.ExplicitLocal => 0,
+        CanonicalTextureSourceKind.ExplicitCompanion => 1,
+        CanonicalTextureSourceKind.ExplicitIndexed => 2,
+        CanonicalTextureSourceKind.FallbackSameInstanceLocal => 3,
+        CanonicalTextureSourceKind.FallbackSameInstanceIndexed => 4,
+        _ => 5
+    };
 
     internal static bool ShouldAddFallbackBaseColor(IReadOnlyList<CanonicalTexture> textures) =>
         !textures.Any(static texture => IsVisualColorTextureSlot(texture.Slot));
@@ -1981,8 +2323,14 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     internal static int GetMtstStateSelectionPriority(
         uint stateNameHash,
         bool hasPortableVisualPayload,
-        bool hasApproximateBaseColor)
+        bool hasApproximateBaseColor,
+        uint? preferredStateNameHash = null)
     {
+        if (preferredStateNameHash == stateNameHash)
+        {
+            return 2;
+        }
+
         if (stateNameHash != 0)
         {
             return 0;
@@ -2311,41 +2659,21 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
     private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByKeyCoreAsync(TextureLookupKey lookupKey, CancellationToken cancellationToken)
     {
-        var exactTypeResults = await QueryTextureResourcesByKeyAsync(lookupKey, lookupKey.TypeName, cancellationToken).ConfigureAwait(false);
-        if (exactTypeResults.Count > 0)
+        // Hot path: bypass the generic browser query (RawResourceBrowserQuery + COUNT(*) + LIMIT/OFFSET +
+        // type-name retry) and use the index's direct WHERE instance_hex = ? lookup. Type/group/typename
+        // filtering happens in memory on the small result set, which inherently handles cases where the
+        // indexed type-name (e.g. DSTImage vs PNGImage) differs from the MATD-side reference.
+        var startTicks = Stopwatch.GetTimestamp();
+        IReadOnlyList<ResourceMetadata> byInstance;
+        try
         {
-            return exactTypeResults;
+            byInstance = await indexStore.GetResourcesByFullInstanceAsync(lookupKey.FullInstance, cancellationToken).ConfigureAwait(false);
         }
-
-        // Some indexed game datasets disagree on the friendly image type name for the same numeric
-        // texture type (for example DSTImage vs PNGImage). Retry without the type-name filter and
-        // trust the numeric TGI match instead of the display name.
-        return await QueryTextureResourcesByKeyAsync(lookupKey, string.Empty, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<IReadOnlyList<ResourceMetadata>> QueryTextureResourcesByKeyAsync(
-        TextureLookupKey lookupKey,
-        string typeNameText,
-        CancellationToken cancellationToken)
-    {
-        var query = new RawResourceBrowserQuery(
-            new SourceScope(),
-            SearchText: string.Empty,
-            Domain: RawResourceDomain.Images,
-            TypeNameText: typeNameText,
-            PackageText: string.Empty,
-            GroupHexText: lookupKey.Group.ToString("X8"),
-            InstanceHexText: lookupKey.FullInstance.ToString("X16"),
-            PreviewableOnly: false,
-            ExportCapableOnly: false,
-            CompressedKnownOnly: false,
-            LinkFilter: ResourceLinkFilter.Any,
-            Sort: RawResourceSort.Tgi,
-            Offset: 0,
-            WindowSize: 64);
-
-        var results = await indexStore.QueryResourcesAsync(query, cancellationToken).ConfigureAwait(false);
-        return results.Items
+        finally
+        {
+            AddIndexLookupElapsed(Stopwatch.GetTimestamp() - startTicks);
+        }
+        return byInstance
             .Where(resource => resource.Key.Type == lookupKey.Type &&
                                resource.Key.Group == lookupKey.Group &&
                                resource.Key.FullInstance == lookupKey.FullInstance &&
@@ -2355,24 +2683,19 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
     private async Task<IReadOnlyList<ResourceMetadata>> FindTextureResourcesByInstanceCoreAsync(ulong instance, CancellationToken cancellationToken)
     {
-        var query = new RawResourceBrowserQuery(
-            new SourceScope(),
-            SearchText: string.Empty,
-            Domain: RawResourceDomain.Images,
-            TypeNameText: string.Empty,
-            PackageText: string.Empty,
-            GroupHexText: string.Empty,
-            InstanceHexText: instance.ToString("X16"),
-            PreviewableOnly: false,
-            ExportCapableOnly: false,
-            CompressedKnownOnly: false,
-            LinkFilter: ResourceLinkFilter.Any,
-            Sort: RawResourceSort.Tgi,
-            Offset: 0,
-            WindowSize: 128);
-
-        var results = await indexStore.QueryResourcesAsync(query, cancellationToken).ConfigureAwait(false);
-        return results.Items
+        // Same fast-path direct lookup as FindTextureResourcesByKeyCoreAsync; this overload only filters
+        // on instance and texture type, used when group/type are not yet known.
+        var startTicks = Stopwatch.GetTimestamp();
+        IReadOnlyList<ResourceMetadata> byInstance;
+        try
+        {
+            byInstance = await indexStore.GetResourcesByFullInstanceAsync(instance, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            AddIndexLookupElapsed(Stopwatch.GetTimestamp() - startTicks);
+        }
+        return byInstance
             .Where(resource => resource.Key.FullInstance == instance && IsTextureType(resource.Key.TypeName))
             .OrderBy(static resource => resource.Key.TypeName == "BuyBuildThumbnail" ? 1 : 0)
             .ThenBy(static resource => resource.PackagePath, StringComparer.OrdinalIgnoreCase)
@@ -2617,14 +2940,18 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     private static string FormatTextureSourceLocation(string? packagePath) =>
         string.IsNullOrWhiteSpace(packagePath) ? string.Empty : $" from {Path.GetFileName(packagePath)}";
 
+    // Same canonical-mapping fix as in AssetServices.GuessTypeName (build 0265). Pre-0265
+    // 0x2BC04EDF was mislabelled "DSTImage" (actually LRLEImage) and 0x2F7D0004 was
+    // "PNGImage2" (actually PNGImage). 0x0988C7E1 and 0x1B4D2A70 were never valid TS4
+    // image-type IDs. Verified against LlamaLogic.Packages.ResourceType enum (3.8.1).
     private static string GuessTypeName(uint type) => type switch
     {
         0x00B2D882 => "DSTImage",
-        0x2F7D0004 => "PNGImage2",
-        0x2BC04EDF => "DSTImage",
-        0x0988C7E1 => "LRLEImage",
+        0x2BC04EDF => "LRLEImage",
+        0x2F7D0004 => "PNGImage",
+        0x2F7D0006 => "PNGImage2",
         0x3453CF95 => "RLE2Image",
-        0x1B4D2A70 => "RLESImage",
+        0xBA856C78 => "RLESImage",
         _ => $"0x{type:X8}"
     };
 
@@ -2692,11 +3019,19 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
         if (uv0.Length == 0)
         {
+            if (uv1.Length > 0)
+            {
+                var soloStats = ComputeUvCoverageStats(uv1);
+                diagnostics.Add($"Mesh 0x{meshName:X8} UV stats: UV0=<absent>, UV1 area={soloStats.Area:0.####} range={soloStats.RangeU:0.###}x{soloStats.RangeV:0.###}; using UV1.");
+            }
             return (uv1, uv1.Length > 0 ? 1 : 0);
         }
 
         if (uv1.Length == 0 || uv1.Length != uv0.Length)
         {
+            var uv0OnlyStats = ComputeUvCoverageStats(uv0);
+            var uv1Note = uv1.Length == 0 ? "<absent>" : $"<count mismatch:{uv1.Length}>";
+            diagnostics.Add($"Mesh 0x{meshName:X8} UV stats: UV0 area={uv0OnlyStats.Area:0.####} range={uv0OnlyStats.RangeU:0.###}x{uv0OnlyStats.RangeV:0.###}, UV1={uv1Note}; using UV0.");
             return (uv0, 0);
         }
 
@@ -2713,14 +3048,9 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
               uv0Stats.ShortSide < 0.08f &&
               uv0Stats.LongSide > uv0Stats.ShortSide * 4f &&
               uv1Stats.Area > Math.Max(uv0Stats.Area * 2.5f, 0.12f)));
-        if (uv0LooksCollapsed)
-        {
-            diagnostics.Add(
-                $"Mesh 0x{meshName:X8} uses UV1 for preview because UV0 looks collapsed (area={uv0Stats.Area:0.####}, range={uv0Stats.RangeU:0.###}x{uv0Stats.RangeV:0.###}) while UV1 covers {uv1Stats.Area:0.####} ({uv1Stats.RangeU:0.###}x{uv1Stats.RangeV:0.###}).");
-            return (uv1, 1);
-        }
-
-        return (uv0, 0);
+        diagnostics.Add(
+            $"Mesh 0x{meshName:X8} UV stats: UV0 area={uv0Stats.Area:0.####} range={uv0Stats.RangeU:0.###}x{uv0Stats.RangeV:0.###}, UV1 area={uv1Stats.Area:0.####} range={uv1Stats.RangeU:0.###}x{uv1Stats.RangeV:0.###}; auto={(uv0LooksCollapsed ? "UV1" : "UV0")}.");
+        return uv0LooksCollapsed ? (uv1, 1) : (uv0, 0);
     }
 
     private static UvCoverageStats ComputeUvCoverageStats(float[] uvs)
@@ -2926,6 +3256,12 @@ internal readonly record struct Ts4ResourceKey(uint Type, uint Group, ulong Inst
 
 internal sealed record Ts4RcolChunk(Ts4ResourceKey Key, Ts4ChunkReference SelfReference, int Position, int Length, ReadOnlyMemory<byte> Data, string Tag);
 
+internal sealed record Ts4MaterialVariantInfo(
+    uint StateNameHash,
+    string? VariantName,
+    bool IsDefault,
+    IReadOnlyList<CanonicalTexture> Textures);
+
 internal sealed record Ts4MaterialInfo(
     string Name,
     string ShaderName,
@@ -2943,7 +3279,8 @@ internal sealed record Ts4MaterialInfo(
     IReadOnlyList<string> LayeredTextureSlots,
     string VisualPayloadKind,
     string? Approximation,
-    CanonicalMaterialSourceKind SourceKind)
+    CanonicalMaterialSourceKind SourceKind,
+    IReadOnlyList<Ts4MaterialVariantInfo>? Variants = null)
 {
     public static Ts4MaterialInfo CreateFallback(string name, string reason) =>
         new(
@@ -3061,7 +3398,7 @@ internal sealed record Ts4MatdChunk(
             var propertyOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(tableOffset + 12, 4)));
             var profileParameter = Ts4ShaderSemantics.ResolveParameterProfile(propertyHash, shaderProfile);
             var propertyCategory = profileParameter?.Category ?? Ts4ShaderSemantics.ClassifyMatdProperty(normalizedPropertyType, propertyArity);
-            var decodedValue = DecodeMatdValue(normalizedPropertyType, propertyArity, propertyOffset, bytes);
+            var decodedValue = DecodeMatdValue(normalizedPropertyType, propertyArity, propertyOffset, bytes, shaderNameHash);
             properties.Add(new Ts4MatdProperty(
                 propertyHash,
                 propertyType,
@@ -3215,7 +3552,8 @@ internal sealed record Ts4MatdChunk(
         uint normalizedPropertyType,
         uint propertyArity,
         int propertyOffset,
-        ReadOnlySpan<byte> bytes)
+        ReadOnlySpan<byte> bytes,
+        uint shaderNameHash = 0)
     {
         if (propertyOffset < 0 || propertyOffset >= bytes.Length)
         {
@@ -3276,6 +3614,25 @@ internal sealed record Ts4MatdChunk(
                     MaterialValueRepresentation.FloatVector,
                     $"vector=[{string.Join(", ", values)}]",
                     floatValues);
+            }
+
+            // Partial-vector recovery: some shaders (FadeWithIce, ObjOutlineColorStateTexture)
+            // declare uvMapping as vec4(float32) but the saved data has only the first 1-2
+            // components meaningful with the trailing components containing uninitialized
+            // memory. The all-or-nothing plausibility check above rejects them; here we accept
+            // a leading run of plausible floats and zero-pad the rest. See
+            // docs/workflows/material-pipeline/uvmapping-packed-decode.md (Plan 3.1).
+            // For shaders known to use this layout, accept any trailing magnitudes (Plan I).
+            var leniientPartialDecode = IsShaderRequiringLenientPartialUvDecode(shaderNameHash);
+            if (TryReadPartialFloatComponents(propertyArity, propertyOffset, bytes, leniientPartialDecode, out var partialValues, out var validCount))
+            {
+                var values = partialValues
+                    .Select(static value => value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture))
+                    .ToArray();
+                return new Ts4MatdDecodedValue(
+                    MaterialValueRepresentation.FloatVector,
+                    $"vector=[{string.Join(", ", values)}] (partial: first {validCount} of {propertyArity} floats valid; trailing zero-padded)",
+                    partialValues);
             }
 
             if (TryReadUInt32Components(propertyArity, propertyOffset, bytes, out var rawValues))
@@ -3779,6 +4136,89 @@ internal sealed record Ts4MatdChunk(
         return true;
     }
 
+    // Shader hashes whose uvMapping vec4 reliably uses leading-N float32 components with
+    // uninitialized trailing memory. Identified by Plan 3.1 probe. For these shaders we
+    // accept partial decode regardless of trailing-junk magnitudes — the trailing slots
+    // are not used by the shader so their values are meaningless.
+    private static bool IsShaderRequiringLenientPartialUvDecode(uint shaderNameHash) =>
+        shaderNameHash is 0x213D6300u   // FadeWithIce
+            or 0x292D042Au;             // ObjOutlineColorStateTexture
+
+    private static bool TryReadPartialFloatComponents(
+        uint propertyArity,
+        int propertyOffset,
+        ReadOnlySpan<byte> bytes,
+        bool lenientTrailing,
+        out float[] values,
+        out int validCount)
+    {
+        values = [];
+        validCount = 0;
+        var count = checked((int)Math.Max(1u, propertyArity));
+        if (propertyOffset < 0 || propertyOffset + (count * 4) > bytes.Length)
+        {
+            return false;
+        }
+
+        // Read ALL components first. We accept the partial-decode only when the pattern
+        // strongly matches "float32 with uninitialized trailing memory" — i.e. the leading
+        // 2+ components are UV-typical small floats AND the trailing components are clearly
+        // junk (NaN, ±Inf, or |x| > 65536). This intentionally excludes:
+        //   - half-float-encoded UV windows (all 4 components would be small in float32)
+        //   - packed resource-key payloads (4 small floats including 0x00B2D882 markers)
+        // Both of those have legitimate downstream decoders that we don't want to bypass.
+        var raw = new float[count];
+        for (var index = 0; index < count; index++)
+        {
+            raw[index] = BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(propertyOffset + (index * 4), 4));
+        }
+
+        // Leading components must be UV-typical: finite, |x| ≤ 16 (covers tiling up to 16x),
+        // and either exactly 0 or |x| ≥ 0.001. Denormal floats (|x| < ~1e-38) and very small
+        // non-zero values are a strong signal the bytes encode a resource-key payload, not
+        // UV scalars — see the MatdParser_ReadsInstanceOnlyImageLayoutAsExplicitTextureReference
+        // test case where word[0]=0x00000004 (denormal=5.6e-45) but the bytes are an image key.
+        const float uvTypicalBound = 16f;
+        const float uvMinNonZero = 0.001f;
+        var leadingValid = 0;
+        for (var index = 0; index < count; index++)
+        {
+            var value = raw[index];
+            if (!float.IsFinite(value)) break;
+            var magnitude = MathF.Abs(value);
+            if (magnitude > uvTypicalBound) break;
+            if (magnitude != 0f && magnitude < uvMinNonZero) break;
+            leadingValid++;
+        }
+        if (leadingValid < 2 || leadingValid >= count)
+        {
+            return false;
+        }
+
+        // Trailing components must be CLEARLY junk: non-finite OR magnitude beyond what
+        // ArePlausibleFloatComponents would accept (65536). If trailing is merely large
+        // (16 < |x| ≤ 65536) we abstain — half-float and resource-key paths might have
+        // legitimate uses for those bytes. For shaders explicitly known to use this layout
+        // (FadeWithIce, ObjOutlineColorStateTexture per Plan 3.1), skip the trailing-junk
+        // check — the trailing slots are unused by the shader so their values are meaningless.
+        if (!lenientTrailing)
+        {
+            for (var index = leadingValid; index < count; index++)
+            {
+                if (float.IsFinite(raw[index]) && MathF.Abs(raw[index]) <= 65536f)
+                {
+                    return false;
+                }
+            }
+        }
+
+        var decoded = new float[count];
+        for (var index = 0; index < leadingValid; index++) decoded[index] = raw[index];
+        validCount = leadingValid;
+        values = decoded;
+        return true;
+    }
+
     private static bool TryReadUInt32Components(
         uint propertyArity,
         int propertyOffset,
@@ -3820,13 +4260,15 @@ internal sealed record Ts4MatdChunk(
         return nonZeroCount > 0 || values.Length > 0;
     }
 
+    // Canonical image-type IDs (LlamaLogic ResourceType, 3.8.1). Build 0265 fix replaced
+    // the bogus 0x0988C7E1 / 0x1B4D2A70 with the real LRLEImage and RLESImage IDs.
     private static bool IsImageType(uint type) => type is
-        0x00B2D882 or
-        0x2F7D0004 or
-        0x2BC04EDF or
-        0x0988C7E1 or
-        0x3453CF95 or
-        0x1B4D2A70;
+        0x00B2D882 or // DSTImage
+        0x2BC04EDF or // LRLEImage
+        0x2F7D0004 or // PNGImage
+        0x2F7D0006 or // PNGImage2
+        0x3453CF95 or // RLE2Image
+        0xBA856C78;   // RLESImage
 }
 
 internal readonly record struct Ts4MtstEntry(Ts4ChunkReference Reference, uint Unknown0, uint StateNameHash)

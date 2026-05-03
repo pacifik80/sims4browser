@@ -1,3 +1,5 @@
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ProbeAsset")]
+
 namespace Sims4ResourceExplorer.Preview;
 
 internal enum Ts4MaterialFamilyKind
@@ -1110,7 +1112,10 @@ internal static class Ts4MaterialDecoder
         if (string.Equals(property.Name, "uvMapping", StringComparison.OrdinalIgnoreCase) &&
             LooksLikePackedTextureResourceKeyPayload(property.PackedUInt32Values))
         {
-            note = "Packed uvMapping payload contains texture resource-key-like words and is not applied as a UV transform.";
+            var payload = property.PackedUInt32Values is { Length: > 0 } words
+                ? string.Join(", ", words.Select(static word => FormattableString.Invariant($"0x{word:X8}")))
+                : "<empty>";
+            note = $"Packed uvMapping payload [{payload}] contains a texture resource-key marker (0x00B2D882 = _IMG); preview keeps UV at identity rather than misinterpreting the bytes as an atlas window.";
             return false;
         }
 

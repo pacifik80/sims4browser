@@ -9,8 +9,10 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Sims4ResourceExplorer.App.Services;
+using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Core;
 using Sims4ResourceExplorer.Indexing;
+using Sims4ResourceExplorer.Preview;
 using Windows.Storage.Streams;
 
 namespace Sims4ResourceExplorer.App.ViewModels;
@@ -23,6 +25,10 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IIndexStore indexStore;
     private readonly PackageIndexCoordinator packageIndexCoordinator;
     private readonly IPreviewService previewService;
+    private readonly CachedSceneBuildService cachedSceneBuildService;
+    private readonly BondMorphResolver bondMorphResolver;
+    private readonly DeformerMapResolver deformerMapResolver;
+    private readonly BlendGeometryResolver blendGeometryResolver;
     private readonly IRawExportService rawExportService;
     private readonly IFbxExportService fbxExportService;
     private readonly IAssetGraphBuilder assetGraphBuilder;
@@ -94,6 +100,10 @@ public sealed partial class MainViewModel : ObservableObject
         IIndexStore indexStore,
         PackageIndexCoordinator packageIndexCoordinator,
         IPreviewService previewService,
+        CachedSceneBuildService cachedSceneBuildService,
+        BondMorphResolver bondMorphResolver,
+        DeformerMapResolver deformerMapResolver,
+        BlendGeometryResolver blendGeometryResolver,
         IRawExportService rawExportService,
         IFbxExportService fbxExportService,
         IAssetGraphBuilder assetGraphBuilder,
@@ -108,6 +118,10 @@ public sealed partial class MainViewModel : ObservableObject
         this.indexStore = indexStore;
         this.packageIndexCoordinator = packageIndexCoordinator;
         this.previewService = previewService;
+        this.cachedSceneBuildService = cachedSceneBuildService;
+        this.bondMorphResolver = bondMorphResolver;
+        this.deformerMapResolver = deformerMapResolver;
+        this.blendGeometryResolver = blendGeometryResolver;
         this.rawExportService = rawExportService;
         this.fbxExportService = fbxExportService;
         this.assetGraphBuilder = assetGraphBuilder;
@@ -148,6 +162,8 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<string> AssetCatalogSignal0034Values { get; } = [];
     public ObservableCollection<SceneLodOption> AvailableSceneLods { get; } = [];
     public ObservableCollection<string> AvailableSceneTextureSlots { get; } = [];
+
+    public ObservableCollection<SceneVariantOption> AvailableSceneVariants { get; } = [];
     public ObservableCollection<AssetVariantPickerItem> AssetVariantItems { get; } = [];
     public ObservableCollection<SimBodyFoundationSummary> SelectedSimBodyFoundation { get; } = [];
     public ObservableCollection<SimBodySourceSummary> SelectedSimBodySources { get; } = [];
@@ -173,6 +189,8 @@ public sealed partial class MainViewModel : ObservableObject
     public IReadOnlyList<RawResourceSort> RawSortOptions { get; }
     public IReadOnlyList<ResourceLinkFilter> LinkFilters { get; }
     public IReadOnlyList<SceneRenderMode> SceneRenderModes { get; } = Enum.GetValues<SceneRenderMode>();
+
+    public IReadOnlyList<SceneUvChannelOverride> SceneUvChannelOverrides { get; } = Enum.GetValues<SceneUvChannelOverride>();
 
     [ObservableProperty]
     private BrowserMode selectedBrowserMode = BrowserMode.AssetBrowser;
@@ -376,6 +394,12 @@ public sealed partial class MainViewModel : ObservableObject
     private string selectedSceneTextureSlot = "All";
 
     [ObservableProperty]
+    private SceneUvChannelOverride selectedSceneUvChannel = SceneUvChannelOverride.Auto;
+
+    [ObservableProperty]
+    private SceneVariantOption? selectedSceneVariant;
+
+    [ObservableProperty]
     private AssetVariantPickerItem? selectedAssetVariant;
 
     [ObservableProperty]
@@ -440,6 +464,8 @@ public sealed partial class MainViewModel : ObservableObject
     public bool CanSelectSceneLod => AvailableSceneLods.Count > 1;
     public bool HasSceneTextureSlotOptions => AvailableSceneTextureSlots.Count > 0;
     public bool CanSelectSceneTextureSlot => AvailableSceneTextureSlots.Count > 1;
+    public bool HasSceneVariantOptions => AvailableSceneVariants.Count > 0;
+    public bool CanSelectSceneVariant => AvailableSceneVariants.Count > 1;
     public bool HasAssetVariantOptions => AssetVariantItems.Count > 0;
     public bool CanSelectAssetVariant => AssetVariantItems.Count > 1;
     public Visibility AssetVariantPickerVisibility => HasAssetVariantOptions ? Visibility.Visible : Visibility.Collapsed;
@@ -873,9 +899,14 @@ public sealed partial class MainViewModel : ObservableObject
         await AdvancePreviewLoadAsync(0.24, "Preparing scene build...");
         var previewProgress = CreatePreviewBuildProgressReporter(0.24, 0.70);
         await AdvancePreviewLoadAsync(0.26, "Building 3D preview...");
-        var preview = asset.AssetKind == AssetKind.Cas && graph.CasGraph is not null
-            ? await BuildCasPreviewResultAsync(graph.CasGraph, CancellationToken.None, previewProgress)
-            : await previewService.CreatePreviewAsync(sceneRoot, CancellationToken.None, previewProgress);
+        var preview = asset.AssetKind switch
+        {
+            AssetKind.BuildBuy when graph.BuildBuyGraph is not null =>
+                await previewService.CreatePreviewAsync(graph.BuildBuyGraph, CancellationToken.None, previewProgress),
+            AssetKind.Cas when graph.CasGraph is not null =>
+                await BuildCasPreviewResultAsync(graph.CasGraph, CancellationToken.None, previewProgress),
+            _ => await previewService.CreatePreviewAsync(sceneRoot, CancellationToken.None, previewProgress)
+        };
         selectedAssetBaseScenePreview = preview.Content as ScenePreviewContent;
         selectedAssetScenePreview = await BuildDisplayedScenePreviewAsync(selectedAssetBaseScenePreview, CancellationToken.None);
         selectedAssetDetailsSupplement = null;
@@ -1024,6 +1055,17 @@ public sealed partial class MainViewModel : ObservableObject
             IReadOnlyList<ResourceMetadata> RigResources,
             IReadOnlyList<CasRegionMapSummary> RegionMaps)>();
         var previewDiagnostics = new List<string>();
+
+        // Build 0270: scope the Sim's age for the canonical-rig tie-breaker. All pet
+        // rigs share the same bone-name set; only their bind-pose POSITIONS differ.
+        // Without an age hint the rig resolver picks adult-first which mis-positions
+        // child cats/dogs/horses (ears + tail floating because their bind-poses come
+        // from the larger adult rig instead of the child rig). Read once into a local
+        // so the compiler keeps tracking `selectedAssetGraph.SimGraph` non-null status
+        // through the rest of the method.
+        var simAgeForRigPicker = selectedAssetGraph is { SimGraph: { } sg } ? sg.Metadata.AgeLabel : null;
+        using var _simAgeScope = BuildBuySceneBuildService.BeginSimAgeScope(simAgeForRigPicker);
+
         for (var familyIndex = 0; familyIndex < preferredBodyFamilies.Count; familyIndex++)
         {
             var preferredFamily = preferredBodyFamilies[familyIndex];
@@ -1133,11 +1175,113 @@ public sealed partial class MainViewModel : ObservableObject
             }
         }
 
+        // Plan B (build 0245): apply BOND morphs to body and head previews so the meshes
+        // follow the SimInfo's BodyModifiers/FaceModifiers (closes Adult Female waist gap,
+        // child face proportions, etc.). Resolves the BOND chain via BondMorphResolver and
+        // applies translation deltas at the CanonicalScene level. Caches stay valid because
+        // un-morphed scenes are cached upstream and morphs are applied as a post-step.
+        // Build 0249: also resolve + apply DMap (DeformerMap) shape morphs — these drive face
+        // shape changes via per-vertex UV1 sampling and are what the v21 Adult Female SimInfo's
+        // 38 modifiers actually use (their SMODs are DMap-only, no BOND).
+        IReadOnlyList<SimBoneMorphAdjustment> bondAdjustments = [];
+        IReadOnlyList<Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph> dmapMorphs = [];
+        IReadOnlyList<Sims4ResourceExplorer.Packages.Ts4SimBlendGeometryMorph> bgeoMorphs = [];
+        try
+        {
+            bondAdjustments = await bondMorphResolver
+                .ResolveAsync(selectedAssetGraph.SimGraph.SimInfoResource, cancellationToken)
+                .ConfigureAwait(true);
+            if (bondAdjustments.Count > 0)
+            {
+                previewDiagnostics.Add($"BOND morph: resolved {bondAdjustments.Count:N0} bone adjustment(s) from SimInfo body/face modifiers.");
+            }
+        }
+        catch (Exception ex)
+        {
+            previewDiagnostics.Add($"BOND morph resolution failed: {ex.Message}");
+        }
+        try
+        {
+            dmapMorphs = await deformerMapResolver
+                .ResolveAsync(selectedAssetGraph.SimGraph.SimInfoResource, cancellationToken)
+                .ConfigureAwait(true);
+            if (dmapMorphs.Count > 0)
+            {
+                var shape = dmapMorphs.Count(m => !m.IsNormalMap);
+                var normal = dmapMorphs.Count - shape;
+                previewDiagnostics.Add($"DMap morph: resolved {dmapMorphs.Count:N0} deformer-map morph(s) ({shape} shape, {normal} normal) from SimInfo body/face modifiers.");
+            }
+        }
+        catch (Exception ex)
+        {
+            previewDiagnostics.Add($"DMap morph resolution failed: {ex.Message}");
+        }
+        try
+        {
+            bgeoMorphs = await blendGeometryResolver
+                .ResolveAsync(selectedAssetGraph.SimGraph.SimInfoResource, cancellationToken)
+                .ConfigureAwait(true);
+            if (bgeoMorphs.Count > 0)
+            {
+                previewDiagnostics.Add($"BGEO morph: resolved {bgeoMorphs.Count:N0} blend-geometry morph(s) from SimInfo body/face modifiers.");
+            }
+        }
+        catch (Exception ex)
+        {
+            previewDiagnostics.Add($"BGEO morph resolution failed: {ex.Message}");
+        }
+
+        ScenePreviewContent MorphPreviewIfNeeded(ScenePreviewContent? source)
+        {
+            if (source is null || source.Scene is null) return source!;
+            var working = source;
+            if (bondAdjustments.Count > 0)
+            {
+                try
+                {
+                    var morphed = BondMorpher.MorphScene(working.Scene!, bondAdjustments, previewDiagnostics);
+                    working = working with { Scene = morphed };
+                }
+                catch (Exception ex)
+                {
+                    previewDiagnostics.Add($"BOND morph application failed: {ex.Message}");
+                }
+            }
+            if (dmapMorphs.Count > 0)
+            {
+                try
+                {
+                    var morphed = DeformerMapMorpher.MorphScene(working.Scene!, dmapMorphs, previewDiagnostics);
+                    working = working with { Scene = morphed };
+                }
+                catch (Exception ex)
+                {
+                    previewDiagnostics.Add($"DMap morph application failed: {ex.Message}");
+                }
+            }
+            if (bgeoMorphs.Count > 0)
+            {
+                try
+                {
+                    var morphed = BlendGeometryMorpher.MorphScene(working.Scene!, bgeoMorphs, previewDiagnostics);
+                    working = working with { Scene = morphed };
+                }
+                catch (Exception ex)
+                {
+                    previewDiagnostics.Add($"BGEO morph application failed: {ex.Message}");
+                }
+            }
+            return working;
+        }
+
+        var morphedSuccessfulPreview = MorphPreviewIfNeeded(successfulPreview);
+        var morphedHeadPreview = successfulHeadPreview is null ? null : MorphPreviewIfNeeded(successfulHeadPreview);
+
         var assembledPreview = SimSceneComposer.ComposeBodyAndHead(
             $"{selectedAsset.DisplayName} Base Body",
-            successfulPreview,
+            morphedSuccessfulPreview,
             successfulBodyRigResources,
-            successfulHeadPreview,
+            morphedHeadPreview,
             successfulHeadRigResources,
             selectedAssetGraph.SimGraph.Metadata,
             selectedAssetGraph.SimGraph.MorphGroups,
@@ -1160,10 +1304,76 @@ public sealed partial class MainViewModel : ObservableObject
                     isPrimaryLayer: false));
         }
 
-        selectedAssetBaseScenePreview = assembledPreview.Preview with
+        if (assembledPreview.Preview.Scene is { } assembledScene)
+        {
+            var bounds = assembledScene.Bounds;
+            var sizeX = bounds.MaxX - bounds.MinX;
+            var sizeY = bounds.MaxY - bounds.MinY;
+            var sizeZ = bounds.MaxZ - bounds.MinZ;
+            previewDiagnostics.Add(System.FormattableString.Invariant(
+                $"Assembled scene bounds: min=({bounds.MinX:0.###}, {bounds.MinY:0.###}, {bounds.MinZ:0.###}) max=({bounds.MaxX:0.###}, {bounds.MaxY:0.###}, {bounds.MaxZ:0.###}) size=({sizeX:0.###}, {sizeY:0.###}, {sizeZ:0.###}); meshes={assembledScene.Meshes.Count}, materials={assembledScene.Materials.Count}, bones={assembledScene.Bones.Count}."));
+        }
+
+        if (selectedAssetGraph.SimGraph.SkintoneRender is { } skintoneRender)
+        {
+            if (skintoneRender.ViewportTintColor is { } skinTint)
+            {
+                previewDiagnostics.Add(System.FormattableString.Invariant(
+                    $"Skintone viewport tint: rgba=({skinTint.R:0.###}, {skinTint.G:0.###}, {skinTint.B:0.###}, {skinTint.A:0.###}); swatches={skintoneRender.SwatchColorCount}, overlays={skintoneRender.OverlayTextureCount}."));
+            }
+            else
+            {
+                previewDiagnostics.Add($"Skintone viewport tint: <none resolved>; swatches={skintoneRender.SwatchColorCount}, overlays={skintoneRender.OverlayTextureCount}.");
+            }
+            if (!string.IsNullOrWhiteSpace(skintoneRender.Notes))
+            {
+                previewDiagnostics.Add($"Skintone notes: {skintoneRender.Notes}");
+            }
+        }
+
+        var atlasComposedPreview = assembledPreview.Preview;
+        if (atlasComposedPreview.Scene is { } sceneForAtlas &&
+            selectedAssetGraph.SimGraph.SkintoneRender is { } skintoneRenderForAtlas)
+        {
+            // Run the SkinBlender chain (base skin × neutral details ± overlay-row, then face
+            // overlay) into a single atlas and rebind every material flagged as a Sim skintone
+            // route to sample from it. Body and head share the SAME atlas — they only differ in
+            // their UVs — which matches SkinBlender.cs's "one bitmap, two meshes" contract.
+            var atlasBytes = await SimSkinAtlasComposer.BuildAsync(
+                skintoneRenderForAtlas.BaseTexturePngBytes,
+                skintoneRenderForAtlas.DetailNeutralPngBytes,
+                skintoneRenderForAtlas.DetailOverlayPngBytes,
+                skintoneRenderForAtlas.FaceOverlayPngBytes,
+                skintoneRenderForAtlas.FaceCasOverlayPngBytes,
+                // Per SkinBlender.cs:211, 238 pass2opacity = tone.Opacity / 100. Many default
+                // human skintones have OverlayOpacity == 0 — i.e. the reference produces Pass 1
+                // only (soft-light + ×1.2 brighten) and skips the Pass 2 overlay blend entirely.
+                // Hardcoding 1.0 here saturated already-bright skin tones to white. Use the
+                // skintone's actual OverlayOpacity value so the body atlas matches SkinBlender.
+                pass2Opacity: skintoneRenderForAtlas.OverlayOpacity / 100f,
+                skintoneHue: skintoneRenderForAtlas.SkintoneHue,
+                skintoneSaturation: skintoneRenderForAtlas.SkintoneSaturation,
+                cancellationToken: cancellationToken);
+            if (atlasBytes is { Length: > 0 })
+            {
+                var rewrittenMaterials = sceneForAtlas.Materials
+                    .Select(material => RewriteSkintoneRoutedMaterial(material, atlasBytes))
+                    .ToList();
+                var rewrittenScene = sceneForAtlas with { Materials = rewrittenMaterials };
+                atlasComposedPreview = atlasComposedPreview with { Scene = rewrittenScene };
+                previewDiagnostics.Add(System.FormattableString.Invariant(
+                    $"Skin atlas: composed {atlasBytes.Length:N0} bytes from base/details/face-overlay; rebound on every skintone-routed material (body and head share the atlas)."));
+            }
+            else
+            {
+                previewDiagnostics.Add("Skin atlas: not composed (base skin texture missing or decode failed); skintone-routed materials retain their MATD diffuse.");
+            }
+        }
+
+        selectedAssetBaseScenePreview = atlasComposedPreview with
         {
             Diagnostics = JoinDistinctDiagnosticLines(
-                assembledPreview.Preview.Diagnostics,
+                atlasComposedPreview.Diagnostics,
                 string.Join(Environment.NewLine, previewDiagnostics.Where(static text => !string.IsNullOrWhiteSpace(text))))
         };
         ReplaceCollection(SelectedSimBodyPreviewLayers, previewLayers);
@@ -1281,7 +1491,9 @@ public sealed partial class MainViewModel : ObservableObject
             return [];
         }
 
-        var activeLabels = SimBodyAssemblyPolicy.ResolveActiveLabels(selectedFamilies.Select(static family => family.Label));
+        var activeLabels = SimBodyAssemblyPolicy.ResolveActiveLabels(
+            selectedFamilies.Select(static family => family.Label),
+            selectedAssetGraph?.SimGraph?.Metadata.SpeciesLabel);
         return selectedFamilies
             .Where(family => activeLabels.Contains(family.Label))
             .OrderBy(static family => GetBodyRecipeSortOrder(family.Label))
@@ -1753,6 +1965,7 @@ public sealed partial class MainViewModel : ObservableObject
         simBodyCandidateAssetCache.Clear();
         simBodyPackageInstanceResourceCache.Clear();
         simBodyCandidatePreviewCache.Clear();
+        cachedSceneBuildService.Clear();
     }
 
     private async Task ReloadAssetFacetOptionsAsync()
@@ -2740,7 +2953,7 @@ public sealed partial class MainViewModel : ObservableObject
             .ThenBy(static family => family.Label, StringComparer.OrdinalIgnoreCase)
             .Select(family =>
             {
-                var state = SimBodyAssemblyPolicy.GetLayerState(family.Label, activeLabels);
+                var state = SimBodyAssemblyPolicy.GetLayerState(family.Label, activeLabels, selectedAssetGraph?.SimGraph?.Metadata.SpeciesLabel);
                 return SimBodyAssemblyRecipeItem.Create(
                     family,
                     state,
@@ -2764,7 +2977,7 @@ public sealed partial class MainViewModel : ObservableObject
             .ThenBy(static family => family.Label, StringComparer.OrdinalIgnoreCase)
             .Select(family =>
             {
-                var state = SimBodyAssemblyPolicy.GetLayerState(family.Label, activeLabels);
+                var state = SimBodyAssemblyPolicy.GetLayerState(family.Label, activeLabels, selectedAssetGraph?.SimGraph?.Metadata.SpeciesLabel);
                 var isRendered = renderedLabels.Contains(family.Label);
                 return SimBodyGraphLayerItem.Create(family, state, isRendered);
             })
@@ -3221,6 +3434,42 @@ public sealed partial class MainViewModel : ObservableObject
 
         OnPropertyChanged(nameof(HasSceneTextureSlotOptions));
         OnPropertyChanged(nameof(CanSelectSceneTextureSlot));
+
+        SetSceneVariantOptions(scene);
+    }
+
+    private void SetSceneVariantOptions(CanonicalScene? scene)
+    {
+        var variantsByHash = scene?.Materials
+            .Where(material => material.Variants is { Count: > 0 })
+            .SelectMany(material => material.Variants!)
+            .GroupBy(variant => variant.StateNameHash)
+            .Select(group => new
+            {
+                StateHash = group.Key,
+                IsDefault = group.Any(variant => variant.IsDefault),
+                Name = group.Select(variant => variant.VariantName).FirstOrDefault(name => !string.IsNullOrWhiteSpace(name))
+            })
+            .OrderByDescending(entry => entry.IsDefault)
+            .ThenBy(entry => entry.StateHash)
+            .ToArray() ?? [];
+
+        var options = new List<SceneVariantOption>(variantsByHash.Length);
+        foreach (var entry in variantsByHash)
+        {
+            options.Add(new SceneVariantOption(entry.StateHash, entry.IsDefault, entry.Name));
+        }
+
+        ReplaceCollection(AvailableSceneVariants, options);
+        if (SelectedSceneVariant is null ||
+            !AvailableSceneVariants.Any(option => option.StateNameHash == SelectedSceneVariant.StateNameHash))
+        {
+            SelectedSceneVariant = AvailableSceneVariants.FirstOrDefault(option => option.IsDefault)
+                ?? AvailableSceneVariants.FirstOrDefault();
+        }
+
+        OnPropertyChanged(nameof(HasSceneVariantOptions));
+        OnPropertyChanged(nameof(CanSelectSceneVariant));
     }
 
     private static IReadOnlyList<SceneLodOption> BuildSceneLodOptions(AssetGraph graph, ResourceMetadata selectedSceneRoot)
@@ -3336,6 +3585,8 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(CanSelectSceneLod));
         OnPropertyChanged(nameof(HasSceneTextureSlotOptions));
         OnPropertyChanged(nameof(CanSelectSceneTextureSlot));
+        OnPropertyChanged(nameof(HasSceneVariantOptions));
+        OnPropertyChanged(nameof(CanSelectSceneVariant));
         OnPropertyChanged(nameof(EffectivePreviewLoadStatus));
         OnPropertyChanged(nameof(PreviewLoadBrush));
     }
@@ -3386,6 +3637,8 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnDetailsTextChanged(string value) => NotifyPreviewStateChanged();
     partial void OnSelectedSceneRenderModeChanged(SceneRenderMode value) => NotifyPreviewStateChanged();
     partial void OnSelectedSceneTextureSlotChanged(string value) => NotifyPreviewStateChanged();
+    partial void OnSelectedSceneUvChannelChanged(SceneUvChannelOverride value) => NotifyPreviewStateChanged();
+    partial void OnSelectedSceneVariantChanged(SceneVariantOption? value) => NotifyPreviewStateChanged();
     partial void OnSelectedSceneLodChanged(SceneLodOption? value)
     {
         if (!suppressSceneLodSelectionPreview && value is not null)
@@ -3904,6 +4157,59 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static IReadOnlyList<string> PrependAll(IReadOnlyList<string> values) =>
         ["All", .. values.Where(static value => !string.Equals(value, "All", StringComparison.Ordinal))];
+
+    private static CanonicalMaterial RewriteSkintoneRoutedMaterial(CanonicalMaterial material, byte[] atlasPng)
+    {
+        if (string.IsNullOrEmpty(material.Approximation) ||
+            !material.Approximation.Contains("Sim skintone route", StringComparison.OrdinalIgnoreCase))
+        {
+            return material;
+        }
+
+        var textures = material.Textures;
+        var baseIndex = -1;
+        for (var i = 0; i < textures.Count; i++)
+        {
+            if (textures[i].Semantic == CanonicalTextureSemantic.BaseColor)
+            {
+                baseIndex = i;
+                break;
+            }
+        }
+        if (baseIndex < 0 && textures.Count > 0)
+        {
+            baseIndex = 0;
+        }
+
+        var atlasTexture = baseIndex >= 0
+            ? textures[baseIndex] with
+            {
+                FileName = "skin_atlas.png",
+                PngBytes = atlasPng,
+                Semantic = CanonicalTextureSemantic.BaseColor
+            }
+            : new CanonicalTexture(
+                Slot: "BaseColor",
+                FileName: "skin_atlas.png",
+                PngBytes: atlasPng,
+                Semantic: CanonicalTextureSemantic.BaseColor);
+
+        var rewritten = textures.ToList();
+        if (baseIndex >= 0)
+        {
+            rewritten[baseIndex] = atlasTexture;
+        }
+        else
+        {
+            rewritten.Add(atlasTexture);
+        }
+
+        return material with
+        {
+            Textures = rewritten,
+            ViewportTintColor = null
+        };
+    }
 }
 
 internal sealed record CasVariantTextureCompositeResult(CanonicalScene Scene, string Diagnostics);
@@ -3917,7 +4223,28 @@ public enum SceneRenderMode
     LitTexture
 }
 
+public enum SceneUvChannelOverride
+{
+    Auto,
+    Uv0,
+    Uv1
+}
+
 public sealed record SceneLodOption(string Label, ResourceMetadata Resource)
 {
+    public override string ToString() => Label;
+}
+
+public sealed record SceneVariantOption(uint StateNameHash, bool IsDefault, string? VariantName)
+{
+    public string Identifier => $"0x{StateNameHash:X8}";
+    public string Label => IsDefault
+        ? string.IsNullOrWhiteSpace(VariantName)
+            ? $"Default ({Identifier})"
+            : $"Default — {VariantName}"
+        : string.IsNullOrWhiteSpace(VariantName)
+            ? $"Variant {Identifier}"
+            : $"{VariantName} ({Identifier})";
+
     public override string ToString() => Label;
 }

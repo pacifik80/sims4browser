@@ -5,6 +5,8 @@ using System.Diagnostics;
 using Sims4ResourceExplorer.Core;
 using Sims4ResourceExplorer.Packages;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ProbeAsset")]
+
 namespace Sims4ResourceExplorer.Assets;
 
 internal sealed record SimArchetypeCandidate(
@@ -25,6 +27,13 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
     private readonly ConcurrentDictionary<string, Task<IReadOnlyList<AssetSummary>>> indexedDefaultBodyRecipeCandidateCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<(string PackagePath, ulong FullInstance), Task<IReadOnlyList<ResourceMetadata>>> packageInstanceResourcesCache = new();
     private readonly ConcurrentDictionary<string, Task<IReadOnlyList<ResourceMetadata>>> resourcesByTgiCache = new(StringComparer.OrdinalIgnoreCase);
+    // Skintone resolution caches (build 0263). Profiling showed `TryResolveSimSkintoneRenderSummaryAsync`
+    // dominated Sim-graph timings (~700-1400ms per open) because every Sim re-decodes the
+    // base+detail+overlay PNG textures (~944KB total) even when the skintone instance is shared.
+    // Cache key includes age/gender/package because they affect detail-texture and face-overlay
+    // selection. Per-session in-memory only — never persisted (decoded texture shapes can evolve
+    // between code revisions). Task<T> cache value lets concurrent callers share in-flight work.
+    private readonly ConcurrentDictionary<string, Task<SimSkintoneRenderSummary?>> skintoneRenderCache = new(StringComparer.OrdinalIgnoreCase);
 
     public ExplicitAssetGraphBuilder(IResourceCatalogService resourceCatalogService, IIndexStore? indexStore = null)
     {
@@ -587,7 +596,11 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             parseElapsed = graphStopwatch.Elapsed;
         }
 
-        metadata ??= new SimInfoSummary(
+        // Concrete fallback when SimInfo parsing failed earlier. We introduce a NEW non-nullable
+        // local (`resolvedMetadata`) and use it for the rest of this method so the compiler's
+        // nullable-flow analysis tracks non-nullness through the try/catch above. Eliminates
+        // the CS8604 warnings at every downstream call site.
+        SimInfoSummary resolvedMetadata = metadata ?? new SimInfoSummary(
             Version: 0,
             SpeciesLabel: summary.Category ?? "Sim",
             AgeLabel: "Unknown",
@@ -606,6 +619,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             GeneticPartCount: 0,
             GrowthPartCount: 0,
             PeltLayerCount: 0);
+        metadata = resolvedMetadata;
 
         if (summary.VariantCount > 1)
         {
@@ -647,44 +661,91 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
 
         var bodyFoundation = BuildSimBodyFoundation(metadata);
         var bodySources = BuildSimBodySources(parsedSimInfo);
+
+        // Launch body candidates, CAS slots, and skintone resolution concurrently (build 0264).
+        // They are independent — only `BuildSimBodyAssembly` further down consumes both
+        // bodyCandidates and casSlotCandidates together. On cold opens the three were
+        // ~776 + ~0 + ~1376 ms sequentially (~2.2s); concurrently the wall-clock collapses
+        // to roughly max(...) ≈ 1.4s. Per-task stopwatches still measure each leg's elapsed
+        // time, so the timing diagnostic line stays meaningful (the *sum* will exceed the
+        // total because legs overlap, which is the expected, intentional signal).
+        var bodyResolutionDiagnostics = new List<string>();
         var bodyCandidateStopwatch = Stopwatch.StartNew();
-        var bodyCandidates = await BuildSimBodyCandidatesAsync(
+        var bodyCandidatesTask = BuildSimBodyCandidatesAsync(
             simInfoResource,
             parsedSimInfo,
             simInfoResource.PackagePath,
             includeCompatibilityFallbackCandidates,
-            cancellationToken).ConfigureAwait(false);
-        var bodyCandidateElapsed = bodyCandidateStopwatch.Elapsed;
+            cancellationToken,
+            bodyResolutionDiagnostics);
         var casSlotStopwatch = Stopwatch.StartNew();
-        var casSlotCandidates = includeCasSlotCandidates
-            ? await BuildSimCasSlotCandidatesAsync(
+        var casSlotCandidatesTask = includeCasSlotCandidates
+            ? BuildSimCasSlotCandidatesAsync(
                 parsedSimInfo,
-                metadata,
+                resolvedMetadata,
                 simInfoResource.PackagePath,
-                cancellationToken).ConfigureAwait(false)
-            : [];
-        var casSlotElapsed = casSlotStopwatch.Elapsed;
+                cancellationToken)
+            : Task.FromResult<IReadOnlyList<SimCasSlotCandidateSummary>>([]);
         var skintoneStopwatch = Stopwatch.StartNew();
-        var skintoneRender = await TryResolveSimSkintoneRenderSummaryAsync(
-            metadata,
+        var skintoneRenderTask = TryResolveSimSkintoneRenderSummaryAsync(
+            resolvedMetadata,
+            parsedSimInfo,
             simInfoResource.PackagePath,
-            cancellationToken).ConfigureAwait(false);
-        var skintoneElapsed = skintoneStopwatch.Elapsed;
-        var bodyAssembly = BuildSimBodyAssembly(metadata, bodyCandidates, casSlotCandidates);
-        var slotGroups = BuildSimSlotGroups(metadata);
-        var morphGroups = BuildSimMorphGroups(metadata);
-        if (!string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+            cancellationToken);
+
+        var bodyCandidates = await bodyCandidatesTask.ConfigureAwait(false);
+        var bodyCandidateElapsed = bodyCandidateStopwatch.Elapsed;
+        diagnostics.AddRange(bodyResolutionDiagnostics);
+
+        if (bodyCandidates.Count == 0 && indexStore is not null && metadata is not null)
         {
-            diagnostics.Add($"Indexed CAS slot-family matching currently targets human archetypes first; {metadata.SpeciesLabel} coverage is still in progress.");
+            try
+            {
+                var snapshot = await indexStore.ProbeBodyRecipeAvailabilityAsync(metadata, cancellationToken).ConfigureAwait(false);
+                diagnostics.Add(
+                    $"cas_part_facts probe: total={snapshot.TotalFacts:N0}, body_type=5 total={snapshot.BodyType5Total:N0}, " +
+                    $"body_type=5 + slot match={snapshot.BodyType5SlotMatch:N0}, body_type=5 + species match={snapshot.BodyType5SpeciesMatch:N0}, " +
+                    $"body_type=5 + age match={snapshot.BodyType5AgeMatch:N0}, body_type=5 + gender match={snapshot.BodyType5GenderMatch:N0}, " +
+                    $"body_type=5 + all labels match={snapshot.BodyType5AllLabelsMatch:N0}.");
+                diagnostics.Add(
+                    $"cas_part_facts default flags probe: default_body_type=1 total={snapshot.DefaultBodyTypeAny:N0}, " +
+                    $"default_body_type_female=1={snapshot.DefaultBodyTypeFemaleAny:N0}, default_body_type_male=1={snapshot.DefaultBodyTypeMaleAny:N0}, " +
+                    $"has_naked_link=1 total={snapshot.HasNakedLinkAny:N0}, body_type=5 + default={snapshot.BodyType5DefaultAny:N0}, " +
+                    $"body_type=5 + naked link={snapshot.BodyType5NakedLinkAny:N0}.");
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"cas_part_facts probe failed: {ex.Message}");
+            }
+        }
+        var casSlotCandidates = await casSlotCandidatesTask.ConfigureAwait(false);
+        var casSlotElapsed = casSlotStopwatch.Elapsed;
+        var skintoneRender = await skintoneRenderTask.ConfigureAwait(false);
+        var skintoneElapsed = skintoneStopwatch.Elapsed;
+        if (skintoneRender is not null && !string.IsNullOrWhiteSpace(skintoneRender.Notes))
+        {
+            diagnostics.Add($"Skintone resolution: {skintoneRender.Notes}");
+            if (skintoneRender.ViewportTintColor is { } tint)
+            {
+                diagnostics.Add(System.FormattableString.Invariant(
+                    $"Skintone viewport tint: rgba=({tint.R:0.###}, {tint.G:0.###}, {tint.B:0.###}, {tint.A:0.###})."));
+            }
+        }
+        var bodyAssembly = BuildSimBodyAssembly(resolvedMetadata, bodyCandidates, casSlotCandidates);
+        var slotGroups = BuildSimSlotGroups(resolvedMetadata);
+        var morphGroups = BuildSimMorphGroups(resolvedMetadata);
+        if (!string.Equals(resolvedMetadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            diagnostics.Add($"Indexed CAS slot-family matching currently targets human archetypes first; {resolvedMetadata.SpeciesLabel} coverage is still in progress.");
         }
 
         diagnostics.Add(
             $"Sim graph timings: parse {parseElapsed.TotalMilliseconds:0} ms | templates {templateElapsed.TotalMilliseconds:0} ms | body candidates {bodyCandidateElapsed.TotalMilliseconds:0} ms | CAS slots {casSlotElapsed.TotalMilliseconds:0} ms | skintone {skintoneElapsed.TotalMilliseconds:0} ms | total {graphStopwatch.Elapsed.TotalMilliseconds:0} ms.");
 
-        var supportedSubset = "Metadata-first Sim archetypes derived from grouped SimInfo rows. This slice now prioritizes body assembly inputs first: base frame, skintone, body-layer counts, and morph-stack counts are surfaced before apparel slot editing; full named/preset character assembly is not implemented yet.";
+        var supportedSubset = "Metadata-first Sim archetypes derived from grouped SimInfo rows. Visual rendering covers skintone atlas, body shell, head shell, hair, top/bottom/shoes, and face CAS overlays (Eyebrows, EyeColor, Lipstick, Eyeshadow, Eyeliner, Blush). Non-visual character data (traits, aspirations, voice, life stages) is not surfaced as it is not a rendering concern.";
         var simGraph = new SimAssetGraph(
             simInfoResource,
-            metadata,
+            resolvedMetadata,
             skintoneRender,
             templateOptions,
             bodyFoundation,
@@ -1416,14 +1477,74 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         return groups;
     }
 
-    private async Task<SimSkintoneRenderSummary?> TryResolveSimSkintoneRenderSummaryAsync(
+    private Task<SimSkintoneRenderSummary?> TryResolveSimSkintoneRenderSummaryAsync(
         SimInfoSummary metadata,
+        Ts4SimInfo? parsedSimInfo,
         string? preferredPackagePath,
         CancellationToken cancellationToken)
     {
-        if (indexStore is null ||
-            string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex))
+        // Cache wrapper. Skintone resolution loads + decodes ~1MB of PNG bytes per call which
+        // is the single biggest cost in the Sim-graph build (per profiling in build 0262
+        // session logs). Most Sims share their skintone instance, so memoizing by
+        // (instance, age, gender, package) collapses subsequent opens to a no-op.
+        if (indexStore is null || string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex))
         {
+            return Task.FromResult<SimSkintoneRenderSummary?>(null);
+        }
+
+        var cacheKey = $"{metadata.SkintoneInstanceHex}|{metadata.AgeLabel}|{metadata.GenderLabel}|{preferredPackagePath ?? string.Empty}";
+        var cachedTask = skintoneRenderCache.GetOrAdd(cacheKey, _ => TryResolveSimSkintoneRenderSummaryUncachedAsync(
+            metadata, parsedSimInfo, preferredPackagePath, CancellationToken.None));
+        // Surface cancellation back to the per-call caller while keeping the underlying
+        // Task running for other waiters. Failed lookups stay cached as failures so we
+        // don't retry a known-broken skintone, but we evict cancellations.
+        return cachedTask.ContinueWith(t =>
+        {
+            if (t.IsFaulted || t.IsCanceled) skintoneRenderCache.TryRemove(cacheKey, out _);
+            return t.Result;
+        }, cancellationToken, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+    }
+
+    private async Task<SimSkintoneRenderSummary?> TryResolveSimSkintoneRenderSummaryUncachedAsync(
+        SimInfoSummary metadata,
+        Ts4SimInfo? parsedSimInfo,
+        string? preferredPackagePath,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null)
+        {
+            return null;
+        }
+
+        // Build 0268: animals don't carry a Skintone instance — their fur color comes from
+        // PeltLayers (one or more (layerInstance, ARGB-color) pairs in the SimInfo). The
+        // PetPeltLayer resource at each layer's instance points to an L8 RLE alpha mask that
+        // would composite for the actual fur pattern (port deferred — see
+        // docs/references/external/TS4SimRipper/src/PeltBlender.cs). For now, surface just
+        // the FIRST pelt color as the material ViewportTintColor so animals render in their
+        // base coat color (e.g. the cat with pelt 0xFFCCB68D appears beige) instead of the
+        // pure-white blank diffuse EA ships at the geometry's instance. A later pass can
+        // implement full per-pelt mask compositing.
+        if (string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex))
+        {
+            var isAnimal = !string.IsNullOrWhiteSpace(metadata.SpeciesLabel) &&
+                           !string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase);
+            if (isAnimal && parsedSimInfo is { PeltLayers.Count: > 0 })
+            {
+                var firstPelt = parsedSimInfo.PeltLayers[0];
+                var tintColor = ToCanonicalColor(firstPelt.Variant);
+                return new SimSkintoneRenderSummary(
+                    SkintoneInstanceHex: null,
+                    SkintoneShift: null,
+                    SkintoneResourceTgi: null,
+                    SkintonePackagePath: null,
+                    BaseTextureResourceTgi: null,
+                    BaseTexturePackagePath: null,
+                    OverlayTextureCount: 0,
+                    SwatchColorCount: parsedSimInfo.PeltLayers.Count,
+                    ViewportTintColor: tintColor,
+                    Notes: $"Animal pelt tint synthesised from first PeltLayer (instance 0x{firstPelt.Instance:X16}, color 0x{firstPelt.Variant:X8}). Full per-pelt L8-mask compositing pending.");
+            }
             return null;
         }
 
@@ -1462,6 +1583,133 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 preferredPackagePath,
                 cancellationToken).ConfigureAwait(false);
             var tintColor = TryBuildSkintoneViewportTintColor(skintone);
+            byte[]? baseTexturePngBytes = null;
+            if (baseTextureResource is not null)
+            {
+                try
+                {
+                    baseTexturePngBytes = await resourceCatalogService
+                        .GetTexturePngAsync(baseTextureResource.PackagePath, baseTextureResource.Key, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    baseTexturePngBytes = null;
+                }
+            }
+
+            // Resolve the SkinBlender hardcoded detail textures and the matching face overlay
+            // for the Sim's age × gender. These feed the skin-atlas compositor in the App layer.
+            // Source of the table: docs/references/external/TS4SimRipper/src/SkinBlender.cs:18-43
+            // (reference code, not authoritative EA source, but the closest publicly-grounded
+            // mapping the project has).
+            var skinIndex = TryComputeSkinIndex(metadata.AgeLabel, metadata.GenderLabel);
+            var ageGenderMask = TryComputeAgeGenderMask(metadata.AgeLabel, metadata.GenderLabel);
+            byte[]? detailNeutralPngBytes = null;
+            byte[]? detailOverlayPngBytes = null;
+            string? detailNeutralProbe = null;
+            string? detailOverlayProbe = null;
+            if (skinIndex is { } neutralIndex && neutralIndex >= 0 && neutralIndex < SkinBlenderDetailNeutralByIndex.Length)
+            {
+                (detailNeutralPngBytes, detailNeutralProbe) = await TryFetchImageByInstanceWithProbeAsync(SkinBlenderDetailNeutralByIndex[neutralIndex], cancellationToken).ConfigureAwait(false);
+                var overlayIndex = neutralIndex + 4;
+                if (overlayIndex < SkinBlenderDetailNeutralByIndex.Length && SkinBlenderDetailNeutralByIndex[overlayIndex] != 0)
+                {
+                    (detailOverlayPngBytes, detailOverlayProbe) = await TryFetchImageByInstanceWithProbeAsync(SkinBlenderDetailNeutralByIndex[overlayIndex], cancellationToken).ConfigureAwait(false);
+                }
+            }
+            // SkinBlender.cs:308 looks up the face overlay with `tone.GetOverlayInstance(age & gender)`,
+            // and TONE.cs:100-107 implements the lookup as strict equality against `OverlayDesc.flags`.
+            // Per Form1.cs:350-351 `currentAge` and `currentGender` are *single-bit* AgeGender values
+            // (e.g. YoungAdult=0x0010, Female=0x2000), so `age & gender` is 0 for any normal human Sim
+            // — i.e. SkinBlender requests an overlay with `flags == 0`.
+            //
+            // In practice many TS4 skintones have NO overlay tagged `flags == 0` — their overlay
+            // table only contains entries tagged for a specific (age | gender) combination
+            // (e.g. flags=0x2004 = Female + Child). The TS4SimRipper strict-equality lookup
+            // returns 0 for those skintones and the head ends up without a face overlay at
+            // all, which produces the harsh dark-mouth-overlay-on-bare-skin artifact.
+            //
+            // To recover, after the strict-equality probe (faithful to TS4SimRipper) we fall
+            // back to a gender-bit match (any overlay whose flags share the requested gender
+            // bit), and as a last resort the first overlay in the table. The matched-flags
+            // diagnostic reports which path succeeded so we can audit it.
+            byte[]? faceOverlayPngBytes = null;
+            uint? faceOverlayMatchedFlags = null;
+            uint faceOverlayRequestMask = 0u;
+            string faceOverlayMatchPath = "none";
+            if (ageGenderMask is { } _agm)
+            {
+                var ageBit = _agm & 0x00000FFFu;
+                var genderBit = _agm & 0x0000F000u;
+                faceOverlayRequestMask = ageBit & genderBit; // matches SkinBlender's `age & gender`
+                if (skintone.OverlayTextures.Count > 0)
+                {
+                    // Pass 1 — strict equality, faithful to SkinBlender / TONE.GetOverlayInstance.
+                    foreach (var overlay in skintone.OverlayTextures)
+                    {
+                        if (overlay.TypeValue == faceOverlayRequestMask)
+                        {
+                            faceOverlayPngBytes = await TryFetchImageByInstanceAsync(overlay.TextureInstance, cancellationToken).ConfigureAwait(false);
+                            faceOverlayMatchedFlags = overlay.TypeValue;
+                            faceOverlayMatchPath = "strict";
+                            break;
+                        }
+                    }
+
+                    // Passes 2 & 3 (gender-bit and first-overlay fallbacks) are intentionally
+                    // omitted. Applying an age-mismatched overlay — e.g. a Child overlay
+                    // (flags=0x2004) to a Young Adult (request=0x0000) — produces dark
+                    // contouring patches at wrong proportions that are visually worse than
+                    // having no face overlay at all. Strict-equality only; if no overlay
+                    // matches the request, leave faceOverlayPngBytes null.
+                }
+            }
+            // Resolve face CAS overlay textures. The real face-makeup body types are
+            // 29-35 (per Plan 3.4 audit at docs/workflows/face-cas-bodytype-audit.md):
+            //   29=Lipstick, 30=Eyeshadow, 31=Eyeliner, 32=Blush, 34=Brow, 35=EyeColor.
+            // bt=4 and bt=14 are kept for legacy compatibility (the audit shows those slots
+            // are heavily reused for accessories with geometry, but body-driving bt=4/14
+            // entries still fall through this path safely because the texture-only check in
+            // the compositor rejects geometry-only assets).
+            // Face makeup parts have bodyDriving=0 in SimInfo, so we iterate ALL outfit parts
+            // (not just the body-driving subset).
+            //
+            // AGE GATE (build 0242): face CAS overlay textures are designed for the adult-face
+            // UV layout. Applying them to Child / Toddler / Infant face meshes (which have
+            // different UV regions) produced visible green/brown blotches in earlier visual
+            // verification. Until per-age UV-region mapping is implemented, only iterate face
+            // overlays for Adult-bucket Sims (Teen / YA / Adult / Elder).
+            var faceCasOverlayPngBytes = new List<byte[]>();
+            var faceCasOverlayNotes = new List<string>();
+            var simAgeIsAdultBucket = parsedSimInfo is not null
+                && IsAdultBucketAgeFlags(parsedSimInfo.AgeFlags);
+            if (parsedSimInfo is not null && indexStore is not null && simAgeIsAdultBucket)
+            {
+                var faceParts = parsedSimInfo.Outfits
+                    .SelectMany(static outfit => outfit.Parts)
+                    .Where(static p => IsFaceOverlayBodyType((int)p.BodyType))
+                    .GroupBy(static p => (p.BodyType, p.PartInstance))
+                    .Select(static g => g.First())
+                    .OrderBy(static p => p.BodyType)
+                    .ToArray();
+                foreach (var facePart in faceParts)
+                {
+                    var (casOverlayPng, casOverlayNote) = await TryFetchFaceCasOverlayPngAsync(
+                        facePart.PartInstance, preferredPackagePath, cancellationToken).ConfigureAwait(false);
+                    var label = LabelForFaceOverlayBodyType((int)facePart.BodyType);
+                    if (casOverlayPng is { Length: > 0 })
+                    {
+                        faceCasOverlayPngBytes.Add(casOverlayPng);
+                        faceCasOverlayNotes.Add($"face CAS {label} 0x{facePart.PartInstance:X16}: {casOverlayPng.Length:N0} byte(s)");
+                    }
+                    else
+                    {
+                        faceCasOverlayNotes.Add($"face CAS {label} 0x{facePart.PartInstance:X16}: unresolved [{casOverlayNote ?? "no probe"}]");
+                    }
+                }
+            }
+
             var noteParts = new List<string>
             {
                 $"Resolved skintone resource {skintoneResource.Key.FullTgi} from {Path.GetFileName(skintoneResource.PackagePath)}.",
@@ -1471,10 +1719,42 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             if (baseTextureResource is not null)
             {
                 noteParts.Add($"base texture {baseTextureResource.Key.FullTgi}");
+                noteParts.Add(baseTexturePngBytes is { Length: > 0 }
+                    ? $"base texture bytes loaded ({baseTexturePngBytes.Length:N0} byte(s))"
+                    : "base texture bytes unavailable");
             }
             else if (skintone.BaseTextureInstance != 0)
             {
                 noteParts.Add($"base texture instance 0x{skintone.BaseTextureInstance:X16} unresolved");
+            }
+
+            if (skinIndex is { } skinIdx)
+            {
+                noteParts.Add($"skinIndex={skinIdx} (per SkinBlender age×gender mapping)");
+                if (skinIdx < SkinBlenderDetailNeutralByIndex.Length)
+                {
+                    noteParts.Add(detailNeutralPngBytes is { Length: > 0 }
+                        ? $"detail neutral 0x{SkinBlenderDetailNeutralByIndex[skinIdx]:X16} loaded ({detailNeutralPngBytes.Length:N0} byte(s))"
+                        : $"detail neutral 0x{SkinBlenderDetailNeutralByIndex[skinIdx]:X16} unresolved [{detailNeutralProbe ?? "no probe data"}]");
+                }
+                var overlayIdx = skinIdx + 4;
+                if (overlayIdx < SkinBlenderDetailNeutralByIndex.Length && SkinBlenderDetailNeutralByIndex[overlayIdx] != 0)
+                {
+                    noteParts.Add(detailOverlayPngBytes is { Length: > 0 }
+                        ? $"detail overlay 0x{SkinBlenderDetailNeutralByIndex[overlayIdx]:X16} loaded ({detailOverlayPngBytes.Length:N0} byte(s))"
+                        : $"detail overlay 0x{SkinBlenderDetailNeutralByIndex[overlayIdx]:X16} unresolved [{detailOverlayProbe ?? "no probe data"}]");
+                }
+            }
+            if (ageGenderMask is { } _)
+            {
+                noteParts.Add(faceOverlayPngBytes is { Length: > 0 }
+                    ? $"face overlay matched flags=0x{faceOverlayMatchedFlags ?? 0u:X4} request=0x{faceOverlayRequestMask:X4} via {faceOverlayMatchPath} ({faceOverlayPngBytes.Length:N0} byte(s))"
+                    : $"face overlay request=0x{faceOverlayRequestMask:X4} (strict-only: no exact match; table size={skintone.OverlayTextures.Count})");
+                if (skintone.OverlayTextures.Count > 0)
+                {
+                    var overlayDump = string.Join("; ", skintone.OverlayTextures.Select(static o => $"flags=0x{o.TypeValue:X4} inst=0x{o.TextureInstance:X16}"));
+                    noteParts.Add($"overlay table: {overlayDump}");
+                }
             }
 
             if (tintColor is not null)
@@ -1482,11 +1762,40 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 noteParts.Add("viewport tint prepared from skintone swatch/colorize data");
             }
 
+            if (skintone.SwatchColors.Count > 0)
+            {
+                var swatchPreview = string.Join(", ",
+                    skintone.SwatchColors
+                        .Take(6)
+                        .Select(static color =>
+                        {
+                            var a = (color >> 24) & 0xFF;
+                            var r = (color >> 16) & 0xFF;
+                            var g = (color >> 8) & 0xFF;
+                            var b = color & 0xFF;
+                            return $"#{color:X8} (A={a},R={r},G={g},B={b})";
+                        }));
+                noteParts.Add($"swatch colors: {swatchPreview}");
+            }
+
+            noteParts.Add($"saturation=0x{(skintone.Colorize & 0xFFFF):X4} hue=0x{(skintone.Colorize >> 16) & 0xFFFF:X4}");
+            noteParts.Add($"OverlayOpacity={skintone.OverlayOpacity} (atlas Pass2 mix = {skintone.OverlayOpacity / 100f:0.###})");
+            noteParts.AddRange(faceCasOverlayNotes);
+
             if (metadata.SkintoneShift.HasValue)
             {
                 noteParts.Add($"shift {metadata.SkintoneShift.Value:0.###}");
             }
 
+            // Per StructuredMetadataServices.ParseSkintone the binary order is `saturation`
+            // then `hue`, packed back into Colorize as `(hue << 16) | saturation`.
+            var skintoneSaturation = (ushort)(skintone.Colorize & 0xFFFFu);
+            var skintoneHue = (ushort)((skintone.Colorize >> 16) & 0xFFFFu);
+            // Plan G (skintone re-ground): when the resolved base skin texture is available,
+            // it is the authoritative source of skin colour — clear the synthesised swatch tint
+            // so downstream materials use the texture directly instead of an average colour. Keep
+            // the synthesised tint only as a true fallback when no base texture loaded.
+            var effectiveTintColor = baseTexturePngBytes is { Length: > 0 } ? null : tintColor;
             return new SimSkintoneRenderSummary(
                 metadata.SkintoneInstanceHex,
                 metadata.SkintoneShift,
@@ -1496,8 +1805,16 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 baseTextureResource?.PackagePath,
                 skintone.OverlayTextures.Count,
                 skintone.SwatchColors.Count,
-                tintColor,
-                string.Join(" | ", noteParts));
+                effectiveTintColor,
+                string.Join(" | ", noteParts),
+                baseTexturePngBytes,
+                detailNeutralPngBytes,
+                detailOverlayPngBytes,
+                faceOverlayPngBytes,
+                faceCasOverlayPngBytes.Count > 0 ? faceCasOverlayPngBytes : null,
+                skintoneHue,
+                skintoneSaturation,
+                skintone.OverlayOpacity);
         }
         catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException or ArgumentOutOfRangeException)
         {
@@ -1544,6 +1861,274 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             .ThenBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
 
+    // Neutral warm fallback used when a skintone resource exposes no swatch colors. Without
+    // this, the renderer's opacity-suppression gate (which requires a non-null viewport tint)
+    // never fires for those skintones, and the body renders fully transparent (i.e. invisible).
+    // A real per-skintone color recovery from base texture / overlay analysis is a future
+    // packet; for now, a plausible skin tone is preferable to an invisible Sim.
+    private static readonly CanonicalColor SkintoneFallbackColor = new(0.90f, 0.75f, 0.65f, 1f);
+
+    // Hardcoded SkinBlender detail-texture TGIs, by age × gender × physique-channel-row.
+    // Source: docs/references/external/TS4SimRipper/src/SkinBlender.cs:18-43. Each row in the
+    // SimRipper table holds 5 TGIs (neutral, heavy, fit, lean, bony). For our compositor we
+    // currently only consume the neutral entry per row (we do not yet track per-physique
+    // weights for a Sim). Rows 0..6 are male/baby/toddler/child; rows 7..10 are male overlays
+    // for teen/YA/adult/elder; rows 11..14 are female teen/YA/adult/elder; rows 15..18 are
+    // female overlays for the same. The skinIndex maps via FindSetBit(age) + 8 if female and
+    // teen-or-older.
+    private static readonly ulong[] SkinBlenderDetailNeutralByIndex = new ulong[]
+    {
+        0x0A11C0657FBDB54FUL, // 0  baby
+        0xD19E353A4001EC4DUL, // 1  toddler
+        0x9CB2C5C93E357C62UL, // 2  child
+        0x48F11375333EDB51UL, // 3  teen male
+        0x58F8275474E1AE00UL, // 4  YA male
+        0x308855B3BFF0E848UL, // 5  adult male
+        0x24DFF8E30DC7E5DCUL, // 6  elder male
+        0xA062AF087257C3AAUL, // 7  teen male overlay
+        0xA3EC609A2DAB31D3UL, // 8  YA male overlay
+        0x265B16FA4E7DA19BUL, // 9  adult male overlay
+        0x25EBBD9BED791D4FUL, // 10 elder male overlay
+        0x737A5FF0EB729888UL, // 11 teen female
+        0x36C865290B1F4E79UL, // 12 YA female
+        0x59093C1074E2C911UL, // 13 adult female
+        0x2356ABE32AC4C255UL, // 14 elder female
+        0xF85FB112905485DBUL, // 15 teen female overlay
+        0x0A136CA1147B1772UL, // 16 YA female overlay
+        0x53F13B3669333A6AUL, // 17 adult female overlay
+        0x1E1930AE6138725EUL, // 18 elder female overlay
+    };
+
+    private static int? TryComputeSkinIndex(string? ageLabel, string? genderLabel)
+    {
+        if (string.IsNullOrWhiteSpace(ageLabel))
+        {
+            return null;
+        }
+        var normalizedAge = ageLabel.Trim().ToLowerInvariant();
+        // SkinBlender forces Infant to skinIndex 1 (toddler row) until proper infant textures
+        // are added (per the comment in SkinBlender.cs). We follow the same convention.
+        if (normalizedAge == "infant")
+        {
+            return 1;
+        }
+        var ageBit = normalizedAge switch
+        {
+            "baby" => 0,
+            "toddler" => 1,
+            "child" => 2,
+            "teen" => 3,
+            "young adult" => 4,
+            "adult" => 5,
+            "elder" => 6,
+            _ => -1
+        };
+        if (ageBit < 0)
+        {
+            return null;
+        }
+        var isFemale = string.Equals(genderLabel, "Female", StringComparison.OrdinalIgnoreCase);
+        if (isFemale && ageBit >= 3)
+        {
+            return ageBit + 8;
+        }
+        return ageBit;
+    }
+
+    private static uint? TryComputeAgeGenderMask(string? ageLabel, string? genderLabel)
+    {
+        if (string.IsNullOrWhiteSpace(ageLabel))
+        {
+            return null;
+        }
+        var normalizedAge = ageLabel.Trim().ToLowerInvariant();
+        var ageBit = normalizedAge switch
+        {
+            "baby" => 0x00000001u,
+            "toddler" => 0x00000002u,
+            "child" => 0x00000004u,
+            "teen" => 0x00000008u,
+            "young adult" => 0x00000010u,
+            "adult" => 0x00000020u,
+            "elder" => 0x00000040u,
+            "infant" => 0x00000080u,
+            _ => 0u
+        };
+        if (ageBit == 0u)
+        {
+            return null;
+        }
+        var genderBit = string.Equals(genderLabel, "Female", StringComparison.OrdinalIgnoreCase) ? 0x2000u
+            : string.Equals(genderLabel, "Male", StringComparison.OrdinalIgnoreCase) ? 0x1000u
+            : 0u;
+        return ageBit | genderBit;
+    }
+
+    private async Task<(byte[]? Bytes, string? ProbeNote)> TryFetchImageByInstanceWithProbeAsync(ulong instance, CancellationToken cancellationToken)
+    {
+        if (instance == 0 || indexStore is null)
+        {
+            return (null, null);
+        }
+        IReadOnlyList<ResourceMetadata> resources;
+        try
+        {
+            resources = await indexStore.GetResourcesByFullInstanceAsync(instance, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return (null, FormatLookupException("index lookup", ex));
+        }
+        if (resources.Count == 0)
+        {
+            return (null, "index returned 0 resources at this instance");
+        }
+        // The same instance can be exposed under multiple image-class types (e.g. LRLEImage
+        // 0x2BC04EDF and RLE2Image 0x3453CF95 in TS4 client packages). The SQL ORDER BY
+        // type_name surfaces them alphabetically, which can put a type the catalog can't
+        // decode (LRLE) ahead of one it can (RLE2). SkinBlender's FetchGameTexture walks
+        // candidates until one decodes; mirror that here — no decoder skipping is hardcoded.
+        var imageCandidates = resources
+            .Where(static resource =>
+                IsImageResourceTypeName(resource.Key.TypeName) ||
+                resource.Key.Type == 0x00B2D882u)
+            .ToArray();
+        if (imageCandidates.Length == 0)
+        {
+            var typeSummary = string.Join(", ", resources
+                .Select(static r => $"{r.Key.TypeName ?? "?"}(0x{r.Key.Type:X8})")
+                .Distinct()
+                .Take(6));
+            return (null, $"{resources.Count} resource(s) at instance, no _IMG-class match; types: {typeSummary}");
+        }
+        string? lastError = null;
+        foreach (var candidate in imageCandidates)
+        {
+            try
+            {
+                var bytes = await resourceCatalogService
+                    .GetTexturePngAsync(candidate.PackagePath, candidate.Key, cancellationToken)
+                    .ConfigureAwait(false);
+                if (bytes is { Length: > 0 })
+                {
+                    return (bytes, null);
+                }
+                lastError = $"{candidate.Key.TypeName ?? "_IMG"}(0x{candidate.Key.Type:X8}) decoded to 0 bytes";
+            }
+            catch (Exception ex)
+            {
+                lastError = $"{candidate.Key.TypeName ?? "_IMG"}(0x{candidate.Key.Type:X8}) {FormatLookupException("decode", ex)}";
+            }
+        }
+        return (null, $"all {imageCandidates.Length} candidate(s) failed; last: {lastError}");
+    }
+
+    private static string FormatLookupException(string stage, Exception ex)
+    {
+        var message = ex.Message?.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (message is { Length: > 160 })
+        {
+            message = message[..160] + "...";
+        }
+        return $"{stage} threw: {ex.GetType().Name}: {message}";
+    }
+
+    private async Task<byte[]?> TryFetchImageByInstanceAsync(ulong instance, CancellationToken cancellationToken)
+    {
+        var (bytes, _) = await TryFetchImageByInstanceWithProbeAsync(instance, cancellationToken).ConfigureAwait(false);
+        return bytes;
+    }
+
+    // BodyType=4 (EyeColor) is NOT a skin atlas overlay — its "diffuse" TGI is the iris
+    // replacement texture for the eye mesh rendered in UV space that doesn't match the skin
+    // atlas. Blending it as a skin overlay paints large dark splotches across cheeks and nose.
+    // Only BodyType=14 (Brows) produces a genuine skin-atlas straight-alpha overlay.
+    // Plan P1 revert (build 0239) — bt=29 (Lipstick), 30 (Eyeshadow), 31 (Eyeliner),
+    // 32 (Blush) were added in build 0234 but produce visible brown/red blotches because
+    // their textures are sized for the face-UV REGION of the atlas, not the full atlas.
+    // Drawing them stretched across the whole atlas creates wrong-UV artifacts. Reverted
+    // to bt=4/14/34/35 (EyeColor + Brows variants), all of which were visually verified.
+    // Future work: respect each makeup texture's intended atlas sub-rect.
+    // Plan B (build 0246): face CAS overlays disabled entirely. Even bt=4/14/34/35 textures
+    // are sized for the face REGION of the skin atlas (typically ~256×256), not the full
+    // atlas (1024×2048). The compositor at SimSkinAtlasComposer.cs:177 stretches every
+    // overlay to the full atlas dimensions, which paints the textures in wrong places (the
+    // brown blotches the user reported on the Adult Female face). Until per-overlay UV-region
+    // mapping is implemented (read each overlay's MATD or RegionMap to find its intended
+    // sub-rect), suppress them all. Eye iris and mouth interior come from EyeColor mesh
+    // (bt=4) and the in-mouth mesh; brows can be added back once UV-region work lands.
+    private static bool IsFaceOverlayBodyType(int bodyType) => false;
+
+    // Per the Ts4SimInfo binary format (and Ts4CasPart age flags):
+    //   0x0001=Baby, 0x0080=Infant, 0x0002=Toddler, 0x0004=Child,
+    //   0x0008=Teen, 0x0010=YoungAdult, 0x0020=Adult, 0x0040=Elder
+    // The "adult bucket" covers Teen+YA+Adult+Elder = 0x0078. Face CAS overlay textures
+    // are designed for the adult face UV layout; non-adult ages need different handling.
+    private const uint AdultBucketAgeFlagsMask = 0x00000078u;
+    private static bool IsAdultBucketAgeFlags(uint ageFlags) =>
+        (ageFlags & AdultBucketAgeFlagsMask) != 0;
+
+    private static string LabelForFaceOverlayBodyType(int bodyType) => bodyType switch
+    {
+        4 => "EyeColor",
+        14 => "Brows",
+        34 => "Brow",
+        35 => "EyeColor",
+        _ => $"BodyType{bodyType}"
+    };
+
+    private async Task<(byte[]? Png, string? Note)> TryFetchFaceCasOverlayPngAsync(
+        ulong casPartInstance,
+        string? preferredPackagePath,
+        CancellationToken cancellationToken)
+    {
+        if (indexStore is null || casPartInstance == 0)
+        {
+            return (null, "no index or zero instance");
+        }
+
+        var casPartResources = await indexStore
+            .GetResourcesByFullInstanceAsync(casPartInstance, cancellationToken)
+            .ConfigureAwait(false);
+        var casPartResource = SelectPreferredSimResourceMatch(
+            casPartResources.Where(static r =>
+                string.Equals(r.Key.TypeName, "CASPart", StringComparison.OrdinalIgnoreCase)),
+            preferredPackagePath);
+        if (casPartResource is null)
+        {
+            return (null, $"no CASPart resource at instance 0x{casPartInstance:X16}");
+        }
+
+        try
+        {
+            var bytes = await resourceCatalogService
+                .GetResourceBytesAsync(casPartResource.PackagePath, casPartResource.Key, raw: false, cancellationToken)
+                .ConfigureAwait(false);
+            var casPart = Ts4CasPart.Parse(bytes);
+            var diffuseRef = casPart.TextureReferences
+                .FirstOrDefault(static t => string.Equals(t.Slot, "diffuse", StringComparison.OrdinalIgnoreCase));
+            if (diffuseRef.Key.Type == 0 || diffuseRef.Key.FullInstance == 0)
+            {
+                return (null, $"CASPart parsed but has no diffuse texture reference");
+            }
+
+            var (png, note) = await TryFetchImageByInstanceWithProbeAsync(
+                diffuseRef.Key.FullInstance, cancellationToken).ConfigureAwait(false);
+            return (png, note);
+        }
+        catch (Exception ex)
+        {
+            return (null, FormatLookupException("face CAS overlay", ex));
+        }
+    }
+
+    private static bool IsImageResourceTypeName(string? typeName) =>
+        !string.IsNullOrWhiteSpace(typeName) &&
+        (typeName.Equals("_IMG", StringComparison.OrdinalIgnoreCase) ||
+         typeName.EndsWith("Image", StringComparison.OrdinalIgnoreCase) ||
+         typeName.Equals("PNGImage", StringComparison.OrdinalIgnoreCase) ||
+         typeName.Equals("DSTImage", StringComparison.OrdinalIgnoreCase));
+
     private static CanonicalColor? TryBuildSkintoneViewportTintColor(Ts4Skintone skintone)
     {
         if (skintone.SwatchColors.Count > 0)
@@ -1551,7 +2136,10 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             return ToCanonicalColor(skintone.SwatchColors[0]);
         }
 
-        return skintone.Colorize == 0 ? null : ToCanonicalColor(skintone.Colorize);
+        // The `Colorize` field on Ts4Skintone packs `(hue << 16) | saturation` per the format
+        // (TS4SimRipper TONE.cs), not an ARGB color. Synthesizing a viewport tint from it
+        // produced garbage. Use a neutral skin-tone fallback so the Sim is at least visible.
+        return SkintoneFallbackColor;
     }
 
     private static CanonicalColor ToCanonicalColor(uint argb)
@@ -1649,18 +2237,21 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         Ts4SimInfo? metadata,
         string? preferredPackagePath,
         bool includeCompatibilityFallbackCandidates,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ICollection<string>? resolutionDiagnostics = null)
     {
         if (indexStore is null)
         {
+            resolutionDiagnostics?.Add("Sim body candidate resolution skipped: index store not available.");
             return [];
         }
 
+        var stageCounts = new SimBodyResolutionCounters();
         var summariesByLabel = new Dictionary<string, SimBodyCandidateSummary>(StringComparer.OrdinalIgnoreCase);
         var seenAssetIds = new HashSet<Guid>();
         var exactCandidatesByLabel = new Dictionary<string, List<AssetSummary>>(StringComparer.OrdinalIgnoreCase);
         var indexedBodyPartFacts = await TryLoadIndexedSimTemplateBodyPartFactsAsync(simInfoResource.Id, cancellationToken).ConfigureAwait(false);
-        var authoritativeBodyDrivingParts = (indexedBodyPartFacts.Any(static fact => fact.IsBodyDriving)
+        var authoritativeBodyDrivingPartsList = (indexedBodyPartFacts.Any(static fact => fact.IsBodyDriving)
                 ? indexedBodyPartFacts
                     .Where(static fact => fact.IsBodyDriving)
                     .Select(static fact => (BodyType: fact.BodyType, PartInstance: fact.PartInstance))
@@ -1669,7 +2260,105 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     : GetAuthoritativeBodyDrivingOutfits(metadata)
                         .SelectMany(static outfit => outfit.Parts)
                         .Select(static part => (BodyType: (int)part.BodyType, PartInstance: part.PartInstance)))
-            .ToArray();
+            .ToList();
+
+        // Promote body parts (Head bt=3, Body bt=5, Shoes bt=8) to authoritative when no
+        // body-driving outfit covers them. Two fallback sources, tried in order:
+        //   (1) `metadata.GeneticParts` — Plan 3.2 / build 0260 path. Originally only bt=3
+        //       (Head) — extended in 0266 to bt=5 / bt=8.
+        //   (2) `metadata.OutfitParts` — flat list of every outfit's parts. Build 0266
+        //       added this because animal SimInfos (Cat/Dog/Fox/Little Dog) put body parts
+        //       in a `categoryValue=0` outfit which `GetAuthoritativeBodyDrivingOutfits`
+        //       filters out (it only accepts categoryValue==5), and their GeneticParts
+        //       carries pelt/fur/markings (bt=28/35/60-62) but NOT bt=3/5/8.
+        // Verified for Cat Adult Female TGI 025ED6F4:0:F50AFC1C874EFD1E: pre-fix the
+        // cat falls through to IndexedDefault and surfaces 60 costume CASParts
+        // (acBody_sp14bee_*, acBody_sp14cape_*, acBody_EP04DragonOnsie_*) — there's no
+        // `acBody_Nude` in cas_part_facts at all because EA's animal nude bodies don't
+        // carry the has_naked_link / default_body_type flags humans do. Probed cat outfit
+        // bt=5 instance 0x02AFEB via --probe-caspart: it's a real complete CASPart with
+        // 4 LODs + diffuse/shadow/region_map/normal/specular textures.
+        // Side-effect note for Humans: when a human Sim already has a category-5
+        // body-driving outfit (the normal case), the `Any` check below skips both
+        // fallbacks, so this is a no-op. For the rare human with no body-driving
+        // outfit, the OutfitParts fallback surfaces their currently-worn body part —
+        // which is correct (and the existing canonical-baseline override at line 2250+
+        // still corrects bt=6/7/8 if needed).
+        if (metadata is not null)
+        {
+            // Build 0267: extended bt=60 (Ears) and bt=61 (Tail) for animals.
+            // Cat Adult Male outfit ships acEarsUp at bt=60 inst 0x0284E0 and acTailLong
+            // at bt=61 inst 0x024B61. Without promotion the user sees a cat with no ears
+            // or tail. Humans don't use bt=60/61 so the promotion is safe for them too
+            // (the OutfitParts lookup will simply find nothing).
+            foreach (var promotionBodyType in new[] { 3, 5, 8, 60, 61 })
+            {
+                if (authoritativeBodyDrivingPartsList.Any(p => p.BodyType == promotionBodyType)) continue;
+
+                // (1) Genetic-parts fallback (build 0260 / 0266).
+                var geneticMatches = metadata.GeneticParts
+                    .Where(g => g.BodyType == (uint)promotionBodyType)
+                    .ToList();
+                if (geneticMatches.Count > 0)
+                {
+                    foreach (var part in geneticMatches)
+                    {
+                        authoritativeBodyDrivingPartsList.Add((promotionBodyType, part.PartInstance));
+                        resolutionDiagnostics?.Add($"Promoted genetic BodyType={promotionBodyType} part 0x{part.PartInstance:X16} to authoritative (no body-driving outfit lists it).");
+                    }
+                    continue;
+                }
+
+                // (2) OutfitParts fallback (build 0266 — covers animal SimInfos whose
+                // body parts live in a category=0 outfit, not in the genetic stream).
+                var outfitMatch = metadata.OutfitParts
+                    .FirstOrDefault(p => (uint)p.BodyType == (uint)promotionBodyType);
+                if (outfitMatch is not null)
+                {
+                    authoritativeBodyDrivingPartsList.Add((promotionBodyType, outfitMatch.PartInstance));
+                    resolutionDiagnostics?.Add($"Promoted outfit BodyType={promotionBodyType} part 0x{outfitMatch.PartInstance:X16} to authoritative (no body-driving or genetic source — typical for animal SimInfos).");
+                }
+            }
+        }
+
+        // Item D — fill missing Top (6) / Bottom (7) / Shoes (8) slots with EA's canonical
+        // baseline nude CASParts. Confirmed by community body-replacement mods that override
+        // these exact instance IDs (see docs/workflows/canonical-baseline-bodies.md). EA
+        // ships the parts in ClientFullBuild0; we reference them by instance, no bundling.
+        if (metadata is not null && string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase))
+        {
+            void EnsureCanonicalBaseline(int bodyType, ulong? canonicalInstance)
+            {
+                if (canonicalInstance is null || canonicalInstance == 0) return;
+                // First: replace any wrong-gender canonical baseline already present. EA-shipped
+                // SimInfo templates sometimes reference the OPPOSITE gender's canonical nude
+                // (e.g., a body-driving YA-Female template lists ymBottom_Nude=0x19AE instead
+                // of yfBottom_Nude=0x1990). Verified via --probe-sim-graph build 0258. Without
+                // this swap, the Female body assembles a male Bottom + Shoes and the user sees
+                // a waist gap because anatomy/UV doesn't line up with the female Top.
+                var oppositeCanonicals = OppositeGenderCanonicalsFor(bodyType, metadata.GenderLabel);
+                if (oppositeCanonicals.Count > 0)
+                {
+                    for (var i = authoritativeBodyDrivingPartsList.Count - 1; i >= 0; i--)
+                    {
+                        var existing = authoritativeBodyDrivingPartsList[i];
+                        if (existing.BodyType != bodyType) continue;
+                        if (!oppositeCanonicals.Contains(existing.PartInstance)) continue;
+                        resolutionDiagnostics?.Add($"Swapped wrong-gender canonical baseline at BodyType={bodyType}: was 0x{existing.PartInstance:X16}, now 0x{canonicalInstance:X16} (Sim gender '{metadata.GenderLabel}').");
+                        authoritativeBodyDrivingPartsList.RemoveAt(i);
+                    }
+                }
+                if (authoritativeBodyDrivingPartsList.Any(p => p.BodyType == bodyType)) return;
+                authoritativeBodyDrivingPartsList.Add((bodyType, canonicalInstance.Value));
+                resolutionDiagnostics?.Add($"Appended canonical baseline part for missing BodyType={bodyType}: instance=0x{canonicalInstance:X16} (EA-shipped nude default).");
+            }
+            EnsureCanonicalBaseline(3, Ts4CanonicalBaselineBodyParts.PickHead(metadata.AgeLabel, metadata.GenderLabel));
+            EnsureCanonicalBaseline(6, Ts4CanonicalBaselineBodyParts.PickTop(metadata.AgeLabel, metadata.GenderLabel));
+            EnsureCanonicalBaseline(7, Ts4CanonicalBaselineBodyParts.PickBottom(metadata.AgeLabel, metadata.GenderLabel));
+            EnsureCanonicalBaseline(8, Ts4CanonicalBaselineBodyParts.PickShoes(metadata.AgeLabel, metadata.GenderLabel));
+        }
+
+        var authoritativeBodyDrivingParts = authoritativeBodyDrivingPartsList.ToArray();
         var exactResourcesByInstance = await LoadExactSimBodyPartResourceMatchesAsync(
             authoritativeBodyDrivingParts.Select(static part => part.PartInstance),
             cancellationToken).ConfigureAwait(false);
@@ -1738,8 +2427,14 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             }
         }
 
+        foreach (var pair in exactCandidatesByLabel)
+        {
+            stageCounts.ExactPartLinks[pair.Key] = pair.Value.Count;
+        }
+
         if (metadata is null)
         {
+            FinalizeResolutionDiagnostics(resolutionDiagnostics, stageCounts, summariesByLabel, metadataMissing: true);
             return summariesByLabel.Values
                 .OrderBy(static summary => GetBodyAssemblySlotSortOrder(summary.Label))
                 .ThenBy(static summary => summary.Label, StringComparer.OrdinalIgnoreCase)
@@ -1775,6 +2470,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 compatibilityMetadata,
                 slotCategory,
                 cancellationToken).ConfigureAwait(false);
+            stageCounts.IndexedDefaultPool[slotCategory] = indexedDefaultPool.Count;
             if (!indexedDefaultPool.Any())
             {
                 continue;
@@ -1784,6 +2480,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 .Where(asset => MatchesBodyAssemblySlotCategory(asset, slotCategory))
                 .Where(asset => seenAssetIds.Add(asset.Id))
                 .ToArray();
+            stageCounts.IndexedDefaultMatched[slotCategory] = distinctCandidates.Length;
             if (distinctCandidates.Length == 0)
             {
                 continue;
@@ -1808,6 +2505,15 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         var hasCompatibilitySearch =
             authoritativeBodyDrivingParts.Length > 0 &&
             string.Equals(metadata.SpeciesLabel, "Human", StringComparison.OrdinalIgnoreCase);
+        // Reverted from 0217's "always include" ungate. The canonical-foundation pool
+        // searches by name prefix + nude/default/bare keywords, but several candidate
+        // CASParts have defaultBodyType=true or nakedLink=true flags despite being
+        // CLOTHING (e.g. yfBody_Bathrobe, yfBody_EP03Animal_Cat*, yfBody_EP02ArmorSuit_*).
+        // Without a reliable distinguisher between "is a nude body" and "is clothing
+        // linked to a nude body", the heuristic fallback was surfacing armor / cat
+        // costumes as the "body underlay" — strictly worse than the original waist gap.
+        // Keep the gate until nakedLink reverse-lookup or TS4-specific nude detection
+        // lands as a separate packet.
         var includeCanonicalFoundationCandidates = includeCompatibilityFallbackCandidates;
 
         if (hasCompatibilitySearch && includeCanonicalFoundationCandidates)
@@ -1824,6 +2530,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     compatibilityMetadata,
                     slotCategory,
                     cancellationToken).ConfigureAwait(false);
+                stageCounts.CanonicalFoundationPool[slotCategory] = canonicalPool.Count;
                 if (canonicalPool.Count == 0)
                 {
                     continue;
@@ -1833,6 +2540,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     .Where(asset => MatchesBodyAssemblySlotCategory(asset, slotCategory))
                     .Where(asset => seenAssetIds.Add(asset.Id))
                     .ToArray();
+                stageCounts.CanonicalFoundationMatched[slotCategory] = distinctCandidates.Length;
                 if (distinctCandidates.Length == 0)
                 {
                     continue;
@@ -1875,6 +2583,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     compatibilityMetadata,
                     entry.Key,
                     cancellationToken).ConfigureAwait(false);
+                stageCounts.BodyTypeFallbackPool[entry.Key] = candidatePool.Count;
                 if (candidatePool.Count == 0)
                 {
                     continue;
@@ -1884,6 +2593,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     .Where(asset => MatchesBodyAssemblySlotCategory(asset, entry.Key))
                     .Where(asset => seenAssetIds.Add(asset.Id))
                     .ToArray();
+                stageCounts.BodyTypeFallbackMatched[entry.Key] = distinctCandidates.Length;
                 if (distinctCandidates.Length == 0)
                 {
                     continue;
@@ -1920,6 +2630,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     compatibilityMetadata,
                     slotCategory,
                     cancellationToken).ConfigureAwait(false);
+                stageCounts.ArchetypeCompatibilityPool[slotCategory] = candidatePool.Count;
                 if (candidatePool.Count == 0)
                 {
                     continue;
@@ -1929,6 +2640,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     .Where(asset => MatchesBodyAssemblySlotCategory(asset, slotCategory))
                     .Where(asset => seenAssetIds.Add(asset.Id))
                     .ToArray();
+                stageCounts.ArchetypeCompatibilityMatched[slotCategory] = compatibleCandidates.Length;
                 if (compatibleCandidates.Length == 0)
                 {
                     continue;
@@ -1945,10 +2657,69 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             }
         }
 
+        FinalizeResolutionDiagnostics(resolutionDiagnostics, stageCounts, summariesByLabel, metadataMissing: false);
         return summariesByLabel.Values
             .OrderBy(static summary => GetBodyAssemblySlotSortOrder(summary.Label))
             .ThenBy(static summary => summary.Label, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private sealed class SimBodyResolutionCounters
+    {
+        public Dictionary<string, int> ExactPartLinks { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> IndexedDefaultPool { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> IndexedDefaultMatched { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> CanonicalFoundationPool { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> CanonicalFoundationMatched { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> BodyTypeFallbackPool { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> BodyTypeFallbackMatched { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> ArchetypeCompatibilityPool { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> ArchetypeCompatibilityMatched { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void FinalizeResolutionDiagnostics(
+        ICollection<string>? sink,
+        SimBodyResolutionCounters counters,
+        Dictionary<string, SimBodyCandidateSummary> summaries,
+        bool metadataMissing)
+    {
+        if (sink is null)
+        {
+            return;
+        }
+
+        var slots = new[] { "Full Body", "Body", "Top", "Bottom", "Shoes" };
+        var stages = new (string Label, IReadOnlyDictionary<string, int> Pool, IReadOnlyDictionary<string, int>? Matched)[]
+        {
+            ("ExactPartLink", counters.ExactPartLinks, null),
+            ("IndexedDefault", counters.IndexedDefaultPool, counters.IndexedDefaultMatched),
+            ("CanonicalFoundation", counters.CanonicalFoundationPool, counters.CanonicalFoundationMatched),
+            ("BodyTypeFallback", counters.BodyTypeFallbackPool, counters.BodyTypeFallbackMatched),
+            ("ArchetypeCompat", counters.ArchetypeCompatibilityPool, counters.ArchetypeCompatibilityMatched)
+        };
+
+        foreach (var (stageLabel, pool, matched) in stages)
+        {
+            var perSlot = slots
+                .Select(slot =>
+                {
+                    pool.TryGetValue(slot, out var poolCount);
+                    if (matched is null)
+                    {
+                        return $"{slot}={poolCount}";
+                    }
+                    matched.TryGetValue(slot, out var matchedCount);
+                    return $"{slot}={poolCount}/{matchedCount}";
+                });
+            sink.Add($"Body candidate resolution [{stageLabel}]: {string.Join(", ", perSlot)}.");
+        }
+
+        var finalCounts = string.Join(", ", slots.Select(slot =>
+        {
+            summaries.TryGetValue(slot, out var summary);
+            return $"{slot}={summary?.Count ?? 0}";
+        }));
+        sink.Add($"Body candidate resolution [Final surfaced]: {finalCounts}.{(metadataMissing ? " (metadata-missing path; fallback stages skipped)" : string.Empty)}");
     }
 
     private static IReadOnlyList<Ts4SimOutfitPart> GetAuthoritativeBodyDrivingOutfitParts(Ts4SimInfo metadata)
@@ -2749,7 +3520,71 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             score -= 200;
         }
 
+        // Gender-prefix match. EA's naming convention: first letter = age bucket (y/a/c/p/e),
+        // second letter = gender (f=Female, m=Male, u=Unisex). Without this check, picking a
+        // CASPart that lives in the same package as the SimInfo can override gender — exactly
+        // what happened with YA Female in SP15 where ymBottom_Nude beat yfBottom_Nude on
+        // package preference. Verified via --probe-sim-graph (build 0258): YA Female picked
+        // ymBottom + ymShoes (male), Adult Female picked yfBottom + yfShoes (female).
+        var genderPenalty = ScoreGenderPrefixMatch(displayName, metadata.GenderLabel);
+        score += genderPenalty;
+
         return score;
+    }
+
+    /// <summary>
+    /// Returns the canonical baseline instance IDs for the OPPOSITE gender at a given BodyType.
+    /// Used to detect "EA SimInfo template references wrong-gender canonical nude" so we can
+    /// swap it for the gender-correct one. Returns empty when the Sim's gender or age can't
+    /// be determined or when no canonical pair exists for that bodyType.
+    /// </summary>
+    private static IReadOnlySet<ulong> OppositeGenderCanonicalsFor(int bodyType, string? genderLabel)
+    {
+        if (string.IsNullOrWhiteSpace(genderLabel)) return new HashSet<ulong>();
+        var isFemale = string.Equals(genderLabel, "Female", StringComparison.OrdinalIgnoreCase);
+        var isMale = string.Equals(genderLabel, "Male", StringComparison.OrdinalIgnoreCase);
+        if (!isFemale && !isMale) return new HashSet<ulong>();
+
+        // We only need to swap when the existing part is a known opposite-gender CANONICAL
+        // baseline. Custom CASParts that happen to be wrong-gender are out of scope here —
+        // those would need a broader CASPart-level gender check during candidate scoring
+        // (which we DO have via ScoreGenderPrefixMatch).
+        return bodyType switch
+        {
+            6 => new HashSet<ulong> { isFemale ? Ts4CanonicalBaselineBodyParts.YmTopNude : Ts4CanonicalBaselineBodyParts.YfTopNude },
+            7 => new HashSet<ulong> { isFemale ? Ts4CanonicalBaselineBodyParts.YmBottomNude : Ts4CanonicalBaselineBodyParts.YfBottomNude },
+            8 => new HashSet<ulong> { isFemale ? Ts4CanonicalBaselineBodyParts.YmShoesNude : Ts4CanonicalBaselineBodyParts.YfShoesNude },
+            3 => new HashSet<ulong> { isFemale ? Ts4CanonicalBaselineBodyParts.YmHead : Ts4CanonicalBaselineBodyParts.YfHead },
+            _ => new HashSet<ulong>()
+        };
+    }
+
+    private static int ScoreGenderPrefixMatch(string displayName, string? genderLabel)
+    {
+        if (string.IsNullOrWhiteSpace(displayName) || string.IsNullOrWhiteSpace(genderLabel)) return 0;
+        // EA prefixes encode (age letter)(gender letter): yf, ym, af, am, cf, cm, pf, pm, ef, em.
+        // Plus 'u' for unisex which we never penalise. We look at character index 1 of the part
+        // name — if it's the opposite gender of the Sim, this CASPart shouldn't be considered
+        // for body assembly.
+        if (displayName.Length < 2) return 0;
+        var prefixGenderChar = char.ToLowerInvariant(displayName[1]);
+        if (prefixGenderChar != 'f' && prefixGenderChar != 'm') return 0;  // unisex/other → no opinion
+
+        var ageChar = char.ToLowerInvariant(displayName[0]);
+        if (ageChar is not ('y' or 'a' or 'c' or 'p' or 'e')) return 0;  // not a recognised body-shell prefix
+
+        var simIsFemale = string.Equals(genderLabel, "Female", StringComparison.OrdinalIgnoreCase);
+        var simIsMale = string.Equals(genderLabel, "Male", StringComparison.OrdinalIgnoreCase);
+        if (!simIsFemale && !simIsMale) return 0;
+
+        var partIsFemale = prefixGenderChar == 'f';
+        var partIsMale = prefixGenderChar == 'm';
+
+        if (simIsFemale && partIsFemale) return 600;
+        if (simIsMale && partIsMale) return 600;
+        if (simIsFemale && partIsMale) return -600;
+        if (simIsMale && partIsFemale) return -600;
+        return 0;
     }
 
     private static int GetBodyAssemblyPackagePreference(string packagePath, string? preferredPackagePath)
@@ -2995,7 +3830,14 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         SimBodyAssemblyCandidateFacts facts,
         SimInfoSummary metadata)
     {
-        if (!string.IsNullOrWhiteSpace(facts.SpeciesLabel) &&
+        // Species filter: require an explicit species_label that matches the Sim's species
+        // (or one of its aliases via MatchesCompatibleBodyRecipeSpecies, e.g. Little Dog
+        // Child accepting Dog parts). Empirically (probed against ClientFullBuild*) every
+        // BodyType=5 CASPart in the shipping game data carries an explicit species label,
+        // so an absent/empty SpeciesLabel here is a strong signal the candidate isn't a
+        // legitimate body shell. Treating empty as "passes filter" was the hole that let
+        // non-human shells slip into human Sim assemblies.
+        if (string.IsNullOrWhiteSpace(facts.SpeciesLabel) ||
             !MatchesCompatibleBodyRecipeSpecies(facts.SpeciesLabel, metadata))
         {
             return false;
@@ -3270,14 +4112,15 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         var activeLabels = SimBodyAssemblyPolicy.ResolveActiveLabels(
             bodyCandidates
                 .Where(static candidate => candidate.Count > 0)
-                .Select(static candidate => candidate.Label));
+                .Select(static candidate => candidate.Label),
+            metadata.SpeciesLabel);
         var mode = SimBodyAssemblyPolicy.GetMode(activeLabels);
         var layers = bodyCandidates
             .OrderBy(static candidate => GetBodyAssemblySlotSortOrder(candidate.Label))
             .ThenBy(static candidate => candidate.Label, StringComparer.OrdinalIgnoreCase)
             .Select(candidate =>
             {
-                var state = SimBodyAssemblyPolicy.GetLayerState(candidate.Label, activeLabels);
+                var state = SimBodyAssemblyPolicy.GetLayerState(candidate.Label, activeLabels, metadata.SpeciesLabel);
                 return new SimBodyAssemblyLayerSummary(
                     candidate.Label,
                     candidate.Count,
@@ -3349,6 +4192,8 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             "Top" => true,
             "Bottom" => true,
             "Shoes" => true,
+            "Ears" => true,  // animal ears (Cat/Dog/Fox/Little Dog) — build 0267
+            "Tail" => true,  // animal tail (Cat/Dog/Fox/Little Dog) — build 0267
             _ => false
         };
 
@@ -3542,29 +4387,23 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             string.Equals(layer.Label, "Head", StringComparison.OrdinalIgnoreCase) &&
             layer.CandidateCount > 0);
         nodes.Add(
-            headShellLayer is not null && headShellLayer.SourceKind == SimBodyCandidateSourceKind.ExactPartLink
+            headShellLayer is not null
                 ? new SimBodyGraphNodeSummary(
                     "Head shell",
                     4,
                     SimBodyGraphNodeState.Resolved,
                     "Authoritative head shell candidate resolved from SimInfo outfit/body-part selections.")
-                : headShellLayer is not null
+                : authoritativeHeadSelections.Length > 0
                     ? new SimBodyGraphNodeSummary(
                         "Head shell",
                         4,
                         SimBodyGraphNodeState.Approximate,
-                        "A head shell candidate is resolved, but it is not yet guaranteed by authoritative SimInfo head-part selection.")
-                    : authoritativeHeadSelections.Length > 0
-                        ? new SimBodyGraphNodeSummary(
-                            "Head shell",
-                            4,
-                            SimBodyGraphNodeState.Approximate,
-                            "Authoritative head-related CAS selections are resolved, but no dedicated head shell candidate is surfaced yet.")
-                        : new SimBodyGraphNodeSummary(
-                            "Head shell",
-                            4,
-                            SimBodyGraphNodeState.Pending,
-                            "A dedicated head layer is not assembled yet; current body-first preview focuses on the torso/body shell path."));
+                        "Authoritative head-related CAS selections are resolved, but no dedicated head shell candidate is surfaced yet.")
+                    : new SimBodyGraphNodeSummary(
+                        "Head shell",
+                        4,
+                        SimBodyGraphNodeState.Pending,
+                        "A dedicated head layer is not assembled yet; current body-first preview focuses on the torso/body shell path."));
 
         var activeFootwear = layers.FirstOrDefault(layer =>
             layer.State == SimBodyAssemblyLayerState.Active &&
@@ -4171,16 +5010,27 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             return prefixes;
         }
 
-        var adultPrefixes = new List<string> { "acBody_", "acBody", "ahBody_", "ahBody" };
+        // For Teen / Young Adult / Adult / Elder, TS4 catalogues all four ages under a single
+        // 'y' age letter for human body parts: 'yu' (unisex), 'yf' (female), 'ym' (male).
+        // The 'a*' age letter is reserved for adult NON-human species — concretely:
+        //   acBody = Adult Cat   (probed: 64 parts, 100% species='Cat')
+        //   ahBody = Adult Horse (probed: 1 part, species='Horse')
+        //   adBody = Adult Dog   (probed: 69 parts, 100% species='Dog')
+        //   alBody = Adult Little Dog (probed: 39 parts)
+        //   auBody / afBody / amBody = no parts exist in the catalogue
+        // The previous list { "acBody_", "ahBody_", … } was incorrectly treating Cat/Horse
+        // prefixes as "human foundation" — which is what surfaced the horse/cat body underlay
+        // ("dog body at the bottom") on a human Sim's preview. Use the correct human prefixes.
+        var adultPrefixes = new List<string> { "yuBody_", "yuBody" };
         if (string.Equals(metadata.GenderLabel, "Female", StringComparison.OrdinalIgnoreCase))
         {
-            adultPrefixes.Add("afBody_");
-            adultPrefixes.Add("afBody");
+            adultPrefixes.Add("yfBody_");
+            adultPrefixes.Add("yfBody");
         }
         else if (string.Equals(metadata.GenderLabel, "Male", StringComparison.OrdinalIgnoreCase))
         {
-            adultPrefixes.Add("amBody_");
-            adultPrefixes.Add("amBody");
+            adultPrefixes.Add("ymBody_");
+            adultPrefixes.Add("ymBody");
         }
 
         return adultPrefixes;
@@ -4273,6 +5123,8 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         var objectDefinition = identityResources.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectDefinition");
         var objectCatalog = identityResources.FirstOrDefault(static resource => resource.Key.TypeName == "ObjectCatalog");
         var materialManifest = Array.Empty<MaterialManifestEntry>();
+        string? materialVariantName = null;
+        uint? materialVariantStateHash = null;
 
         if (!hasObjectIdentity)
         {
@@ -4298,6 +5150,13 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                     .ConfigureAwait(false);
                 var parsedObjectDefinition = Ts4ObjectDefinition.Parse(objectDefinitionBytes);
                 diagnostics.Add($"ObjectDefinition internal name: {parsedObjectDefinition.InternalName}");
+                if (!string.IsNullOrWhiteSpace(parsedObjectDefinition.MaterialVariant) && parsedObjectDefinition.MaterialVariantHash is { } variantHash)
+                {
+                    materialVariantName = parsedObjectDefinition.MaterialVariant;
+                    materialVariantStateHash = variantHash;
+                    diagnostics.Add($"ObjectDefinition material variant: {materialVariantName} -> state hash 0x{variantHash:X8}.");
+                }
+
                 var referenceSummary = parsedObjectDefinition.ReferenceCandidates
                     .Where(static candidate => candidate.RawKey.TypeName is "Model" or "Footprint" or "Rig" or "Slot")
                     .Take(6)
@@ -4433,7 +5292,9 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 materialManifest,
                 diagnostics,
                 effectiveRoot.Key.TypeName == "Model",
-                "Static Build/Buy furniture/decor objects with a model root, triangle-list MLOD geometry, no skinning/animation path, and package-local texture candidates."));
+                "Static Build/Buy furniture/decor objects with a model root, triangle-list MLOD geometry, no skinning/animation path, and package-local texture candidates.",
+                materialVariantName,
+                materialVariantStateHash));
     }
 
     private static IReadOnlyList<string> ParseEmbeddedLodLabels(byte[] bytes)
@@ -4980,7 +5841,20 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         var results = new List<Ts4CasTextureReference>();
         foreach (var textureCandidate in casPart.TextureReferences)
         {
+            // Step 1: try the exact TGI the CASPart authored. EA ships some animal CASParts that
+            // reference textures by a Type that doesn't match what's actually on disk (e.g.
+            // ahHead.diffuse points to RLE2Image=0x3453CF95 but the file ships as LRLEImage=
+            // 0x2BC04EDF at the same instance). When the exact lookup misses, fall back to ANY
+            // texture-type resource at the same Group+Instance — same data, different container.
             var texture = await ResolveCasGraphResourceAsync(root, packageResources, textureCandidate.Key, cancellationToken).ConfigureAwait(false);
+            if (texture is null || !IsTextureType(texture.Key.TypeName))
+            {
+                texture = await TryResolveAnyTextureAtInstanceAsync(root, packageResources, textureCandidate.Key, cancellationToken).ConfigureAwait(false);
+                if (texture is not null)
+                {
+                    diagnostics.Add($"CASPart texture slot '{textureCandidate.Slot}' authored as {textureCandidate.Key.TypeName ?? $"0x{textureCandidate.Key.Type:X8}"} fell back to {texture.Key.TypeName} at the same instance (EA cross-format quirk).");
+                }
+            }
             if (texture is null)
             {
                 diagnostics.Add($"CASPart texture slot '{textureCandidate.Slot}' did not resolve to an indexed resource.");
@@ -5002,6 +5876,39 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// When the exact TGI lookup fails (Type/Group/Instance), search for ANY texture-type
+    /// resource at the same Group+Instance. EA ships some CASPart texture references with the
+    /// "wrong" texture Type code — the actual file lives at a different texture format type
+    /// than the CASPart author specified. This typically affects animal CASParts where
+    /// CASPart.diffuse is authored as RLE2Image (0x3453CF95) but the texture ships as
+    /// LRLEImage (0x2BC04EDF). We trust the texture decoder to handle whichever format the
+    /// resource actually is.
+    /// </summary>
+    private async Task<ResourceMetadata?> TryResolveAnyTextureAtInstanceAsync(
+        ResourceMetadata root,
+        IReadOnlyList<ResourceMetadata> packageResources,
+        ResourceKeyRecord originalKey,
+        CancellationToken cancellationToken)
+    {
+        // Try the root's package first, matching just by Group+Instance.
+        var localMatch = packageResources.FirstOrDefault(resource =>
+            resource.Key.Group == originalKey.Group &&
+            resource.Key.FullInstance == originalKey.FullInstance &&
+            IsTextureType(resource.Key.TypeName));
+        if (localMatch is not null) return localMatch;
+
+        if (indexStore is null) return null;
+
+        // Cross-package: look up everything at this instance and pick the closest texture type.
+        var allAtInstance = await indexStore.GetResourcesByFullInstanceAsync(originalKey.FullInstance, cancellationToken).ConfigureAwait(false);
+        return allAtInstance
+            .Where(r => r.Key.Group == originalKey.Group && IsTextureType(r.Key.TypeName))
+            .OrderBy(r => ScoreCasCrossPackageCandidate(r, root.DataSourceId))
+            .ThenBy(static r => r.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
     }
 
     private async Task<CasRegionMapResolution> ResolveCasRegionMapSummariesAsync(
@@ -5329,6 +6236,11 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         7 => "Bottom",
         8 => "Shoes",
         12 => "Accessory",
+        // Animal-specific (Cat/Dog/Fox/Little Dog) — Horse uses different IDs.
+        // Verified for Cat Adult Male via --probe-caspart on bt=60/61 instances:
+        // bt=60 → acEarsUp (ears), bt=61 → acTailLong (tail). Build 0267.
+        60 => "Ears",
+        61 => "Tail",
         _ => null
     };
 
@@ -5812,7 +6724,7 @@ public static class Ts4SeedMetadataExtractor
                description.Contains("restrictOppositeFrame=", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string? TryExtractCasPartSummaryField(string? description, string key)
+    public static string? TryExtractCasPartSummaryField(string? description, string key)
     {
         if (string.IsNullOrWhiteSpace(description))
         {
@@ -6049,7 +6961,7 @@ internal sealed record SimTemplateSelectionCandidate(
     ResourceMetadata Resource,
     Ts4SimInfo Metadata);
 
-internal sealed class Ts4CasPart
+public sealed class Ts4CasPart
 {
     private const uint MinimumSupportedVersion = 26;
     private const uint InfantFlag = 0x00000080;
@@ -6122,10 +7034,31 @@ internal sealed class Ts4CasPart
             partFlags2 = reader.ReadByte();
         }
 
-        _ = reader.ReadUInt64();
-        if (header.Version >= 41)
+        // v50+ inserts a LayerID UInt16 after parameterFlags2 (per TS4SimRipper CASP.cs:518-521).
+        if (header.Version >= 50)
+        {
+            _ = reader.ReadUInt16();
+        }
+
+        // v51+ replaces the fixed ExcludePartFlags + ExcludePartFlags2 with a length-prefixed
+        // list (Int32 count + UInt64[count]). Per TS4SimRipper CASP.cs:523-537. Required to
+        // parse Infant/Toddler/Teen CASParts shipped in newer DLCs (e.g. iuTop_Nude is v52).
+        if (header.Version >= 51)
+        {
+            var excludeFlagsListCount = reader.ReadInt32();
+            if (excludeFlagsListCount < 0 || excludeFlagsListCount > 1024)
+            {
+                throw new InvalidDataException($"CASPart ExcludePartFlagsList count {excludeFlagsListCount} is out of range.");
+            }
+            SkipBytes(stream, excludeFlagsListCount * 8L, "CASPart ExcludePartFlagsList");
+        }
+        else
         {
             _ = reader.ReadUInt64();
+            if (header.Version >= 41)
+            {
+                _ = reader.ReadUInt64();
+            }
         }
 
         if (header.Version >= 36)
@@ -6514,6 +7447,14 @@ internal sealed class Ts4CasPart
     private static string? NormalizeName(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
 
+    // Image-type IDs verified against LlamaLogic.Packages.ResourceType enum (LlamaLogic 3.8.1).
+    // Pre-0265 these were swapped: 0x2BC04EDF was labelled "DSTImage" (it's actually LRLEImage),
+    // 0x2F7D0004 was "PNGImage2" (actually PNGImage), 0x00B2D882 was "PNGImage" (actually
+    // DSTImage), and 0x0988C7E1 / 0x1B4D2A70 were never valid TS4 type IDs at all. The
+    // mislabel silently broke animal CASPart texture loading: e.g. ahHead.diffuse was
+    // tagged "DSTImage" instead of "LRLEImage", so the LRLE fallback in
+    // `LlamaResourceCatalogService.GetTexturePngAsync` never triggered, the DDS decode
+    // failed, and the head rendered black. Canonical mapping below.
     private static string GuessTypeName(uint type) => type switch
     {
         0x034AEECB => "CASPart",
@@ -6521,12 +7462,12 @@ internal sealed class Ts4CasPart
         0x8EAF13DE => "Rig",
         0x3C1AF1F2 => "CASPartThumbnail",
         0x5B282D45 => "BodyPartThumbnail",
-        0x00B2D882 => "PNGImage",
-        0x2F7D0004 => "PNGImage2",
-        0x2BC04EDF => "DSTImage",
-        0x0988C7E1 => "LRLEImage",
+        0x00B2D882 => "DSTImage",
+        0x2BC04EDF => "LRLEImage",
+        0x2F7D0004 => "PNGImage",
+        0x2F7D0006 => "PNGImage2",
         0x3453CF95 => "RLE2Image",
-        0x1B4D2A70 => "RLESImage",
+        0xBA856C78 => "RLESImage",
         _ => $"0x{type:X8}"
     };
 
@@ -6611,7 +7552,7 @@ internal sealed class Ts4CasPart
 
 internal readonly record struct Ts4CasPartHeader(uint Version, uint PresetCount, long TgiOffset, string InternalName);
 
-internal readonly record struct Ts4CasLod(byte Level, IReadOnlyList<byte> KeyIndices);
+public readonly record struct Ts4CasLod(byte Level, IReadOnlyList<byte> KeyIndices);
 
 internal readonly record struct Ts4CasTextureReference(string Slot, ResourceMetadata Resource, CanonicalTextureSemantic Semantic, CanonicalTextureSourceKind SourceKind);
 
@@ -6628,13 +7569,15 @@ internal sealed record CasGeometryCompanionResources(
     public static CasGeometryCompanionResources Empty { get; } = new([], [], [], []);
 }
 
-internal readonly record struct Ts4CasTextureCandidate(string Slot, ResourceKeyRecord Key, CanonicalTextureSemantic Semantic);
+public readonly record struct Ts4CasTextureCandidate(string Slot, ResourceKeyRecord Key, CanonicalTextureSemantic Semantic);
 
 internal sealed class Ts4ObjectDefinition
 {
     public required ushort Version { get; init; }
     public required uint DeclaredSize { get; init; }
     public required string InternalName { get; init; }
+    public required string? MaterialVariant { get; init; }
+    public required uint? MaterialVariantHash { get; init; }
     public required IReadOnlyList<uint> RemainingWords { get; init; }
     public required int RemainingByteCount { get; init; }
     public required IReadOnlyList<Ts4ObjectDefinitionReferenceCandidate> ReferenceCandidates { get; init; }
@@ -6672,16 +7615,59 @@ internal sealed class Ts4ObjectDefinition
         }
 
         var referenceCandidates = ParseReferenceCandidates(bytes);
+        var materialVariant = TryFindMaterialVariantToken(bytes);
 
         return new Ts4ObjectDefinition
         {
             Version = version,
             DeclaredSize = declaredSize,
             InternalName = internalName,
+            MaterialVariant = materialVariant,
+            MaterialVariantHash = string.IsNullOrWhiteSpace(materialVariant) ? null : ComputeFnv32Lowercase(materialVariant),
             RemainingWords = remainingWords,
             RemainingByteCount = remainingByteCount,
             ReferenceCandidates = referenceCandidates
         };
+    }
+
+    private static string? TryFindMaterialVariantToken(byte[] bytes)
+    {
+        const string suffix = "-materialVariant";
+        var suffixBytes = Encoding.ASCII.GetBytes(suffix);
+        for (var offset = 0; offset <= bytes.Length - suffixBytes.Length; offset++)
+        {
+            if (!bytes.AsSpan(offset, suffixBytes.Length).SequenceEqual(suffixBytes))
+            {
+                continue;
+            }
+
+            var start = offset;
+            while (start > 0 && IsPrintableAscii(bytes[start - 1]))
+            {
+                start--;
+            }
+
+            return Encoding.ASCII.GetString(bytes, start, offset + suffixBytes.Length - start);
+        }
+
+        return null;
+    }
+
+    private static bool IsPrintableAscii(byte value) => value is >= 0x20 and <= 0x7E;
+
+    private static uint ComputeFnv32Lowercase(string value)
+    {
+        const uint offsetBasis = 2166136261u;
+        const uint prime = 16777619u;
+        var hash = offsetBasis;
+        foreach (var ch in value)
+        {
+            var lower = ch is >= 'A' and <= 'Z' ? (char)(ch + 32) : ch;
+            hash *= prime;
+            hash ^= lower;
+        }
+
+        return hash;
     }
 
     private static IReadOnlyList<Ts4ObjectDefinitionReferenceCandidate> ParseReferenceCandidates(byte[] bytes)

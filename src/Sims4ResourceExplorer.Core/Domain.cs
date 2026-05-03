@@ -682,7 +682,10 @@ public sealed record CanonicalMesh(
     int PreferredUvChannel,
     IReadOnlyList<int> Indices,
     int MaterialIndex,
-    IReadOnlyList<VertexWeight> SkinWeights);
+    IReadOnlyList<VertexWeight> SkinWeights,
+    IReadOnlyList<uint>? VertexIds = null,
+    IReadOnlyList<uint>? VertexTags = null,
+    IReadOnlyDictionary<int, float[]>? StitchUv1ByVertex = null);
 
 public sealed record CanonicalMaterial(
     string Name,
@@ -695,7 +698,24 @@ public sealed record CanonicalMaterial(
     string? Approximation = null,
     CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown,
     CanonicalColor? ApproximateBaseColor = null,
-    CanonicalColor? ViewportTintColor = null);
+    CanonicalColor? ViewportTintColor = null,
+    IReadOnlyList<CanonicalMaterialVariant>? Variants = null);
+
+public sealed record CanonicalMaterialVariant(
+    uint StateNameHash,
+    string? VariantName,
+    bool IsDefault,
+    IReadOnlyList<CanonicalTexture> Textures)
+{
+    public string Identifier => $"0x{StateNameHash:X8}";
+    public string DisplayLabel => IsDefault
+        ? string.IsNullOrWhiteSpace(VariantName)
+            ? $"Default ({Identifier})"
+            : $"Default — {VariantName} ({Identifier})"
+        : string.IsNullOrWhiteSpace(VariantName)
+            ? $"Variant {Identifier}"
+            : $"{VariantName} ({Identifier})";
+}
 
 public sealed record CanonicalColor(float R, float G, float B, float A = 1f);
 
@@ -755,6 +775,19 @@ public sealed record CanonicalBone(
 
 public sealed record VertexWeight(int VertexIndex, int BoneIndex, float Weight);
 
+/// <summary>
+/// A bone-translation adjustment to apply during scene morphing. Carries the bone slot hash
+/// (matching <see cref="CanonicalBone.NameHash"/>), an XYZ offset in the bone's local space,
+/// and a weight scalar. Multiple adjustments accumulate. Used by the BOND morph pipeline to
+/// deform Sim body shells per the SimInfo's BodyModifier and FaceModifier entries.
+/// </summary>
+public sealed record SimBoneMorphAdjustment(
+    uint SlotHash,
+    float OffsetX,
+    float OffsetY,
+    float OffsetZ,
+    float Weight = 1f);
+
 public sealed record Bounds3D(float MinX, float MinY, float MinZ, float MaxX, float MaxY, float MaxZ);
 
 public enum SceneBuildStatus
@@ -797,7 +830,9 @@ public sealed record BuildBuyAssetGraph(
     IReadOnlyList<MaterialManifestEntry> Materials,
     IReadOnlyList<string> Diagnostics,
     bool IsSupported,
-    string SupportedSubset);
+    string SupportedSubset,
+    string? MaterialVariantName = null,
+    uint? MaterialVariantStateHash = null);
 
 public sealed record CasAssetGraph(
     ResourceMetadata CasPartResource,
@@ -858,7 +893,24 @@ public sealed record SimSkintoneRenderSummary(
     int OverlayTextureCount,
     int SwatchColorCount,
     CanonicalColor? ViewportTintColor,
-    string Notes);
+    string Notes,
+    byte[]? BaseTexturePngBytes = null,
+    byte[]? DetailNeutralPngBytes = null,
+    byte[]? DetailOverlayPngBytes = null,
+    byte[]? FaceOverlayPngBytes = null,
+    // Diffuse textures from the Sim's face CAS parts (BodyType 4=EyeColor, 14=Brows),
+    // blended on top of the skintone face overlay in the compositor.
+    IReadOnlyList<byte[]>? FaceCasOverlayPngBytes = null,
+    ushort SkintoneHue = 0,
+    ushort SkintoneSaturation = 0,
+    // Per SkinBlender.cs:211, 238 the per-pixel SkinBlend1 mix is
+    //   tmp = (tmp2 * pass2opacity) + (tmp * (1 - pass2opacity))
+    // where pass2opacity = tone.Opacity / 100. For skintones with OverlayOpacity == 0
+    // (common for default human skintones) the reference yields Pass 1 only — soft-light
+    // details + ×1.2 brighten, NO Pass 2 overlay blend mixed in. Hardcoding pass2Opacity
+    // to 1.0 in the composer produces the wrong (full overlay-blend) result, which
+    // saturates already-bright skin tones to near-white. Carry the value through here.
+    uint OverlayOpacity = 100);
 
 public sealed record SimSlotGroupSummary(
     string Label,
@@ -949,7 +1001,17 @@ public static class SimBodyAssemblyPolicy
     public static bool IsOverlayFamilyLabel(string? label) =>
         string.Equals(label, "Shoes", StringComparison.OrdinalIgnoreCase);
 
-    public static IReadOnlySet<string> ResolveActiveLabels(IEnumerable<string> availableLabels)
+    public static IReadOnlySet<string> ResolveActiveLabels(IEnumerable<string> availableLabels) =>
+        ResolveActiveLabels(availableLabels, speciesLabel: null);
+
+    /// <summary>
+    /// Same as the parameterless overload but takes the Sim's species so non-Human species
+    /// can also include Head and Shoes alongside Full Body (animals ship those as separate
+    /// CASParts that must all render, unlike humans where Head is embedded in the Full Body
+    /// shell mesh). Without this, a Horse with `{Full Body, Head, Shoes}` was reduced to only
+    /// `{Full Body}` and the rendered Sim was missing head + hooves.
+    /// </summary>
+    public static IReadOnlySet<string> ResolveActiveLabels(IEnumerable<string> availableLabels, string? speciesLabel)
     {
         ArgumentNullException.ThrowIfNull(availableLabels);
 
@@ -960,6 +1022,9 @@ public static class SimBodyAssemblyPolicy
         {
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
+
+        var isAnimal = !string.IsNullOrWhiteSpace(speciesLabel) &&
+                       !string.Equals(speciesLabel, "Human", StringComparison.OrdinalIgnoreCase);
 
         var preferredShell = labels.Contains("Full Body")
             ? "Full Body"
@@ -1017,12 +1082,31 @@ public static class SimBodyAssemblyPolicy
 
         if (labels.Contains("Full Body"))
         {
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Full Body" };
+            var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Full Body" };
+            if (isAnimal)
+            {
+                if (labels.Contains("Head")) active.Add("Head");
+                if (labels.Contains("Shoes")) active.Add("Shoes");
+                // Build 0267: animal Ears + Tail are separate CASParts that must render
+                // alongside the body shell. Cat Adult Male reported 3 active layers
+                // (Full Body, Head, Shoes) before this — without ears/tail the rendered
+                // cat looked headless from behind and earless from the front.
+                if (labels.Contains("Ears")) active.Add("Ears");
+                if (labels.Contains("Tail")) active.Add("Tail");
+            }
+            return active;
         }
 
         if (labels.Contains("Body"))
         {
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Body" };
+            var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Body" };
+            if (isAnimal)
+            {
+                if (labels.Contains("Head")) active.Add("Head");
+                if (labels.Contains("Ears")) active.Add("Ears");
+                if (labels.Contains("Tail")) active.Add("Tail");
+            }
+            return active;
         }
 
         return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1059,7 +1143,19 @@ public static class SimBodyAssemblyPolicy
             : SimBodyAssemblyMode.FallbackSingleLayer;
     }
 
-    public static SimBodyAssemblyLayerState GetLayerState(string label, IReadOnlySet<string> activeLabels)
+    public static SimBodyAssemblyLayerState GetLayerState(string label, IReadOnlySet<string> activeLabels) =>
+        GetLayerState(label, activeLabels, speciesLabel: null);
+
+    /// <summary>
+    /// Same as the parameterless overload but takes the Sim's species so non-Human species can
+    /// override the "Full Body shell already includes head + shoes" assumption. EA's animal
+    /// CASParts (Horse, Cat, Dog, Little Dog, Fox) ship the body, head, and shoes/hooves as
+    /// SEPARATE CASPart resources that all need to render together — unlike human full-body
+    /// CASParts which embed the head in one mesh. Without this distinction, Horse Adult Male's
+    /// Head was reported as Blocked and Shoes as Available, so the rendered Sim had no head and
+    /// no hooves (verified via --probe-sim-graph build 0259).
+    /// </summary>
+    public static SimBodyAssemblyLayerState GetLayerState(string label, IReadOnlySet<string> activeLabels, string? speciesLabel)
     {
         ArgumentNullException.ThrowIfNull(label);
         ArgumentNullException.ThrowIfNull(activeLabels);
@@ -1075,8 +1171,19 @@ public static class SimBodyAssemblyPolicy
             return SimBodyAssemblyLayerState.Available;
         }
 
+        var isAnimal = !string.IsNullOrWhiteSpace(speciesLabel) &&
+                       !string.Equals(speciesLabel, "Human", StringComparison.OrdinalIgnoreCase);
+
         if (activeLabels.Contains("Full Body"))
         {
+            // Animals: Head and Shoes are separate CASParts that must render alongside Full Body.
+            // Humans: Head is embedded in the Full Body shell mesh; Shoes is an optional overlay.
+            if (isAnimal &&
+                (string.Equals(label, "Head", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(label, "Shoes", StringComparison.OrdinalIgnoreCase)))
+            {
+                return SimBodyAssemblyLayerState.Active;
+            }
             return string.Equals(label, "Shoes", StringComparison.OrdinalIgnoreCase)
                 ? SimBodyAssemblyLayerState.Available
                 : SimBodyAssemblyLayerState.Blocked;
@@ -1084,6 +1191,10 @@ public static class SimBodyAssemblyPolicy
 
         if (activeLabels.Contains("Body"))
         {
+            if (isAnimal && string.Equals(label, "Head", StringComparison.OrdinalIgnoreCase))
+            {
+                return SimBodyAssemblyLayerState.Active;
+            }
             return string.Equals(label, "Top", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(label, "Bottom", StringComparison.OrdinalIgnoreCase)
                 ? SimBodyAssemblyLayerState.Blocked
@@ -2080,6 +2191,7 @@ public interface IAssetGraphBuilder
 public interface IPreviewService
 {
     Task<PreviewResult> CreatePreviewAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
+    Task<PreviewResult> CreatePreviewAsync(BuildBuyAssetGraph buildBuyGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
     Task<PreviewResult> CreatePreviewAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
 }
 
@@ -2091,6 +2203,7 @@ public interface ITextureDecodeService
 public interface ISceneBuildService
 {
     Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
+    Task<SceneBuildResult> BuildSceneAsync(BuildBuyAssetGraph buildBuyGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
     Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null);
 }
 
@@ -2114,6 +2227,21 @@ public interface IRawExportService
 {
     Task<ExportedFileResult> ExportAsync(RawExportRequest request, CancellationToken cancellationToken);
 }
+
+public sealed record BodyRecipeAvailabilitySnapshot(
+    long TotalFacts,
+    long BodyType5Total,
+    long BodyType5SlotMatch,
+    long BodyType5SpeciesMatch,
+    long BodyType5AgeMatch,
+    long BodyType5GenderMatch,
+    long BodyType5AllLabelsMatch,
+    long DefaultBodyTypeAny,
+    long DefaultBodyTypeFemaleAny,
+    long DefaultBodyTypeMaleAny,
+    long HasNakedLinkAny,
+    long BodyType5DefaultAny,
+    long BodyType5NakedLinkAny);
 
 public interface IIndexStore
 {
@@ -2139,6 +2267,7 @@ public interface IIndexStore
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken);
     Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken);
+    Task<BodyRecipeAvailabilitySnapshot> ProbeBodyRecipeAvailabilityAsync(SimInfoSummary metadata, CancellationToken cancellationToken);
     Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken);
     Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken);
     Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken);

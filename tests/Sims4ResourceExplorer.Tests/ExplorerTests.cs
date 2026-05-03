@@ -504,10 +504,10 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(baseTexture.PackagePath, graph.SimGraph.SkintoneRender.BaseTexturePackagePath);
         Assert.Equal(2, graph.SimGraph.SkintoneRender.OverlayTextureCount);
         Assert.Equal(3, graph.SimGraph.SkintoneRender.SwatchColorCount);
-        Assert.NotNull(graph.SimGraph.SkintoneRender.ViewportTintColor);
-        Assert.Equal(0xBB / 255f, graph.SimGraph.SkintoneRender.ViewportTintColor!.R, 3);
-        Assert.Equal(0xAA / 255f, graph.SimGraph.SkintoneRender.ViewportTintColor.G, 3);
-        Assert.Equal(0x99 / 255f, graph.SimGraph.SkintoneRender.ViewportTintColor.B, 3);
+        // Per Plan G (build 0235): when the base skin texture loads successfully, the
+        // synthesised swatch tint is cleared so downstream materials use the texture
+        // directly. ViewportTintColor is reserved as a fallback for the no-texture case.
+        Assert.Null(graph.SimGraph.SkintoneRender.ViewportTintColor);
     }
 
     [Fact]
@@ -1742,7 +1742,7 @@ public sealed class ExplorerTests : IDisposable
         var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
         var casAssets = new[]
         {
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "acBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7210000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yfBody_Nude", "Full Body", "ClientFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7210000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Young Adult | gender=Female | defaultBodyType=true | nakedLink=true")
         };
         var geometryKey = new ResourceKeyRecord(0x015A1849, 0, 1, "Geometry");
         var thumbnailKey = new ResourceKeyRecord(0x3C1AF1F2, 0, 2, "CASPartThumbnail");
@@ -1752,7 +1752,7 @@ public sealed class ExplorerTests : IDisposable
                 new Dictionary<string, byte[]>
                 {
                     [simInfo.Key.FullTgi] = bytes,
-                    [casAssets[0].RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "acBody_Nude", bodyType: 5, partFlags2: 0x04, speciesValue: 1u)
+                    [casAssets[0].RootKey.FullTgi] = CreateSyntheticCasPartBytes(geometryKey, thumbnailKey, textureKey, internalName: "yfBody_Nude", bodyType: 5, partFlags2: 0x04, speciesValue: 1u)
                 },
                 new Dictionary<string, string?>()),
             new FakeGraphIndexStore([], casAssets));
@@ -1764,7 +1764,7 @@ public sealed class ExplorerTests : IDisposable
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal(1, fullBody.Count);
         Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
-        Assert.Contains(fullBody.Candidates, candidate => candidate.DisplayName == "acBody_Nude");
+        Assert.Contains(fullBody.Candidates, candidate => candidate.DisplayName == "yfBody_Nude");
         Assert.Contains("indexed default/naked body-recipe CASParts", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1781,7 +1781,7 @@ public sealed class ExplorerTests : IDisposable
         var bytes = CreateSyntheticSimInfoBytesWithAuthoritativeNudeOutfits();
         var casAssets = new[]
         {
-            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "ahBody_nude", "Full Body", "SimulationFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7211000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Teen / Young Adult / Adult / Elder | gender=Unisex | defaultBodyType=true | nakedLink=true")
+            new AssetSummary(Guid.NewGuid(), sourceId, SourceKind.Game, AssetKind.Cas, "yuBody_nude", "Full Body", "SimulationFullBuild0.package", new ResourceKeyRecord(0x034AEECB, 0, 0x7211000000000000ul, "CASPart"), null, 1, 1, string.Empty, new AssetCapabilitySnapshot(true, false, false, false, HasIdentityMetadata: true), CategoryNormalized: "full-body", Description: "slot=Full Body | species=Human | age=Teen / Young Adult / Adult / Elder | gender=Unisex | defaultBodyType=true | nakedLink=true")
         };
         var builder = new ExplicitAssetGraphBuilder(
             new FakeResourceCatalogService(
@@ -1799,7 +1799,7 @@ public sealed class ExplorerTests : IDisposable
         var fullBody = Assert.Single(graph.SimGraph!.BodyCandidates.Where(candidate => candidate.Label == "Full Body"));
         Assert.Equal(1, fullBody.Count);
         Assert.Equal(SimBodyCandidateSourceKind.IndexedDefaultBodyRecipe, fullBody.SourceKind);
-        Assert.Contains(fullBody.Candidates, candidate => candidate.DisplayName == "ahBody_nude");
+        Assert.Contains(fullBody.Candidates, candidate => candidate.DisplayName == "yuBody_nude");
         Assert.Contains("indexed default/naked body-recipe CASParts", fullBody.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -4217,6 +4217,25 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void Ts4ObjectDefinition_Parse_ExtractsMaterialVariantHash()
+    {
+        var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
+        var objectDefinitionType = RequireType(assetsAssembly, "Sims4ResourceExplorer.Assets.Ts4ObjectDefinition");
+        var payload = CreateSyntheticObjectDefinitionBytes("WaiterStation_GP03GENset1", 2, 227, 0x00000000u)
+            .Concat(new byte[] { 0x00, 0x00, 0x00 })
+            .Concat(Encoding.ASCII.GetBytes("set1-materialVariant"))
+            .Concat(new byte[] { 0x00 })
+            .ToArray();
+
+        var parsed = objectDefinitionType
+            .GetMethod("Parse", BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, [payload])!;
+
+        Assert.Equal("set1-materialVariant", (string)objectDefinitionType.GetProperty("MaterialVariant")!.GetValue(parsed)!);
+        Assert.Equal(0xF4BD1CE9u, (uint)objectDefinitionType.GetProperty("MaterialVariantHash")!.GetValue(parsed)!);
+    }
+
+    [Fact]
     public void Ts4ObjectDefinition_Parse_ExtractsReferenceCandidatesAndSwap32Keys()
     {
         var assetsAssembly = typeof(ExplicitAssetGraphBuilder).Assembly;
@@ -5815,7 +5834,7 @@ public sealed class ExplorerTests : IDisposable
         var noteText = string.Join(" | ", notes.Cast<object>());
         var mapping = decoded.GetType().GetProperty("DiffuseUvMapping")!.GetValue(decoded)!;
 
-        Assert.Contains("resource-key-like", noteText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("resource-key marker", noteText, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1f, (float)uvMappingType.GetProperty("UvScaleU")!.GetValue(mapping)!);
         Assert.Equal(1f, (float)uvMappingType.GetProperty("UvScaleV")!.GetValue(mapping)!);
         Assert.Equal(0f, (float)uvMappingType.GetProperty("UvOffsetU")!.GetValue(mapping)!);
@@ -6633,12 +6652,14 @@ public sealed class ExplorerTests : IDisposable
             "GetMtstStateSelectionPriority",
             BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
 
-        var defaultPriority = (int)method.Invoke(null, [0u, true, false])!;
-        var variantPriority = (int)method.Invoke(null, [0x2893DBA2u, true, false])!;
-        var emptyDefaultPriority = (int)method.Invoke(null, [0u, false, false])!;
+        var defaultPriority = (int)method.Invoke(null, [0u, true, false, null])!;
+        var variantPriority = (int)method.Invoke(null, [0x2893DBA2u, true, false, null])!;
+        var emptyDefaultPriority = (int)method.Invoke(null, [0u, false, false, null])!;
+        var preferredVariantPriority = (int)method.Invoke(null, [0xF4BD1CE9u, false, false, 0xF4BD1CE9u])!;
 
         Assert.True(defaultPriority > variantPriority);
         Assert.Equal(variantPriority, emptyDefaultPriority);
+        Assert.True(preferredVariantPriority > defaultPriority);
     }
 
     [Fact]
@@ -9279,6 +9300,1007 @@ public sealed class ExplorerTests : IDisposable
         Assert.NotNull(result.WavBytes);
     }
 
+    [Fact]
+    public void BondMorpher_MorphScene_AppliesBoneTranslationToSkinnedVertices()
+    {
+        // Build a tiny synthetic scene: 2 bones (hip + spine), 3 vertices (each skinned 100%
+        // to one bone). Apply a +1 Y offset to the hip bone via SimBoneMorphAdjustment.
+        // Expect: only the hip-skinned vertex moves; other two stay put.
+        var hipHash = 0x1111u;
+        var spineHash = 0x2222u;
+        var bones = new List<CanonicalBone>
+        {
+            new CanonicalBone("hip", null, NameHash: hipHash),
+            new CanonicalBone("spine", "hip", NameHash: spineHash)
+        };
+        // Vertex layout (flat): v0=(0,0,0) → hip; v1=(0,1,0) → spine; v2=(0,2,0) → spine
+        var positions = new float[] { 0, 0, 0,  0, 1, 0,  0, 2, 0 };
+        var skinWeights = new List<VertexWeight>
+        {
+            new VertexWeight(0, 0, 1f),  // v0 → hip (boneIndex 0)
+            new VertexWeight(1, 1, 1f),  // v1 → spine (boneIndex 1)
+            new VertexWeight(2, 1, 1f),  // v2 → spine
+        };
+        var mesh = new CanonicalMesh(
+            "TestMesh",
+            positions, [], [], [],
+            null, null, 0,
+            new[] { 0, 1, 2 },
+            0, skinWeights);
+        var scene = new CanonicalScene("TestScene", [mesh], [], bones, new Bounds3D(0, 0, 0, 0, 2, 0));
+
+        var adjustments = new[]
+        {
+            new SimBoneMorphAdjustment(SlotHash: hipHash, OffsetX: 0, OffsetY: 1, OffsetZ: 0, Weight: 1f)
+        };
+        var morphed = BondMorpher.MorphScene(scene, adjustments);
+
+        var p = morphed.Meshes[0].Positions;
+        Assert.Equal(0f, p[0]); Assert.Equal(1f, p[1]); Assert.Equal(0f, p[2]);  // v0 moved up by 1
+        Assert.Equal(0f, p[3]); Assert.Equal(1f, p[4]); Assert.Equal(0f, p[5]);  // v1 unchanged
+        Assert.Equal(0f, p[6]); Assert.Equal(2f, p[7]); Assert.Equal(0f, p[8]);  // v2 unchanged
+    }
+
+    [Fact]
+    public void BondMorpher_MorphScene_AccumulatesMultipleAdjustmentsOnSameBone()
+    {
+        var hipHash = 0x1111u;
+        var bones = new List<CanonicalBone> { new CanonicalBone("hip", null, NameHash: hipHash) };
+        var mesh = new CanonicalMesh("TestMesh",
+            new float[] { 0, 0, 0 }, [], [], [],
+            null, null, 0,
+            new[] { 0 }, 0,
+            new List<VertexWeight> { new VertexWeight(0, 0, 1f) });
+        var scene = new CanonicalScene("TestScene", [mesh], [], bones, new Bounds3D(0, 0, 0, 0, 0, 0));
+
+        var adjustments = new[]
+        {
+            new SimBoneMorphAdjustment(hipHash, 1, 0, 0, Weight: 1f),    // +X by 1
+            new SimBoneMorphAdjustment(hipHash, 0, 2, 0, Weight: 0.5f),  // +Y by 1
+            new SimBoneMorphAdjustment(hipHash, 0, 0, 4, Weight: 0.25f), // +Z by 1
+        };
+        var morphed = BondMorpher.MorphScene(scene, adjustments);
+        var p = morphed.Meshes[0].Positions;
+        Assert.Equal(1f, p[0], 5);
+        Assert.Equal(1f, p[1], 5);
+        Assert.Equal(1f, p[2], 5);
+    }
+
+    [Fact]
+    public void BondMorpher_MorphScene_BlendsBetweenBonesViaSkinWeights()
+    {
+        var hipHash = 0x1111u;
+        var spineHash = 0x2222u;
+        var bones = new List<CanonicalBone>
+        {
+            new CanonicalBone("hip", null, NameHash: hipHash),
+            new CanonicalBone("spine", "hip", NameHash: spineHash)
+        };
+        // One vertex skinned 60% hip + 40% spine.
+        var skinWeights = new List<VertexWeight>
+        {
+            new VertexWeight(0, 0, 0.6f),
+            new VertexWeight(0, 1, 0.4f),
+        };
+        var mesh = new CanonicalMesh("TestMesh",
+            new float[] { 0, 0, 0 }, [], [], [],
+            null, null, 0,
+            new[] { 0 }, 0,
+            skinWeights);
+        var scene = new CanonicalScene("TestScene", [mesh], [], bones, new Bounds3D(0, 0, 0, 0, 0, 0));
+
+        var adjustments = new[]
+        {
+            new SimBoneMorphAdjustment(hipHash, 0, 10, 0, Weight: 1f),     // hip +Y10
+            new SimBoneMorphAdjustment(spineHash, 0, 100, 0, Weight: 1f), // spine +Y100
+        };
+        var morphed = BondMorpher.MorphScene(scene, adjustments);
+        var p = morphed.Meshes[0].Positions;
+        // Expected: 0.6 * 10 + 0.4 * 100 = 6 + 40 = 46
+        Assert.Equal(46f, p[1], 4);
+    }
+
+    [Fact]
+    public void BlendGeometryMorpher_MorphScene_AddsDeltaToVertexByVertexId()
+    {
+        // Build a tiny BGEO with 1 LOD covering 2 vertices, both with PositionDelta=true.
+        // Vertex IDs 5 and 6 (LOD.IndexBase=5, NumberVertices=2).
+        // Delta vector for vertex 5 = (1, 0, 0), for vertex 6 = (0, 2, 0).
+        var bgeoBytes = BuildSyntheticBgeo();
+        var bgeo = Sims4ResourceExplorer.Packages.Ts4BlendGeometryResource.Parse(bgeoBytes);
+
+        // Mesh: 3 vertices. Vertex 0 has VertexId=5 (matches BGEO LOD), vertex 1 has VertexId=6,
+        // vertex 2 has VertexId=99 (out of LOD range — should not move).
+        var positions = new float[] { 1f, 1f, 1f,  2f, 2f, 2f,  3f, 3f, 3f };
+        var vertexIds = new uint[] { 5u, 6u, 99u };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, [], [], [], null, null, 0,
+            new[] { 0, 1, 2 }, 0, new List<VertexWeight>(), vertexIds);
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 3, 3, 3));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimBlendGeometryMorph(bgeo, Weight: 1f, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.BlendGeometryMorpher.MorphScene(scene, new[] { morph });
+        var p = morphed.Meshes[0].Positions;
+
+        // Vertex 0 (VertexId=5) → +(1,0,0)
+        Assert.InRange(p[0], 1.999f, 2.001f);
+        Assert.Equal(1f, p[1]);
+        Assert.Equal(1f, p[2]);
+        // Vertex 1 (VertexId=6) → +(0,2,0)
+        Assert.Equal(2f, p[3]);
+        Assert.InRange(p[4], 3.999f, 4.001f);
+        Assert.Equal(2f, p[5]);
+        // Vertex 2 (VertexId=99) → outside LOD, unchanged
+        Assert.Equal(3f, p[6]);
+        Assert.Equal(3f, p[7]);
+        Assert.Equal(3f, p[8]);
+    }
+
+    [Fact]
+    public void BlendGeometryMorpher_MorphScene_SkipsMeshesWithoutVertexIds()
+    {
+        var bgeoBytes = BuildSyntheticBgeo();
+        var bgeo = Sims4ResourceExplorer.Packages.Ts4BlendGeometryResource.Parse(bgeoBytes);
+
+        var positions = new float[] { 1f, 1f, 1f };
+        var mesh = new CanonicalMesh(
+            "NoVertexIdsMesh", positions, [], [], [], null, null, 0,
+            new[] { 0 }, 0, new List<VertexWeight>(), null);
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 1, 1, 1));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimBlendGeometryMorph(bgeo, Weight: 1f, Region: 0);
+        var diagnostics = new List<string>();
+        var morphed = Sims4ResourceExplorer.Preview.BlendGeometryMorpher.MorphScene(scene, new[] { morph }, diagnostics);
+
+        var p = morphed.Meshes[0].Positions;
+        Assert.Equal(1f, p[0]); Assert.Equal(1f, p[1]); Assert.Equal(1f, p[2]);
+        Assert.Contains(diagnostics, line => line.Contains("had no VertexIds", StringComparison.Ordinal));
+    }
+
+    private static byte[] BuildSyntheticBgeo()
+    {
+        // Encode a delta value as a BGEO half-int: tmp = round(value * 8000) ^ 0x8000.
+        static ushort EncodeAxis(float value)
+        {
+            var scaled = (int)Math.Round(value * 8000f) ^ 0x8000;
+            return (ushort)(scaled & 0xFFFF);
+        }
+
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(3u);              // contextVersion
+        bw.Write(0u); bw.Write(0u); bw.Write(0u); bw.Write(1u);  // key counts + 1 object
+        bw.Write(0u); bw.Write(0u);  // ObjectData
+        bw.Write(0x4F454742u);     // 'BGEO'
+        bw.Write(0x00000600u);     // version
+        bw.Write(1u); bw.Write(2u); bw.Write(2u);  // 1 LOD, 2 vertices, 2 vectors
+        bw.Write(5u); bw.Write(2u); bw.Write(2u);  // LOD: indexBase=5, numVerts=2, numDeltaVectors=2
+        // Blend[0]: pos=true, normal=false, offset=0 → packed = 0_00_01 = 1
+        // Blend[1]: pos=true, normal=false, offset=1 → packed = 1_00_01 = 5
+        bw.Write((short)1);
+        bw.Write((short)5);
+        // Vector[0] = (1, 0, 0)  →  index used by Blend[0]
+        bw.Write(EncodeAxis(1f)); bw.Write(EncodeAxis(0f)); bw.Write(EncodeAxis(0f));
+        // Vector[1] = (0, 2, 0)  →  index used by Blend[1]
+        bw.Write(EncodeAxis(0f)); bw.Write(EncodeAxis(2f)); bw.Write(EncodeAxis(0f));
+        bw.Flush();
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public void Ts4BlendGeometryResource_Parses_HeaderAndBlendMap()
+    {
+        // Build a minimal BGEO with 1 LOD covering 2 vertices, 2 delta vectors, and a blend
+        // map with positionDelta on vertex 0 only.
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(3u);              // contextVersion
+        bw.Write(0u);              // publicKeyCount
+        bw.Write(0u);              // externalKeyCount
+        bw.Write(0u);              // delayLoadKeyCount
+        bw.Write(1u);              // objectCount
+        // Object data: 8 bytes (position UInt32 + length UInt32)
+        bw.Write(0u); bw.Write(0u);
+        // Magic + version
+        bw.Write(0x4F454742u);     // 'BGEO'
+        bw.Write(0x00000600u);     // version
+        // 1 LOD, 2 vertices, 2 vectors
+        bw.Write(1u); bw.Write(2u); bw.Write(2u);
+        // LOD: indexBase=0, numVerts=2, numDeltaVectors=2
+        bw.Write(0u); bw.Write(2u); bw.Write(2u);
+        // Blend[0]: positionDelta=true, normalDelta=false, offset=0 → packed = 0_00_01 = 1
+        bw.Write((short)1);
+        // Blend[1]: positionDelta=true, normalDelta=true, offset=1 → packed = (1<<2) | 3 = 7
+        bw.Write((short)7);
+        // Vector[0]: encoded (8000, 8000, 8000) → after sign-flip + scale = (1, 1, 1)
+        // Each axis: tmp = ((raw ^ 0x8000) << 16) >> 16  /  8000
+        // raw=0xBE80 (48768): tmp = ((48768 ^ 32768) << 16) >> 16 = (16000 << 16) >> 16 = 16000 → /8000 = 2
+        // raw=0x8000 (32768): tmp = ((32768 ^ 32768) << 16) >> 16 = 0 → /8000 = 0
+        bw.Write((ushort)0xBE80); bw.Write((ushort)0x8000); bw.Write((ushort)0x8000);
+        bw.Write((ushort)0x8000); bw.Write((ushort)0x8000); bw.Write((ushort)0x8000);
+        bw.Flush();
+
+        var bgeo = Sims4ResourceExplorer.Packages.Ts4BlendGeometryResource.Parse(ms.ToArray());
+        Assert.Equal(3u, bgeo.ContextVersion);
+        Assert.Equal(0x00000600u, bgeo.Version);
+        Assert.Single(bgeo.Lods);
+        Assert.Equal(0u, bgeo.Lods[0].IndexBase);
+        Assert.Equal(2u, bgeo.Lods[0].NumberVertices);
+        Assert.Equal(2, bgeo.BlendMap.Count);
+        Assert.True(bgeo.BlendMap[0].PositionDelta);
+        Assert.False(bgeo.BlendMap[0].NormalDelta);
+        Assert.True(bgeo.BlendMap[1].PositionDelta);
+        Assert.True(bgeo.BlendMap[1].NormalDelta);
+        Assert.Equal(2, bgeo.VectorData.Count);
+        var v = bgeo.VectorData[0].ToVector3();
+        Assert.InRange(v.X, 1.999f, 2.001f);
+        Assert.Equal(0f, v.Y);
+        Assert.Equal(0f, v.Z);
+    }
+
+    [Fact]
+    public void DeformerMapMorpher_MorphScene_SubtractsSampledDeltaFromVertexPositions()
+    {
+        // Build a 2×1 DMap whose pixels carry distinct shape deltas:
+        //   pixel(0,0) → (+0.2, -0.2, 0)
+        //   pixel(1,0) → (0, +0.2, -0.2)
+        // Build a mesh with two vertices whose UV1 coords land in those two pixels.
+        // Apply a single morph at weight=1 and verify positions decrease by the deltas.
+        var dmapBytes = BuildSyntheticDeformerMap();
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(dmapBytes);
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+
+        // Mesh: 2 vertices at origin, with UV1 placing v0 at pixel(0,0) and v1 at pixel(1,0).
+        // Width is 2 in the sampler. UV1 is in [0, 1]; we want:
+        //   v0: x = (int)(2 * 0.25 - 0 - 0.5) = (int)(0.5 - 0.5) = 0  ✓
+        //   v1: x = (int)(2 * 0.75 - 0 - 0.5) = (int)(1.5 - 0.5) = 1  ✓
+        // y must be 0 → uvV = 0 → (int)(1*0 - 0 - 0.5) = (int)(-0.5) = 0 (negative truncates toward 0)
+        // To be safer, set uvV so y resolves to 0 unambiguously. Sampler height=1, MinRow=0,
+        // MaxRow=0; y in [0, 0] is the only valid row.
+        var positions = new float[] { 1f, 1f, 1f,  2f, 2f, 2f };
+        var uv1s = new float[] { 0.25f, 0.5f,   0.75f, 0.5f };
+        var mesh = new CanonicalMesh(
+            "TestMesh",
+            positions, [], [], [],
+            null, uv1s, 1,
+            new[] { 0, 1 }, 0,
+            new List<VertexWeight>());
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 2, 2, 2));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph(sampler, Weight: 1f, IsNormalMap: false, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.DeformerMapMorpher.MorphScene(scene, new[] { morph });
+
+        var p = morphed.Meshes[0].Positions;
+        // v0: pos -= (0.2, -0.2, 0) → (1-0.2, 1+0.2, 1) = (0.8, 1.2, 1.0)
+        Assert.InRange(p[0], 0.795f, 0.805f);
+        Assert.InRange(p[1], 1.195f, 1.205f);
+        Assert.Equal(1f, p[2]);
+        // v1: pos -= (0, 0.2, -0.2) → (2.0, 1.8, 2.2)
+        Assert.Equal(2f, p[3]);
+        Assert.InRange(p[4], 1.795f, 1.805f);
+        Assert.InRange(p[5], 2.195f, 2.205f);
+    }
+
+    [Fact]
+    public void DeformerMapMorpher_MorphScene_PrefersStitchUv1OverVertexUv1()
+    {
+        // Vertex 0's regular UV1 = (0.25, 0.5) — would land in pixel (0, 0).
+        // Vertex 0's STITCH UV1 = (0.75, 0.5) — would land in pixel (1, 0) instead.
+        // Without stitch handling, vertex 0 would get pixel (0, 0)'s delta (+0.2, -0.2, 0).
+        // WITH stitch handling, vertex 0 gets pixel (1, 0)'s delta (0, +0.2, -0.2) — what
+        // an adjacent body part using the seam UV (0.75, 0.5) would naturally sample.
+        var dmapBytes = BuildSyntheticDeformerMap();
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(dmapBytes);
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+
+        var positions = new float[] { 1f, 1f, 1f };
+        var uv1s = new float[] { 0.25f, 0.5f };
+        var stitchMap = new Dictionary<int, float[]> { [0] = new[] { 0.75f, 0.5f } };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, [], [], [], null, uv1s, 1,
+            new[] { 0 }, 0, new List<VertexWeight>(),
+            VertexIds: null, VertexTags: null, StitchUv1ByVertex: stitchMap);
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 1, 1, 1));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph(sampler, Weight: 1f, IsNormalMap: false, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.DeformerMapMorpher.MorphScene(scene, new[] { morph });
+
+        var p = morphed.Meshes[0].Positions;
+        // Stitch UV (0.75, 0.5) → pixel (1, 0) → delta (0, +0.2, -0.2)
+        // pos -= delta → (1.0, 1-0.2, 1+0.2) = (1.0, 0.8, 1.2)
+        Assert.Equal(1f, p[0]);
+        Assert.InRange(p[1], 0.795f, 0.805f);
+        Assert.InRange(p[2], 1.195f, 1.205f);
+    }
+
+    [Fact]
+    public void DeformerMapMorpher_MorphScene_MirrorsXForLeftSideVertices()
+    {
+        // Two vertices at the same UV cell (0.25, 0.5) → pixel (0, 0) → delta (+0.2, -0.2, 0).
+        // Vertex 0 has X > 0 (right side): receives the delta as-is.
+        // Vertex 1 has X < 0 (left side):  receives the delta with X flipped (-0.2 → +0.2).
+        // After "pos -= delta":
+        //   right side: pos.X 1 - 0.2 = 0.8
+        //   left  side: pos.X -1 - (-0.2) = -0.8 (mirrored — moves outward by 0.2 on each side)
+        var dmapBytes = BuildSyntheticDeformerMap();
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(dmapBytes);
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+
+        var positions = new float[] { 1f, 1f, 1f,  -1f, 1f, 1f };
+        var uv1s = new float[] { 0.25f, 0.5f,   0.25f, 0.5f };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, [], [], [], null, uv1s, 1,
+            new[] { 0, 1 }, 0, new List<VertexWeight>());
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(-1, 0, 0, 1, 1, 1));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph(sampler, Weight: 1f, IsNormalMap: false, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.DeformerMapMorpher.MorphScene(scene, new[] { morph });
+
+        var p = morphed.Meshes[0].Positions;
+        // Right vertex: pos -= (+0.2, -0.2, 0) → (0.8, 1.2, 1.0)
+        Assert.InRange(p[0], 0.795f, 0.805f);
+        Assert.InRange(p[1], 1.195f, 1.205f);
+        Assert.Equal(1f, p[2]);
+        // Left vertex: pos -= (-0.2, -0.2, 0) → (-1+0.2, 1.2, 1.0) = (-0.8, 1.2, 1.0)
+        Assert.InRange(p[3], -0.805f, -0.795f);
+        Assert.InRange(p[4], 1.195f, 1.205f);
+        Assert.Equal(1f, p[5]);
+    }
+
+    [Fact]
+    public void DeformerMapMorpher_MorphScene_AppliesNormalDeltaWhenMeshHasNormals()
+    {
+        // Same DMap as the basic test (pixel(0,0) → +0.2X/-0.2Y/0Z; pixel(1,0) → 0X/+0.2Y/-0.2Z).
+        // Mesh has normals; pass a normal-only morph and verify normals decrease by the deltas
+        // (TS4SimRipper subtracts both shape AND normal deltas).
+        var dmapBytes = BuildSyntheticDeformerMap();
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(dmapBytes);
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+
+        var positions = new float[] { 1f, 1f, 1f,  2f, 2f, 2f };
+        var normals = new float[]   { 0f, 1f, 0f,  0f, 1f, 0f };
+        var uv1s = new float[] { 0.25f, 0.5f,   0.75f, 0.5f };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, normals, [], [], null, uv1s, 1,
+            new[] { 0, 1 }, 0, new List<VertexWeight>());
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 2, 2, 2));
+
+        var normalMorph = new Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph(sampler, Weight: 1f, IsNormalMap: true, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.DeformerMapMorpher.MorphScene(scene, new[] { normalMorph });
+
+        var p = morphed.Meshes[0].Positions;
+        var n = morphed.Meshes[0].Normals;
+        // Positions unchanged (no shape morph supplied).
+        Assert.Equal(1f, p[0]); Assert.Equal(1f, p[1]); Assert.Equal(1f, p[2]);
+        Assert.Equal(2f, p[3]); Assert.Equal(2f, p[4]); Assert.Equal(2f, p[5]);
+        // v0 normal: -= (0.2, -0.2, 0) → (0-0.2, 1+0.2, 0) = (-0.2, 1.2, 0)
+        Assert.InRange(n[0], -0.205f, -0.195f);
+        Assert.InRange(n[1],  1.195f,  1.205f);
+        Assert.Equal(0f, n[2]);
+        // v1 normal: -= (0, 0.2, -0.2) → (0, 1-0.2, 0+0.2) = (0, 0.8, 0.2)
+        Assert.Equal(0f, n[3]);
+        Assert.InRange(n[4], 0.795f, 0.805f);
+        Assert.InRange(n[5], 0.195f, 0.205f);
+    }
+
+    [Fact]
+    public void DeformerMapMorpher_MorphScene_AppliesTagValVertWeight()
+    {
+        // Same DMap setup as the basic test, but mesh now carries per-vertex VertexTags.
+        // Vertex 0 has tag bits (full weight = 64 << 8 → vertWeight = 1.0).
+        // Vertex 1 has tag (32 << 8 → vertWeight = 0.5 → only half the delta applies).
+        var dmapBytes = BuildSyntheticDeformerMap();
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(dmapBytes);
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+
+        var positions = new float[] { 1f, 1f, 1f,  2f, 2f, 2f };
+        var uv1s = new float[] { 0.25f, 0.5f,   0.75f, 0.5f };
+        // Tag bytes 8-15 carry the DMap vertWeight (divisor 64). 64 → 1.0; 32 → 0.5.
+        var tags = new uint[] { 64u << 8, 32u << 8 };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, [], [], [], null, uv1s, 1,
+            new[] { 0, 1 }, 0, new List<VertexWeight>(), VertexIds: null, VertexTags: tags);
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 2, 2, 2));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph(sampler, Weight: 1f, IsNormalMap: false, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.DeformerMapMorpher.MorphScene(scene, new[] { morph });
+
+        var p = morphed.Meshes[0].Positions;
+        // v0 vertWeight=1.0: pos -= (0.2, -0.2, 0) → (0.8, 1.2, 1.0)
+        Assert.InRange(p[0], 0.795f, 0.805f);
+        Assert.InRange(p[1], 1.195f, 1.205f);
+        Assert.Equal(1f, p[2]);
+        // v1 vertWeight=0.5: pos -= 0.5 * (0, 0.2, -0.2) → (2.0, 1.9, 2.1)
+        Assert.Equal(2f, p[3]);
+        Assert.InRange(p[4], 1.895f, 1.905f);
+        Assert.InRange(p[5], 2.095f, 2.105f);
+    }
+
+    [Fact]
+    public void BlendGeometryMorpher_MorphScene_AppliesNormalDeltaWhenNormalFlagSet()
+    {
+        // Build a BGEO whose blend map's first entry has BOTH PositionDelta and NormalDelta.
+        // VectorData[0] is the position delta (1, 0, 0); VectorData[1] is the normal delta
+        // (0, 0.5, 0). The mesh carries normals; we expect both arrays to be mutated.
+        static ushort EncodeAxis(float value)
+        {
+            var scaled = (int)Math.Round(value * 8000f) ^ 0x8000;
+            return (ushort)(scaled & 0xFFFF);
+        }
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(3u);
+        bw.Write(0u); bw.Write(0u); bw.Write(0u); bw.Write(1u);
+        bw.Write(0u); bw.Write(0u);
+        bw.Write(0x4F454742u);
+        bw.Write(0x00000600u);
+        bw.Write(1u); bw.Write(1u); bw.Write(2u);
+        bw.Write(5u); bw.Write(1u); bw.Write(2u);  // LOD: indexBase=5, 1 vertex, 2 vectors
+        // Blend[0]: pos=true, normal=true, offset=0 → packed = 0_00_11 = 3
+        bw.Write((short)3);
+        // Vector[0] = (1, 0, 0)  ← position delta
+        bw.Write(EncodeAxis(1f)); bw.Write(EncodeAxis(0f)); bw.Write(EncodeAxis(0f));
+        // Vector[1] = (0, 0.5, 0)  ← normal delta (index = blend.Index + 1 since posDelta=true)
+        bw.Write(EncodeAxis(0f)); bw.Write(EncodeAxis(0.5f)); bw.Write(EncodeAxis(0f));
+        bw.Flush();
+        var bgeo = Sims4ResourceExplorer.Packages.Ts4BlendGeometryResource.Parse(ms.ToArray());
+
+        var positions = new float[] { 1f, 1f, 1f };
+        var normals = new float[] { 0f, 1f, 0f };  // pointing +Y
+        var vertexIds = new uint[] { 5u };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, normals, [], [], null, null, 0,
+            new[] { 0 }, 0, new List<VertexWeight>(), vertexIds);
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 1, 1, 1));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimBlendGeometryMorph(bgeo, Weight: 1f, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.BlendGeometryMorpher.MorphScene(scene, new[] { morph });
+
+        var p = morphed.Meshes[0].Positions;
+        Assert.InRange(p[0], 1.999f, 2.001f);   // position +1 on X
+        Assert.Equal(1f, p[1]);
+        Assert.Equal(1f, p[2]);
+
+        var n = morphed.Meshes[0].Normals;
+        Assert.Equal(0f, n[0]);
+        Assert.InRange(n[1], 1.499f, 1.501f);    // normal +0.5 on Y
+        Assert.Equal(0f, n[2]);
+    }
+
+    [Fact]
+    public void BlendGeometryMorpher_MorphScene_AppliesTagValVertWeight()
+    {
+        // BGEO setup: same as the basic BGEO test (LOD 0 covers VertexIds 5+6 with deltas
+        // (1,0,0) and (0,2,0)). Now mesh carries VertexTags with the BGEO faceMorph weight at
+        // bits 16-21 (divisor 63). Vertex 0 has tag with 63 → vertWeight=1.0; vertex 1 has 32
+        // → vertWeight ≈ 0.508.
+        var bgeoBytes = BuildSyntheticBgeo();
+        var bgeo = Sims4ResourceExplorer.Packages.Ts4BlendGeometryResource.Parse(bgeoBytes);
+
+        var positions = new float[] { 1f, 1f, 1f,  2f, 2f, 2f };
+        var vertexIds = new uint[] { 5u, 6u };
+        var tags = new uint[] { 63u << 16, 32u << 16 };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, [], [], [], null, null, 0,
+            new[] { 0, 1 }, 0, new List<VertexWeight>(), vertexIds, tags);
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 2, 2, 2));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimBlendGeometryMorph(bgeo, Weight: 1f, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.BlendGeometryMorpher.MorphScene(scene, new[] { morph });
+        var p = morphed.Meshes[0].Positions;
+
+        // v0 vertWeight=1.0: pos += (1, 0, 0) → (2, 1, 1)
+        Assert.InRange(p[0], 1.999f, 2.001f);
+        Assert.Equal(1f, p[1]);
+        Assert.Equal(1f, p[2]);
+        // v1 vertWeight ≈ 32/63 = 0.508: pos += 0.508 * (0, 2, 0) → (2, 3.016, 2)
+        Assert.Equal(2f, p[3]);
+        Assert.InRange(p[4], 3.005f, 3.025f);
+        Assert.Equal(2f, p[5]);
+    }
+
+    [Fact]
+    public void DeformerMapMorpher_MorphScene_SkipsMeshesWithoutUv1()
+    {
+        var dmapBytes = BuildSyntheticDeformerMap();
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(dmapBytes);
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+
+        var positions = new float[] { 1f, 1f, 1f };
+        var mesh = new CanonicalMesh(
+            "NoUv1Mesh",
+            positions, [], [], [],
+            null, null, 0,
+            new[] { 0 }, 0,
+            new List<VertexWeight>());
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 1, 1, 1));
+
+        var morph = new Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph(sampler, Weight: 1f, IsNormalMap: false, Region: 0);
+        var diagnostics = new List<string>();
+        var morphed = Sims4ResourceExplorer.Preview.DeformerMapMorpher.MorphScene(scene, new[] { morph }, diagnostics);
+
+        // Mesh unchanged; diagnostic mentions the skipped mesh.
+        var p = morphed.Meshes[0].Positions;
+        Assert.Equal(1f, p[0]); Assert.Equal(1f, p[1]); Assert.Equal(1f, p[2]);
+        Assert.Contains(diagnostics, line => line.Contains("had no UV1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DeformerMapMorpher_MorphScene_SkipsNormalOnlyMorphsForMeshesWithoutNormals()
+    {
+        // When a mesh has no normals buffer, normal-only morphs have nothing to write to and
+        // the mesh stays unchanged. (Build 0252+ applies them when normals exist; this test
+        // covers the no-normals fallback path.)
+        var dmapBytes = BuildSyntheticDeformerMap();
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(dmapBytes);
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+
+        var positions = new float[] { 1f, 1f, 1f };
+        var uv1s = new float[] { 0.25f, 0.5f };
+        var mesh = new CanonicalMesh(
+            "TestMesh", positions, [], [], [], null, uv1s, 1,
+            new[] { 0 }, 0, new List<VertexWeight>());
+        var scene = new CanonicalScene("TestScene", [mesh], [], [], new Bounds3D(0, 0, 0, 1, 1, 1));
+
+        var normalMorph = new Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph(sampler, Weight: 1f, IsNormalMap: true, Region: 0);
+        var morphed = Sims4ResourceExplorer.Preview.DeformerMapMorpher.MorphScene(scene, new[] { normalMorph });
+        // Positions unchanged; no normals to mutate.
+        var p = morphed.Meshes[0].Positions;
+        Assert.Equal(1f, p[0]); Assert.Equal(1f, p[1]); Assert.Equal(1f, p[2]);
+    }
+
+    private static byte[] BuildSyntheticDeformerMap()
+    {
+        // 2-pixel-wide × 1-row DMap with skinTightMinVal=-0.2, delta=0.4.
+        //   pixel 0 = (0xFF, 0x00, 0x80) → (+0.2, -0.2, 0)
+        //   pixel 1 = (0x80, 0xFF, 0x00) → (0,    +0.2, -0.2)
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(7u); bw.Write(4u); bw.Write(1u); bw.Write(0x10u); bw.Write(1u);
+        bw.Write((byte)0); bw.Write((byte)0);
+        bw.Write(0u); bw.Write(1u); bw.Write(0u); bw.Write(0u);
+        bw.Write((byte)1); bw.Write(-0.2f); bw.Write(0.4f); bw.Write(10);
+        bw.Write((ushort)10); bw.Write((byte)0); bw.Write((byte)1);
+        bw.Write(new byte[] { 0xFF, 0x00, 0x80, 0x80, 0xFF, 0x00 });
+        bw.Flush();
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public void Ts4SimModifierResource_Parses_HeaderAndKeys()
+    {
+        // Synthetic SMOD: contextVersion=3, no public/external/bgeo/object keys, version=144,
+        // ageGender=0x2078, region=1, subRegion=2, linkTag=0,
+        // bonePoseKey -> instance=0xCAFEBABE/type=BOND/group=0,
+        // shape DMap -> 0xDEADBEEF, normal DMap -> 0x00000000 (unset).
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(3u);              // contextVersion
+        bw.Write(0u); bw.Write(0u); bw.Write(0u); bw.Write(0u);  // counts
+        bw.Write(144u);            // version (>=144 enables subRegion)
+        bw.Write(0x2078u);         // ageGender
+        bw.Write(1u);              // region
+        bw.Write(2u);              // subRegion
+        bw.Write(0u);              // linkTag
+        // bonePoseKey ITG = instance(8) + type(4) + group(4)
+        bw.Write(0xCAFEBABEul);
+        bw.Write(0x0355E0A6u);     // BOND type
+        bw.Write(0u);              // group
+        // deformerMapShapeKey
+        bw.Write(0xDEADBEEFul);
+        bw.Write(0xFC68C7B5u);     // DMap type guess
+        bw.Write(0u);
+        // deformerMapNormalKey - all zeros
+        bw.Write(0ul); bw.Write(0u); bw.Write(0u);
+        bw.Write(0u); // boneEntryCount
+        bw.Flush();
+
+        var smod = Sims4ResourceExplorer.Packages.Ts4SimModifierResource.Parse(ms.ToArray());
+        Assert.Equal(3u, smod.ContextVersion);
+        Assert.Equal(144u, smod.Version);
+        Assert.Equal(0x2078u, smod.AgeGender);
+        Assert.Equal(2u, smod.SubRegion);
+        Assert.True(smod.HasBondReference);
+        Assert.Equal(0xCAFEBABEul, smod.BonePoseKey.Instance);
+        Assert.Equal(0x0355E0A6u, smod.BonePoseKey.Type);
+        Assert.True(smod.HasShapeDeformerMap);
+        Assert.False(smod.HasNormalDeformerMap);
+    }
+
+    [Fact]
+    public void Ts4BondResource_Parses_HeaderAndBoneAdjustments()
+    {
+        // Build a minimal BOND payload mirroring the format in BondResource.cs:
+        //   contextVersion=3, publicKeyCount=1, externalKeyCount=0, delayLoadKeyCount=0,
+        //   objectKeyCount=1, publicKey[0]=ITG(instance=0xDEADBEEF, type=0x0355E0A6, group=0),
+        //   objectKey[0]=8 zero bytes, internalVersion=1, boneAdjustCount=2,
+        //   adjustment[0]={slotHash=0x12345678, offset=(0.1, 0.2, 0.3), scale=(1.0, 2.0, 3.0), quat=(0,0,0,1)}
+        //   adjustment[1]={slotHash=0xCAFEBABE, offset=(0,0,0), scale=(0,0,0), quat=(1,0,0,0)}
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(3u);              // contextVersion
+        bw.Write(1u);              // publicKeyCount
+        bw.Write(0u);              // externalKeyCount
+        bw.Write(0u);              // delayLoadKeyCount
+        bw.Write(1u);              // objectKeyCount
+        bw.Write(0xDEADBEEFul);    // publicKey[0].instance (ITG order)
+        bw.Write(0x0355E0A6u);     // publicKey[0].type
+        bw.Write(0u);              // publicKey[0].group
+        bw.Write(0u); bw.Write(0u); // objectKey[0] = position(0) + length(0)
+        bw.Write(1u);              // internalVersion
+        bw.Write(2u);              // boneAdjustCount
+        // adjustment[0]
+        bw.Write(0x12345678u);
+        bw.Write(0.1f); bw.Write(0.2f); bw.Write(0.3f);
+        bw.Write(1.0f); bw.Write(2.0f); bw.Write(3.0f);
+        bw.Write(0.0f); bw.Write(0.0f); bw.Write(0.0f); bw.Write(1.0f);
+        // adjustment[1]
+        bw.Write(0xCAFEBABEu);
+        bw.Write(0.0f); bw.Write(0.0f); bw.Write(0.0f);
+        bw.Write(0.0f); bw.Write(0.0f); bw.Write(0.0f);
+        bw.Write(1.0f); bw.Write(0.0f); bw.Write(0.0f); bw.Write(0.0f);
+        bw.Flush();
+
+        var bond = Sims4ResourceExplorer.Packages.Ts4BondResource.Parse(ms.ToArray());
+
+        Assert.Equal(3u, bond.ContextVersion);
+        Assert.Equal(1u, bond.InternalVersion);
+        Assert.Single(bond.PublicKeys);
+        Assert.Equal(0xDEADBEEFul, bond.PublicKeys[0].Instance);
+        Assert.Equal(0x0355E0A6u, bond.PublicKeys[0].Type);
+        Assert.Empty(bond.ExternalKeys);
+        Assert.Empty(bond.DelayLoadKeys);
+        Assert.Equal(2, bond.Adjustments.Count);
+        Assert.Equal(0x12345678u, bond.Adjustments[0].SlotHash);
+        Assert.Equal(0.1f, bond.Adjustments[0].OffsetX);
+        Assert.Equal(0.2f, bond.Adjustments[0].OffsetY);
+        Assert.Equal(0.3f, bond.Adjustments[0].OffsetZ);
+        Assert.Equal(3.0f, bond.Adjustments[0].ScaleZ);
+        Assert.Equal(1.0f, bond.Adjustments[0].QuatW);
+        Assert.Equal(0xCAFEBABEu, bond.Adjustments[1].SlotHash);
+    }
+
+    [Fact]
+    public void Ts4DeformerMapResource_Parses_V7HeaderAndUncompressedScanLine()
+    {
+        // Build a minimal v7 DMap with one uncompressed scan line.
+        // Header: version=7, doubledWidth=4, height=1, ageGender=0x10, species=1,
+        //         physique=0, shapeOrNormals=0, minCol=0, maxCol=1, minRow=0, maxRow=0,
+        //         robeChannel=Dropped(1), skinTightMinVal=-0.2, skinTightDelta=0.4,
+        //         totalBytes=10
+        // ScanLine[0]: dataSize=10, compression=None(0), robeChannel=Dropped(1),
+        //              uncompressed pixels = 2 pixels x 3 bytes = 6 bytes (skin XYZ)
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(7u);          // version
+        bw.Write(4u);           // doubledWidth (= 2 actual width)
+        bw.Write(1u);           // height
+        bw.Write(0x10u);        // ageGender
+        bw.Write(1u);           // species (v>5)
+        bw.Write((byte)0);      // physique
+        bw.Write((byte)0);      // shapeOrNormals (0=shape, 1=normals)
+        bw.Write(0u);           // minCol
+        bw.Write(1u);           // maxCol
+        bw.Write(0u);           // minRow
+        bw.Write(0u);           // maxRow
+        bw.Write((byte)1);      // robeChannel = Dropped (no robe data)
+        bw.Write(-0.2f);        // skinTightMinVal
+        bw.Write(0.4f);         // skinTightDelta
+        bw.Write(10);           // totalBytes
+        // ScanLine[0]
+        bw.Write((ushort)10);   // scanLineDataSize
+        bw.Write((byte)0);      // compression = None
+        bw.Write((byte)1);      // robeChannel = Dropped
+        // 2 pixels x 3 bytes (skin only)
+        bw.Write(new byte[] { 0x10, 0x20, 0x30, 0x40, 0x50, 0x60 });
+        bw.Flush();
+
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(ms.ToArray());
+        Assert.Equal(7u, dmap.Version);
+        Assert.Equal(2u, dmap.Width);
+        Assert.Equal(1u, dmap.Height);
+        Assert.Equal(1u, dmap.Species);
+        Assert.Equal(0u, dmap.MinCol);
+        Assert.Equal(1u, dmap.MaxCol);
+        Assert.Equal(Sims4ResourceExplorer.Packages.Ts4DeformerMapRobeChannel.Dropped, dmap.RobeChannel);
+        Assert.Equal(-0.2f, dmap.SkinTightMinVal);
+        Assert.Equal(0.4f, dmap.SkinTightDelta);
+        Assert.True(dmap.HasData);
+        Assert.Single(dmap.ScanLines);
+        Assert.Equal(Sims4ResourceExplorer.Packages.Ts4DeformerMapCompression.None, dmap.ScanLines[0].Compression);
+        Assert.Equal(6, dmap.ScanLines[0].UncompressedPixels.Length);
+        Assert.Equal((byte)0x10, dmap.ScanLines[0].UncompressedPixels[0]);
+    }
+
+    [Fact]
+    public void Ts4DeformerMapResource_Parses_V5HeaderWithoutSpecies()
+    {
+        // v5 DMaps don't have the species UInt32 or the v7 minVal/delta fields.
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(5u);           // version
+        bw.Write(4u);           // doubledWidth
+        bw.Write(1u);           // height
+        bw.Write(0x10u);        // ageGender
+        // NO species field for v<=5
+        bw.Write((byte)0);      // physique
+        bw.Write((byte)1);      // shapeOrNormals = normals
+        bw.Write(0u);           // minCol
+        bw.Write(0u);           // maxCol
+        bw.Write(0u);           // minRow
+        bw.Write(0u);           // maxRow
+        bw.Write((byte)2);      // robeChannel = NotApplicable
+        // NO v7 minVal/delta fields for v<=6
+        bw.Write(0);            // totalBytes = 0 (empty map)
+        bw.Flush();
+
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(ms.ToArray());
+        Assert.Equal(5u, dmap.Version);
+        Assert.Equal(0u, dmap.Species);  // not present in v5
+        Assert.Equal((byte)1, dmap.ShapeOrNormals);
+        // v5 fallback hardcoded defaults: normals → -0.75 / 1.5
+        Assert.Equal(-0.75f, dmap.SkinTightMinVal);
+        Assert.Equal(1.5f, dmap.SkinTightDelta);
+        Assert.False(dmap.HasData);
+        Assert.Empty(dmap.ScanLines);
+    }
+
+    [Fact]
+    public void Ts4DeformerMapSampler_DecodesSkinDeltas_FromUncompressedRow()
+    {
+        // 1×2 DMap with skinTightMinVal=-0.2 and delta=0.4. Each pixel byte b decodes as:
+        //   if b == 0x80 → 0 (no contribution)
+        //   else → (b/255) * 0.4 + (-0.2)
+        // Pixel 0 = (0xFF, 0x00, 0x80): X = 0.2, Y = -0.2, Z = 0
+        // Pixel 1 = (0x80, 0xFF, 0x00): X = 0,   Y = 0.2,  Z = -0.2
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write(7u);          // version
+        bw.Write(4u);           // doubledWidth
+        bw.Write(1u);           // height
+        bw.Write(0x10u);        // ageGender
+        bw.Write(1u);           // species
+        bw.Write((byte)0);      // physique
+        bw.Write((byte)0);      // shapeOrNormals
+        bw.Write(0u);           // minCol
+        bw.Write(1u);           // maxCol
+        bw.Write(0u);           // minRow
+        bw.Write(0u);           // maxRow
+        bw.Write((byte)1);      // robeChannel = Dropped
+        bw.Write(-0.2f);
+        bw.Write(0.4f);
+        bw.Write(10);           // totalBytes
+        bw.Write((ushort)10);   // dataSize
+        bw.Write((byte)0);      // compression = None
+        bw.Write((byte)1);      // robeChannel = Dropped
+        bw.Write(new byte[] { 0xFF, 0x00, 0x80, 0x80, 0xFF, 0x00 });
+        bw.Flush();
+
+        var dmap = Sims4ResourceExplorer.Packages.Ts4DeformerMapResource.Parse(ms.ToArray());
+        var sampler = new Sims4ResourceExplorer.Packages.Ts4DeformerMapSampler(dmap);
+        Assert.Equal(2, sampler.Width);
+        Assert.Equal(1, sampler.Height);
+        Assert.False(sampler.HasRobeChannel);
+
+        var p0 = sampler.SampleSkinDelta(0, 0);
+        var p1 = sampler.SampleSkinDelta(1, 0);
+        Assert.InRange(p0.X, 0.199f, 0.201f);   // 0xFF = ~+0.2 (top of [-0.2, 0.2])
+        Assert.InRange(p0.Y, -0.201f, -0.199f); // 0x00 = -0.2 (bottom)
+        Assert.Equal(0f, p0.Z);                  // 0x80 = neutral
+        Assert.Equal(0f, p1.X);
+        Assert.InRange(p1.Y, 0.199f, 0.201f);
+        Assert.InRange(p1.Z, -0.201f, -0.199f);
+
+        // Out-of-bounds returns zero.
+        Assert.Equal(System.Numerics.Vector3.Zero, sampler.SampleSkinDelta(-1, 0));
+        Assert.Equal(System.Numerics.Vector3.Zero, sampler.SampleSkinDelta(99, 99));
+    }
+
+    [Fact]
+    public void CanonicalRigCatalog_HumanAdultFemale_ResolvesAuRig()
+    {
+        // FNV-1 64-bit hash of "auRig" (lowercase ASCII, multiply-then-XOR per TS4SimRipper FNV.cs).
+        var expected = Ts4CanonicalRigCatalog.ComputeFnv64("auRig");
+        Assert.Equal(expected, Ts4CanonicalRigCatalog.GetRigInstance("Human", "Adult", null));
+        Assert.Equal(expected, Ts4CanonicalRigCatalog.GetRigInstance("Human", "Young Adult", null));
+        Assert.Equal(expected, Ts4CanonicalRigCatalog.GetRigInstance("Human", "Teen", null));
+        Assert.Equal(expected, Ts4CanonicalRigCatalog.GetRigInstance("Human", "Elder", null));
+    }
+
+    [Fact]
+    public void CanonicalRigCatalog_HumanChildToddlerInfant_ResolveDistinctRigs()
+    {
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("cuRig"), Ts4CanonicalRigCatalog.GetRigInstance("Human", "Child", null));
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("puRig"), Ts4CanonicalRigCatalog.GetRigInstance("Human", "Toddler", null));
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("iuRig"), Ts4CanonicalRigCatalog.GetRigInstance("Human", "Infant", null));
+    }
+
+    [Fact]
+    public void CanonicalRigCatalog_NonHumanSpecies_UseSpeciesSpecifier()
+    {
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("acRig"), Ts4CanonicalRigCatalog.GetRigInstance("Cat", "Adult", null));
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("adRig"), Ts4CanonicalRigCatalog.GetRigInstance("Dog", "Adult", null));
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("ahRig"), Ts4CanonicalRigCatalog.GetRigInstance("Horse", "Adult", null));
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("alRig"), Ts4CanonicalRigCatalog.GetRigInstance("Little Dog", "Adult", null));
+        // Per TS4SimRipper PreviewControl.GetRigPrefix: child little-dog uses "d" not "l".
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("cdRig"), Ts4CanonicalRigCatalog.GetRigInstance("Little Dog", "Child", null));
+    }
+
+    [Fact]
+    public void CanonicalRigCatalog_OccultsOverrideAgeMapping()
+    {
+        Assert.Equal(0x60FAA42F9B0B4E39ul, Ts4CanonicalRigCatalog.GetRigInstance("Human", "Adult", "Werewolf"));
+        Assert.Equal(Ts4CanonicalRigCatalog.ComputeFnv64("nuRig"), Ts4CanonicalRigCatalog.GetRigInstance("Human", "Adult", "Fairy"));
+    }
+
+    [Fact]
+    public void CanonicalRigCatalog_UnknownTuples_ReturnNull()
+    {
+        Assert.Null(Ts4CanonicalRigCatalog.GetRigInstance(null, "Adult", null));
+        Assert.Null(Ts4CanonicalRigCatalog.GetRigInstance("Human", null, null));
+        Assert.Null(Ts4CanonicalRigCatalog.GetRigInstance("Alien", "Adult", null));
+        Assert.Null(Ts4CanonicalRigCatalog.GetRigInstance("Human", "Unknown", null));
+    }
+
+    [Fact]
+    public void CanonicalBaselineBodyParts_PicksAdultFemale()
+    {
+        var topType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4CanonicalBaselineBodyParts", throwOnError: true)!;
+        var pickTop = topType.GetMethod("PickTop", BindingFlags.Public | BindingFlags.Static)!;
+        var pickBottom = topType.GetMethod("PickBottom", BindingFlags.Public | BindingFlags.Static)!;
+        var pickShoes = topType.GetMethod("PickShoes", BindingFlags.Public | BindingFlags.Static)!;
+        var pickHead = topType.GetMethod("PickHead", BindingFlags.Public | BindingFlags.Static)!;
+
+        Assert.Equal((ulong?)0x000000000000198Cul, (ulong?)pickTop.Invoke(null, ["Young Adult", "Female"]));
+        Assert.Equal((ulong?)0x0000000000001990ul, (ulong?)pickBottom.Invoke(null, ["Adult", "Female"]));
+        Assert.Equal((ulong?)0x000000000000198Ful, (ulong?)pickShoes.Invoke(null, ["Elder", "Female"]));
+        Assert.Equal((ulong?)0x0000000000001B41ul, (ulong?)pickHead.Invoke(null, ["Adult", "Female"]));   // yfHead
+        Assert.Equal((ulong?)0x000000000000229Cul, (ulong?)pickHead.Invoke(null, ["Adult", "Male"]));     // ymHead
+        Assert.Equal((ulong?)0x0000000000006CA8ul, (ulong?)pickHead.Invoke(null, ["Child", "Female"]));   // cuHead
+        Assert.Equal((ulong?)0x00000000000206C9ul, (ulong?)pickHead.Invoke(null, ["Toddler", "Female"])); // puHead
+        Assert.Equal((ulong?)0x0000000000045580ul, (ulong?)pickHead.Invoke(null, ["Infant", "Female"]));  // iuHead
+    }
+
+    [Fact]
+    public void CanonicalBaselineBodyParts_PicksAdultMale()
+    {
+        var topType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4CanonicalBaselineBodyParts", throwOnError: true)!;
+        var pickTop = topType.GetMethod("PickTop", BindingFlags.Public | BindingFlags.Static)!;
+        var pickBottom = topType.GetMethod("PickBottom", BindingFlags.Public | BindingFlags.Static)!;
+        var pickShoes = topType.GetMethod("PickShoes", BindingFlags.Public | BindingFlags.Static)!;
+
+        Assert.Equal((ulong?)0x00000000000019A2ul, (ulong?)pickTop.Invoke(null, ["Teen", "Male"]));
+        Assert.Equal((ulong?)0x00000000000019AEul, (ulong?)pickBottom.Invoke(null, ["Young Adult", "Male"]));
+        Assert.Equal((ulong?)0x00000000000019A3ul, (ulong?)pickShoes.Invoke(null, ["Adult", "Male"]));
+    }
+
+    [Fact]
+    public void CanonicalBaselineBodyParts_PicksChildAndInfantBuckets()
+    {
+        var topType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4CanonicalBaselineBodyParts", throwOnError: true)!;
+        var pickTop = topType.GetMethod("PickTop", BindingFlags.Public | BindingFlags.Static)!;
+        var pickBottom = topType.GetMethod("PickBottom", BindingFlags.Public | BindingFlags.Static)!;
+
+        // Child: female maps to cfTop_Nude, male/unknown to cuTop_Nude.
+        Assert.Equal((ulong?)0x000000000000F3BAul, (ulong?)pickTop.Invoke(null, ["Child", "Female"]));
+        Assert.Equal((ulong?)0x0000000000005635ul, (ulong?)pickTop.Invoke(null, ["Child", "Male"]));
+        Assert.Equal((ulong?)0x000000000000563Aul, (ulong?)pickBottom.Invoke(null, ["Child", "Female"]));
+
+        // Infant unisex.
+        Assert.Equal((ulong?)0x0000000000045585ul, (ulong?)pickTop.Invoke(null, ["Infant", "Female"]));
+        Assert.Equal((ulong?)0x0000000000045587ul, (ulong?)pickBottom.Invoke(null, ["Infant", "Male"]));
+    }
+
+    [Fact]
+    public void CanonicalBaselineBodyParts_ReturnsNullForUnknownAge()
+    {
+        var topType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4CanonicalBaselineBodyParts", throwOnError: true)!;
+        var pickTop = topType.GetMethod("PickTop", BindingFlags.Public | BindingFlags.Static)!;
+        Assert.Null((ulong?)pickTop.Invoke(null, [null, "Female"]));
+        Assert.Null((ulong?)pickTop.Invoke(null, ["Unknown", "Female"]));
+    }
+
+    [Fact]
+    public async Task CachedSceneBuildService_ReturnsCachedResultOnSecondCall()
+    {
+        var inner = new CountingSceneBuildService(SceneBuildStatus.SceneReady);
+        var cached = new CachedSceneBuildService(inner);
+        var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "ModelLOD", 1);
+
+        var first = await cached.BuildSceneAsync(resource, CancellationToken.None);
+        var second = await cached.BuildSceneAsync(resource, CancellationToken.None);
+
+        Assert.True(first.Success);
+        Assert.Same(first, second);
+        Assert.Equal(1, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task CachedSceneBuildService_DoesNotCacheFailedBuilds()
+    {
+        var inner = new CountingSceneBuildService(SceneBuildStatus.Unsupported, success: false);
+        var cached = new CachedSceneBuildService(inner);
+        var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "ModelLOD", 1);
+
+        await cached.BuildSceneAsync(resource, CancellationToken.None);
+        await cached.BuildSceneAsync(resource, CancellationToken.None);
+
+        Assert.Equal(2, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task CachedSceneBuildService_EvictsLeastRecentlyUsedAtCapacity()
+    {
+        var inner = new CountingSceneBuildService(SceneBuildStatus.SceneReady);
+        var cached = new CachedSceneBuildService(inner);
+
+        // Capacity is 8. Fill 9 distinct entries; first one should be evicted.
+        var resources = Enumerable.Range(0, 9)
+            .Select(i => CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "ModelLOD", (uint)(0xA000 + i)))
+            .ToArray();
+        foreach (var r in resources)
+        {
+            await cached.BuildSceneAsync(r, CancellationToken.None);
+        }
+        Assert.Equal(9, inner.CallCount);
+
+        // Re-requesting resources[1..8] should be cache hits; resources[0] should miss.
+        for (var i = 1; i < 9; i++)
+        {
+            await cached.BuildSceneAsync(resources[i], CancellationToken.None);
+        }
+        Assert.Equal(9, inner.CallCount); // No new misses.
+
+        await cached.BuildSceneAsync(resources[0], CancellationToken.None);
+        Assert.Equal(10, inner.CallCount); // resources[0] was evicted, so this is a miss.
+    }
+
+    [Fact]
+    public async Task CachedSceneBuildService_ClearEvictsAllEntries()
+    {
+        var inner = new CountingSceneBuildService(SceneBuildStatus.SceneReady);
+        var cached = new CachedSceneBuildService(inner);
+        var resource = CreateResource(Guid.NewGuid(), "fake.package", SourceKind.Game, "ModelLOD", 1);
+
+        await cached.BuildSceneAsync(resource, CancellationToken.None);
+        cached.Clear();
+        await cached.BuildSceneAsync(resource, CancellationToken.None);
+
+        Assert.Equal(2, inner.CallCount);
+    }
+
+    private sealed class CountingSceneBuildService : ISceneBuildService
+    {
+        private readonly SceneBuildStatus status;
+        private readonly bool success;
+
+        public CountingSceneBuildService(SceneBuildStatus status, bool success = true)
+        {
+            this.status = status;
+            this.success = success;
+        }
+
+        public int CallCount { get; private set; }
+
+        public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+        {
+            CallCount++;
+            return Task.FromResult(new SceneBuildResult(success, null, [], status));
+        }
+
+        public Task<SceneBuildResult> BuildSceneAsync(BuildBuyAssetGraph buildBuyGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+        {
+            CallCount++;
+            return Task.FromResult(new SceneBuildResult(success, null, [], status));
+        }
+
+        public Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+        {
+            CallCount++;
+            return Task.FromResult(new SceneBuildResult(success, null, [], status));
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(tempRoot))
@@ -11009,6 +12031,9 @@ public sealed class ExplorerTests : IDisposable
         public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null) =>
             Task.FromResult(result);
 
+        public Task<SceneBuildResult> BuildSceneAsync(BuildBuyAssetGraph buildBuyGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null) =>
+            Task.FromResult(result);
+
         public Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null) =>
             Task.FromResult(result);
     }
@@ -11179,6 +12204,7 @@ public sealed class ExplorerTests : IDisposable
                 .ToArray();
             return Task.FromResult<IReadOnlyList<AssetSummary>>(filtered);
         }
+        public Task<BodyRecipeAvailabilitySnapshot> ProbeBodyRecipeAvailabilityAsync(SimInfoSummary metadata, CancellationToken cancellationToken) => Task.FromResult(new BodyRecipeAvailabilitySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         public Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateFactSummary>>(simTemplateFacts.Where(fact => string.Equals(fact.ArchetypeKey, archetypeKey, StringComparison.OrdinalIgnoreCase)).ToArray());
         public Task<IReadOnlyList<SimTemplateBodyPartFact>> GetSimTemplateBodyPartFactsAsync(Guid resourceId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateBodyPartFact>>(simTemplateBodyPartFacts.Where(fact => fact.ResourceId == resourceId).ToArray());
         public Task UpdatePackageAssetsAsync(Guid dataSourceId, string packagePath, IReadOnlyList<AssetSummary> assets, CancellationToken cancellationToken) => Task.CompletedTask;

@@ -52,29 +52,6 @@ public sealed class BasicTextureDecodeService : ITextureDecodeService
         (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
 }
 
-public sealed class PlaceholderSceneBuildService : ISceneBuildService
-{
-    public Task<SceneBuildResult> BuildSceneAsync(ResourceMetadata resource, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(new SceneBuildResult(
-            false,
-            null,
-            [$"Scene reconstruction for {resource.Key.TypeName} is not implemented yet. Metadata, diagnostics, and raw export remain available."],
-            SceneBuildStatus.Unsupported));
-    }
-
-    public Task<SceneBuildResult> BuildSceneAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(new SceneBuildResult(
-            false,
-            null,
-            [$"CAS scene reconstruction for {casGraph.CasPartResource.Key.TypeName} is not implemented yet. Metadata, diagnostics, and raw export remain available."],
-            SceneBuildStatus.Unsupported));
-    }
-}
-
 public sealed class ResourcePreviewService : IPreviewService
 {
     private readonly IResourceCatalogService resourceCatalogService;
@@ -114,6 +91,15 @@ public sealed class ResourcePreviewService : IPreviewService
             default:
                 return await CreateHexPreviewAsync(resource, cancellationToken);
         }
+    }
+
+    public async Task<PreviewResult> CreatePreviewAsync(BuildBuyAssetGraph buildBuyGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)
+    {
+        var resource = buildBuyGraph.ModelResource;
+        progress?.Report(new PreviewBuildProgress("Preparing Build/Buy scene build...", 0.02));
+        var result = await sceneBuildService.BuildSceneAsync(buildBuyGraph, cancellationToken, progress);
+        progress?.Report(new PreviewBuildProgress("Build/Buy scene build complete.", 1.0));
+        return new PreviewResult(PreviewKind.Scene, new ScenePreviewContent(resource, result.Scene, string.Join(Environment.NewLine, result.Diagnostics), result.Status));
     }
 
     public async Task<PreviewResult> CreatePreviewAsync(CasAssetGraph casGraph, CancellationToken cancellationToken, IProgress<PreviewBuildProgress>? progress = null)

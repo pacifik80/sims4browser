@@ -37,8 +37,14 @@ public partial class App : Application
                 services.AddSingleton<IResourceCatalogService, LlamaResourceCatalogService>();
                 services.AddSingleton<IResourceMetadataEnrichmentService, ResourceMetadataEnrichmentService>();
                 services.AddSingleton<IAssetGraphBuilder, ExplicitAssetGraphBuilder>();
+                services.AddSingleton<BondMorphResolver>();
+                services.AddSingleton<DeformerMapResolver>();
+                services.AddSingleton<BlendGeometryResolver>();
                 services.AddSingleton<ITextureDecodeService, BasicTextureDecodeService>();
-                services.AddSingleton<ISceneBuildService, BuildBuySceneBuildService>();
+                services.AddSingleton<BuildBuySceneBuildService>();
+                services.AddSingleton<CachedSceneBuildService>(static sp =>
+                    new CachedSceneBuildService(sp.GetRequiredService<BuildBuySceneBuildService>()));
+                services.AddSingleton<ISceneBuildService>(static sp => sp.GetRequiredService<CachedSceneBuildService>());
                 services.AddSingleton<IAudioDecodeService, BasicAudioDecodeService>();
                 services.AddSingleton<IAudioPlayer, WaveOutAudioPlayer>();
                 services.AddSingleton<IPreviewService, ResourcePreviewService>();

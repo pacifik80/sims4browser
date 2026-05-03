@@ -117,12 +117,37 @@ public static class Ts4StructuredResourceMetadataExtractor
         using var reader = new BinaryReader(stream);
 
         var version = reader.ReadUInt32();
-        if (version != 6)
+        if (version != 6 && version != 12)
         {
             throw new InvalidDataException($"Unsupported Skintone version {version}.");
         }
 
-        var textureInstance = reader.ReadUInt64();
+        // v12 prepends a sub-texture block: a single byte count + N × 28-byte entries.
+        // Each entry is { instance:UInt64, reserved:UInt64, weights:Float[3] }. The first
+        // entry's instance equals what v6 stores in `baseTextureInstance` for the same
+        // skintone, so we treat subTextures[0].instance as the base. See
+        // docs/workflows/v12-skintone-format.md (Plan 3.3).
+        ulong textureInstance;
+        if (version == 12)
+        {
+            var subTextureCount = reader.ReadByte();
+            ulong firstSubTextureInstance = 0;
+            for (var index = 0; index < subTextureCount; index++)
+            {
+                var subInstance = reader.ReadUInt64();
+                _ = reader.ReadUInt64();    // reserved (typically 0)
+                _ = reader.ReadSingle();    // weight 1
+                _ = reader.ReadSingle();    // weight 2
+                _ = reader.ReadSingle();    // weight 3
+                if (index == 0) firstSubTextureInstance = subInstance;
+            }
+            textureInstance = firstSubTextureInstance;
+        }
+        else
+        {
+            textureInstance = reader.ReadUInt64();
+        }
+
         var overlayTextureCount = reader.ReadUInt32();
         var overlays = new List<Ts4SkintoneOverlay>(checked((int)overlayTextureCount));
         for (var index = 0; index < overlayTextureCount; index++)
@@ -132,16 +157,28 @@ public static class Ts4StructuredResourceMetadataExtractor
                 reader.ReadUInt64()));
         }
 
-        var colorize = reader.ReadUInt32();
+        // Per TS4SimRipper TONE.cs: the four bytes after the overlay block are
+        // `saturation:UInt16` + `hue:UInt16` (HSL adjustments, NOT an ARGB color), followed by
+        // `opacity:UInt32`. We previously read these as a single "colorize" UInt32 — the byte
+        // count matched, but treating that value as a color produced garbage tints downstream.
+        var saturation = reader.ReadUInt16();
+        var hue = reader.ReadUInt16();
+        var colorize = ((uint)hue << 16) | saturation;
         var overlayOpacity = reader.ReadUInt32();
         var tagCount = reader.ReadUInt32();
+        // Per TS4SimRipper CASP.PartTag: total tag size is 2 bytes (UInt16 flagCategory) plus
+        // 2 bytes (UInt16 flagValue) for version < 7, OR plus 4 bytes (UInt32 flagValue) for
+        // version >= 7. Skintone version 6 uses the 4-byte total; v12 uses the 6-byte total.
+        var tagValueSize = version >= 7 ? 4 : 2;
         for (var index = 0; index < tagCount; index++)
         {
-            _ = reader.ReadUInt16();
-            _ = reader.ReadUInt16();
+            _ = reader.ReadUInt16();   // flagCategory
+            for (var b = 0; b < tagValueSize; b++) _ = reader.ReadByte();
         }
 
-        var makeupOpacity = reader.ReadSingle();
+        // v6 has a `makeupOpacity:Float` field here; v12 omits it entirely (the byte
+        // immediately after the tag block is `swatchColorCount:Byte`).
+        var makeupOpacity = version == 6 ? reader.ReadSingle() : 0f;
         var swatchColorCount = reader.ReadByte();
         var swatchColors = new uint[swatchColorCount];
         for (var index = 0; index < swatchColorCount; index++)
@@ -150,9 +187,14 @@ public static class Ts4StructuredResourceMetadataExtractor
         }
 
         var displayIndex = reader.ReadSingle();
-        var makeupOpacity2 = stream.Position + 4 <= stream.Length
-            ? reader.ReadSingle()
-            : (float?)null;
+        // v6 may have an optional trailing `makeupOpacity2:Float`. v12 has a different
+        // trailing block (extraHash:UInt32 + UInt16 + 6 floats — semantics TBD per Plan 3.3).
+        // We don't surface those v12 trailing fields yet; the renderer doesn't need them.
+        float? makeupOpacity2 = null;
+        if (version == 6 && stream.Position + 4 <= stream.Length)
+        {
+            makeupOpacity2 = reader.ReadSingle();
+        }
 
         return new Ts4Skintone(
             version,

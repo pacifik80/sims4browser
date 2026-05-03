@@ -155,6 +155,101 @@ So the current repo model is best described as:
 - `resolved skintone routing`
 - not `full skintone compositor parity`
 
+### Calibration: what the `details` input actually is
+
+A previous implementation packet incorrectly assumed that the **CAS body part's diffuse texture** (e.g. `yfTop_Nude` / `ymBottom_Nude` / `ymShoes_Nude` from a body-driving Nude outfit) is the `details` input to SkinBlender's Pass 1. It is **not**. Reading [SkinBlender.cs:18-43](../../references/external/TS4SimRipper/src/SkinBlender.cs#L18-L43) and the `DisplayableSkintone(...)` flow:
+
+```csharp
+static ulong[][] detailInstance = new ulong[][] { ... };
+...
+Bitmap details = FetchGameTexture(detailInstance[skinIndex][0], -1, ref errorList, false);
+```
+
+The details come from a **hardcoded `detailInstance` TGI table** keyed by age × gender × physique-channel. For example the Young Adult Female row is:
+
+```
+{ 0x36C865290B1F4E79, 0x5A0156E11FEB7ED1, 0x980C64FFD5139131, 0x1A2B3CB6DF532C84, 0x95006DB72556DFEA }
+```
+
+These are purpose-built per-physique skin detail maps (neutral, heavy, fit, lean, bony), not anything resolved from the selected `CASPart` or its `MATD`. Adult/elder paths additionally apply a per-age-gender overlay row at index `skinIndex + 4`.
+
+**Soft-light blending the CASPart body diffuse onto the base skin therefore contradicts the authoritative chain.** Symptoms observed when the wrong input was used: the composite picks up the CAS body diffuse's region-mask data (often green-encoded) and the rendered skin came out green-tinted.
+
+The correct behaviour for a faithful preview compositor is:
+
+1. Look up the age/gender row in the `detailInstance` table → resolve `detailInstance[ageGenderIndex][0]` (neutral) as the base detail bitmap.
+2. Optionally overlay the matching row at `+4` for adult/elder.
+3. Apply per-physique alpha blends from `physiqueWeights` (0..4) over the detail base — both for the per-physique detail (`detailInstance[skinIndex][1..4]`) and the per-physique overlay (`detailInstance[skinIndex+4][1..4]`).
+4. Composite that resulting `details` bitmap onto the base skin texture (`tone.SkinSets[0].TextureInstance`) using SkinBlender Pass 1 + Pass 2.
+
+The CAS body part's own diffuse texture has a different role in the in-game shader (region-mask / shape-detail / clothing texture for non-nude outfits), which is not yet documented here.
+
+Until the proper `detailInstance` resolution is implemented, the preview should render body-shell materials with the **base skin texture alone**. That is structurally equivalent to SkinBlender with no details applied, and is the honest fallback.
+
+### Authoritative SkinBlender chain (end-to-end reading)
+
+This section captures what [`SkinBlender.cs`](../../references/external/TS4SimRipper/src/SkinBlender.cs#L46-L321) actually does in the `DisplayableSkintone(...)` flow, read end-to-end. It is the closest authoritative reference the project has for skin compositing, and it is what the renderer should converge on rather than guess from heuristics.
+
+Inputs:
+
+- `tone` — the parsed `Skintone` (`TONE` resource).
+- `shift` — `SkintoneShift` from `SimInfo`.
+- `skinState` — runtime tan/burn state index.
+- `tanLines`, `sculptOverlay`, `outfitOverlay` — runtime overlays.
+- `age`, `gender`, `physiqueWeights`, `pregnantShape`.
+
+Step-by-step:
+
+1. **Build a "details" texture** by compositing per-physique body-detail textures (table indexed by `age × gender`, hard-coded TGIs in `detailInstance` at the top of `SkinBlender.cs`) into a single detail layer:
+    - Base detail at `physiqueWeights[0]`.
+    - Per-physique overlays for heavy/fit/lean/bony, each scaled by its physique weight.
+    - Adult/elder paths add a base male/female overlay first; child/baby paths skip overlays.
+2. **Composite sculpt overlay** onto details, then outfit overlay on top.
+3. **Build a "skin" texture** from `TONE`:
+    - Start from `tone.SkinSets[0].TextureInstance` — **this is the actual base skin color/diffuse texture** (an indexed `_IMG`, not a flat color).
+    - If `currentSkinSet > 0`, draw `tone.SkinSets[currentSkinSet].TextureInstance` (tan/burn state) on top, optionally masked by `tanLines`.
+    - Draw `tone.SkinSets[currentSkinSet].overlayInstance` with a 0.15-alpha mask matrix.
+    - If `Math.Abs(shift) > 0.001`, apply hue shift to the entire skin texture.
+4. **Resize details to match skin dimensions if they differ.**
+5. **Pixel-by-pixel composite (per-RGB-channel)** of details onto skin, with three selectable blend modes (radio buttons in the tool):
+    - **Soft-light + overlay (`Blend1`, default)**:
+      - Pass 1: `softlight(detail, color)` lightened by ×1.2.
+      - Pass 2: `overlay(detail, softlit)`.
+      - Mix Pass 1 vs Pass 2 by `pass2opacity = tone.Opacity / 100f`.
+      - Optional Pass 3: soft-light overlay using `tone.Hue` + `tone.Saturation` (HSL → RGB), mixed by `overFactor = saturation/100`.
+      - Final contrast adjust around midpoint 0.75 with contrast 1.1.
+    - **HSV blend (`Blend2`)**: replace skin's V with `(skinV + (detailV - 0.40f) + shift)`; optional H replace from `tone.Hue`.
+    - **HSL blend (`Blend3`)**: replace skin's L with `skinL + ((detailL - 0.40f) * 0.60f) + shift`; optional H replace.
+6. **Add age/gender overlay** from `tone.GetOverlayInstance(age & gender)` (a per-age/gender chosen overlay from `tone.OverlayList`).
+7. **Add fixed mouth overlay** (resource bundled in the tool) for the head pass.
+
+Implications for our renderer:
+
+- The "skin diffuse the player sees" comes from `tone.SkinSets[0].TextureInstance` (a `_IMG` resource), **not** from `tone.SwatchColors[0]`.
+  - Our `Ts4Skintone.BaseTextureInstance` is the same value (set via `tmpInstance = br.ReadUInt64()` in TONE v6).
+  - `tone.SwatchColors` in v10+ is `colorList[]` — the **CAS UI swatch palette markers**, used to render swatch chips in the skin-tone picker. They are not the actual skin diffuse.
+- The **CASPart's diffuse texture** referenced by a body-shell `MATD` is a **detail/region layer** (per-physique body details, body region masks, etc.), **not** a portable diffuse color. It is the `details` input to the SkinBlender, not the `color` input.
+- `tone.Hue` / `tone.Saturation` / `tone.Opacity` are blend-shape parameters of the compositor, not standalone tints. Reading any of them as ARGB always gives garbage.
+- The age/gender overlay path is real and per-Sim — a flat skin tint cannot reproduce it.
+
+### Why current preview tints are misleading
+
+The repo's current `TryBuildSkintoneViewportTintColor` synthesizes a `ViewportTintColor` from `swatchColors[0]` (or a hardcoded fallback when no swatches exist) and the renderer multiplies that color into either a flat-shaded mesh or the CASPart's diffuse texture. Both forms are wrong vs. SkinBlender:
+
+- `swatchColors[0]` is a UI palette anchor, often a stylised display color (light cream, dark brown, purple alien, etc.). It is not what the in-game shader uses to paint skin.
+- Multiplying CASPart diffuse by any color produces `details × tint`, never `softlight(details, baseSkinTexture)`. The output is structurally not skin.
+- The "green skin" + "no body" + "warm-cream-tinted body" oscillation in builds 0190–0200 was caused by this entire stack of heuristics colliding with each other across multiple layers.
+
+The cleanest re-ground for our preview is:
+
+1. Stop synthesizing a `ViewportTintColor` from `swatchColors[0]`; treat `Ts4Skintone.BaseTextureInstance` as the authoritative skin source.
+2. For body-shell-contribution materials, use the **resolved base skin texture** (the `_IMG` at `tone.SkinSets[0].TextureInstance`) as `DiffuseMap`, not the CASPart's diffuse.
+3. Optionally, blend the CASPart's diffuse on top as a soft-light or HSL details layer to recover muscle/fold detail. Until that compositor is built, show base skin alone — it is structurally correct, even if flat.
+4. Head materials remain separate: the head's CASPart diffuse already includes face detail in a portable form (eyes, lips), so it can stay as the primary diffuse. The skintone's age/gender overlay is the proper place to drape additional skin tone over the face later.
+5. `swatchColors[0]` and friends should be retained only as a **palette/identity hint** for diagnostics, not piped through to the renderer.
+
+This shape is faithful to `SkinBlender.cs` while still being a reduced preview, and it clearly identifies where future packets (overlay compositor, multi-state tan/burn, age/gender overlay, exact blend math) plug in.
+
 ## Overlay/detail family boundary
 
 The strongest current reading is:

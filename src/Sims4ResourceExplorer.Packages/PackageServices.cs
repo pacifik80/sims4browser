@@ -365,6 +365,14 @@ public sealed class LlamaResourceCatalogService : IResourceCatalogService, IAsyn
                         progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
                         return pngBytes;
                     }
+                    catch (Exception) when (key.TypeName == nameof(ResourceType.LRLEImage))
+                    {
+                        progress?.Report(new ResourceReadProgress("Falling back to custom LRLE texture decode...", 0.62));
+                        var rawBytes = await ReadWithDeletedFallbackAsync(force => package.GetAsync(llamaKey, force, cancellationToken), cancellationToken, progress).ConfigureAwait(false);
+                        var pngBytes = Ts4LrleTextureDecoder.DecodeToPng(rawBytes.ToArray());
+                        progress?.Report(new ResourceReadProgress("Texture bytes ready.", 1.0));
+                        return pngBytes;
+                    }
                 }
 
                 progress?.Report(new ResourceReadProgress("Texture type is not previewable as PNG.", 1.0));
