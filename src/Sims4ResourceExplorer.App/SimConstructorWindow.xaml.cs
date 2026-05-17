@@ -35,6 +35,10 @@ public sealed partial class SimConstructorWindow : Window
     };
     private readonly SceneViewportRenderer sceneRenderer = new();
     private AppWindow? appWindow;
+    // First render reframes the camera to fit the scene bounds; every subsequent
+    // render preserves the user's current rotation/zoom so a skintone (or any other
+    // knob) change doesn't snap the view back to default.
+    private bool hasRenderedScene;
 
     public SimConstructorWindow(SimConstructorViewModel viewModel)
     {
@@ -101,7 +105,8 @@ public sealed partial class SimConstructorWindow : Window
             Variant: null);
         try
         {
-            sceneRenderer.Render(sceneViewport, sceneCamera, sceneShadowMap, scene, config);
+            sceneRenderer.Render(sceneViewport, sceneCamera, sceneShadowMap, scene, config, resetCamera: !hasRenderedScene);
+            hasRenderedScene = true;
         }
         catch (Exception ex)
         {

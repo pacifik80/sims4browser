@@ -40,7 +40,8 @@ public sealed class SceneViewportRenderer
         PerspectiveCamera camera,
         ShadowMap3D shadowMap,
         CanonicalScene scene,
-        SceneRenderConfig config)
+        SceneRenderConfig config,
+        bool resetCamera = true)
     {
         ArgumentNullException.ThrowIfNull(viewport);
         ArgumentNullException.ThrowIfNull(camera);
@@ -118,7 +119,10 @@ public sealed class SceneViewportRenderer
             }
         }
 
-        ResetSceneCamera(camera, scene);
+        if (resetCamera)
+        {
+            ResetSceneCamera(camera, scene);
+        }
     }
 
     public void ResetSceneCamera(PerspectiveCamera camera, CanonicalScene? scene)
