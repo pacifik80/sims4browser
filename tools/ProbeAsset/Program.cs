@@ -1696,6 +1696,86 @@ if (args.Length > 0 && string.Equals(args[0], "--probe-sim-graph", StringCompari
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--probe-synthetic-sim", StringComparison.OrdinalIgnoreCase))
+{
+    // End-to-end verification for the Sim Character Constructor synthetic path (P0.4b):
+    // build a synthetic Ts4SimInfo for (age, gender) and run it through the production
+    // BuildSyntheticHumanSimGraphAsync. Prints the resolved body candidates, slot groups,
+    // morph groups, skintone summary, and diagnostics — confirming the synthetic SimInfo
+    // flows through the existing graph builder without needing a real SimInfo in a package.
+    //
+    // Usage: --probe-synthetic-sim <age> <gender> [skintoneInstanceHex16]
+    var pssAge    = args.Length > 1 ? args[1] : "Adult";
+    var pssGender = args.Length > 2 ? args[2] : "Female";
+    var pssSkin   = 0ul;
+    if (args.Length > 3 &&
+        !ulong.TryParse(args[3], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out pssSkin))
+    {
+        Console.Error.WriteLine($"Could not parse skintone instance hex: {args[3]}");
+        return 2;
+    }
+
+    var pssCacheDir = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var pssDb = Path.Combine(pssCacheDir, "index.sqlite");
+    if (!File.Exists(pssDb))
+    {
+        Console.Error.WriteLine($"Index store not found: {pssDb}. Run --update-index first via the app.");
+        return 3;
+    }
+
+    var pssCache = new ProbeCacheService(Path.GetFullPath(pssCacheDir + "/.."));
+    pssCache.EnsureCreated();
+    var pssStore = new SqliteIndexStore(pssCache);
+    await pssStore.InitializeAsync(CancellationToken.None);
+    var pssCat = new LlamaResourceCatalogService();
+    var pssBld = new ExplicitAssetGraphBuilder(pssCat, pssStore);
+
+    Console.WriteLine($"Synthesising Sim: age={pssAge} gender={pssGender} skintoneInstance=0x{pssSkin:X16}");
+    var pssGraph = await pssBld.BuildSyntheticHumanSimGraphAsync(pssAge, pssGender, pssSkin, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine($"AssetGraph: simGraph={pssGraph.SimGraph != null} diagnostics={pssGraph.Diagnostics.Count} linked={pssGraph.LinkedResources.Count}");
+    if (pssGraph.SimGraph is null)
+    {
+        Console.WriteLine("No SimGraph produced. Diagnostics:");
+        foreach (var d in pssGraph.Diagnostics)
+        {
+            Console.WriteLine($"  {d}");
+        }
+        return 4;
+    }
+
+    var pssSg = pssGraph.SimGraph;
+    Console.WriteLine($"  Metadata: species={pssSg.Metadata.SpeciesLabel} age={pssSg.Metadata.AgeLabel} gender={pssSg.Metadata.GenderLabel}");
+    Console.WriteLine($"  Outfits: categories={pssSg.Metadata.OutfitCategoryCount} entries={pssSg.Metadata.OutfitEntryCount} parts={pssSg.Metadata.OutfitPartCount}");
+    Console.WriteLine($"  Body candidate buckets: {pssSg.BodyCandidates.Count}");
+    foreach (var bucket in pssSg.BodyCandidates)
+    {
+        Console.WriteLine($"    [{bucket.SourceKind,-22}] {bucket.Label} (count={bucket.Count}) {bucket.Notes}");
+        foreach (var opt in bucket.Candidates.Take(4))
+        {
+            Console.WriteLine($"        {opt.DisplayName}  tgi={opt.RootTgi ?? "<no tgi>"}  pkg={opt.PackageName ?? "<no pkg>"}");
+        }
+        if (bucket.Candidates.Count > 4) Console.WriteLine($"        ... {bucket.Candidates.Count - 4} more candidates.");
+    }
+    Console.WriteLine($"  Slot groups: {pssSg.SlotGroups.Count}");
+    Console.WriteLine($"  Morph groups: {pssSg.MorphGroups.Count}");
+    Console.WriteLine($"  Skintone: {(pssSg.SkintoneRender is null ? "<none>" : $"instance={pssSg.SkintoneRender.SkintoneInstanceHex ?? "<null>"} overlays={pssSg.SkintoneRender.OverlayTextureCount} notes={pssSg.SkintoneRender.Notes}")}");
+    Console.WriteLine($"  Body assembly: mode={pssSg.BodyAssembly.Mode} layers={pssSg.BodyAssembly.Layers.Count}");
+    foreach (var layer in pssSg.BodyAssembly.Layers)
+    {
+        Console.WriteLine($"    {layer.Label,-12} state={layer.State,-10} count={layer.CandidateCount} contrib={layer.Contribution}");
+    }
+    Console.WriteLine();
+    Console.WriteLine($"Diagnostics ({pssGraph.Diagnostics.Count}):");
+    foreach (var d in pssGraph.Diagnostics.Take(25))
+    {
+        Console.WriteLine($"  {d}");
+    }
+    if (pssGraph.Diagnostics.Count > 25) Console.WriteLine($"  ... {pssGraph.Diagnostics.Count - 25} more.");
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--simulate-body-candidates", StringComparison.OrdinalIgnoreCase))
 {
     // Replicates the EXACT production SQL from GetIndexedDefaultBodyRecipeAssetsFromDatabaseAsync

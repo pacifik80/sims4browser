@@ -2220,6 +2220,7 @@ public interface IAssetGraphBuilder
     IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan);
     Task<AssetGraph> BuildAssetGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken);
     Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken);
+    Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(string ageLabel, string genderLabel, ulong skintoneInstance, CancellationToken cancellationToken);
 }
 
 public interface IPreviewService

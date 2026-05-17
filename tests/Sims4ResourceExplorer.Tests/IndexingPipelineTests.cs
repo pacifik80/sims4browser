@@ -2235,6 +2235,9 @@ public sealed class IndexingPipelineTests
         public Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
             BuildAssetGraphAsync(summary, packageResources, cancellationToken);
 
+        public Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(string ageLabel, string genderLabel, ulong skintoneInstance, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) =>
             [];
     }
@@ -2247,6 +2250,9 @@ public sealed class IndexingPipelineTests
         public Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
             BuildAssetGraphAsync(summary, packageResources, cancellationToken);
 
+        public Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(string ageLabel, string genderLabel, ulong skintoneInstance, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) => [summary];
     }
 
@@ -2257,6 +2263,9 @@ public sealed class IndexingPipelineTests
 
         public Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken) =>
             BuildAssetGraphAsync(summary, packageResources, cancellationToken);
+
+        public Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(string ageLabel, string genderLabel, ulong skintoneInstance, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public IReadOnlyList<AssetSummary> BuildAssetSummaries(PackageScanResult packageScan) =>
         [

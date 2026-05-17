@@ -78,6 +78,58 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         };
     }
 
+    public Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(
+        string ageLabel,
+        string genderLabel,
+        ulong skintoneInstance,
+        CancellationToken cancellationToken)
+    {
+        var parsedSimInfo = Ts4SimInfoBuilder.BuildHuman(ageLabel, genderLabel, skintoneInstance);
+        var fullInstance = Ts4SimInfoBuilder.SyntheticFullInstance(ageLabel, genderLabel);
+        const uint simInfoTypeId = 0x025ED6F4u;
+        var key = new ResourceKeyRecord(simInfoTypeId, 0u, fullInstance, "SimInfo");
+        var displayName = $"Synthetic Sim | Human | {ageLabel} | {genderLabel}";
+        var syntheticResource = new ResourceMetadata(
+            Id: Guid.NewGuid(),
+            DataSourceId: Guid.Empty,
+            SourceKind: SourceKind.Game,
+            PackagePath: "<synthetic-sim>",
+            Key: key,
+            Name: displayName,
+            CompressedSize: null,
+            UncompressedSize: null,
+            IsCompressed: null,
+            PreviewKind: PreviewKind.Scene,
+            IsPreviewable: true,
+            IsExportCapable: false,
+            AssetLinkageSummary: string.Empty,
+            Diagnostics: string.Empty);
+        var syntheticSummary = new AssetSummary(
+            Id: Guid.NewGuid(),
+            DataSourceId: Guid.Empty,
+            SourceKind: SourceKind.Game,
+            AssetKind: AssetKind.Sim,
+            DisplayName: displayName,
+            Category: "Synthetic Sim",
+            PackagePath: "<synthetic-sim>",
+            RootKey: key,
+            ThumbnailTgi: null,
+            VariantCount: 1,
+            LinkedResourceCount: 1,
+            Diagnostics: string.Empty,
+            PackageName: "<synthetic-sim>",
+            RootTypeName: "SimInfo",
+            IdentityType: "SimInfo");
+        return BuildSimGraphAsync(
+            syntheticSummary,
+            [syntheticResource],
+            allowPreferredTemplateRedirect: false,
+            includeCompatibilityFallbackCandidates: false,
+            includeCasSlotCandidates: true,
+            cancellationToken,
+            preParsedSimInfo: parsedSimInfo);
+    }
+
     private static IEnumerable<AssetSummary> BuildBuildBuySummaries(
         IReadOnlyDictionary<ulong, ResourceMetadata[]> sameInstanceLookup,
         ISet<ulong> claimedInstances)
@@ -556,44 +608,53 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         bool allowPreferredTemplateRedirect,
         bool includeCompatibilityFallbackCandidates,
         bool includeCasSlotCandidates,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Ts4SimInfo? preParsedSimInfo = null)
     {
         var graphStopwatch = Stopwatch.StartNew();
-        var simInfoResource = packageResources.FirstOrDefault(resource =>
-            string.Equals(resource.Key.FullTgi, summary.RootKey.FullTgi, StringComparison.OrdinalIgnoreCase) ||
-            (resource.Key.TypeName == "SimInfo" && resource.Key.FullInstance == summary.RootKey.FullInstance));
+        // Synthetic path (Sim Character Constructor): the caller has already built the
+        // SimInfo in memory and is supplying a single placeholder resource — skip the
+        // package-lookup gate that would otherwise reject it.
+        var simInfoResource = preParsedSimInfo is not null
+            ? packageResources.FirstOrDefault()
+            : packageResources.FirstOrDefault(resource =>
+                string.Equals(resource.Key.FullTgi, summary.RootKey.FullTgi, StringComparison.OrdinalIgnoreCase) ||
+                (resource.Key.TypeName == "SimInfo" && resource.Key.FullInstance == summary.RootKey.FullInstance));
         if (simInfoResource is null)
         {
             return new AssetGraph(summary, packageResources, ["Selected SimInfo root could not be loaded from the package."]);
         }
 
         var diagnostics = new List<string>();
-        Ts4SimInfo? parsedSimInfo = null;
-        SimInfoSummary? metadata = null;
+        Ts4SimInfo? parsedSimInfo = preParsedSimInfo;
+        SimInfoSummary? metadata = preParsedSimInfo?.ToSummary();
         var parseElapsed = TimeSpan.Zero;
-        try
+        if (preParsedSimInfo is null)
         {
-            var bytes = await resourceCatalogService
-                .GetResourceBytesAsync(simInfoResource.PackagePath, simInfoResource.Key, raw: false, cancellationToken)
-                .ConfigureAwait(false);
-            parsedSimInfo = Ts4SimInfoParser.Parse(bytes);
-            metadata = parsedSimInfo.ToSummary();
-        }
-        catch (InvalidDataException ex)
-        {
-            diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
-        }
-        catch (EndOfStreamException ex)
-        {
-            diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
-        }
-        catch (ArgumentOutOfRangeException ex)
-        {
-            diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
-        }
-        finally
-        {
-            parseElapsed = graphStopwatch.Elapsed;
+            try
+            {
+                var bytes = await resourceCatalogService
+                    .GetResourceBytesAsync(simInfoResource.PackagePath, simInfoResource.Key, raw: false, cancellationToken)
+                    .ConfigureAwait(false);
+                parsedSimInfo = Ts4SimInfoParser.Parse(bytes);
+                metadata = parsedSimInfo.ToSummary();
+            }
+            catch (InvalidDataException ex)
+            {
+                diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
+            }
+            catch (EndOfStreamException ex)
+            {
+                diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
+            }
+            catch (ArgumentOutOfRangeException ex)
+            {
+                diagnostics.Add($"SimInfo metadata parse failed: {ex.Message}");
+            }
+            finally
+            {
+                parseElapsed = graphStopwatch.Elapsed;
+            }
         }
 
         // Concrete fallback when SimInfo parsing failed earlier. We introduce a NEW non-nullable
@@ -669,12 +730,15 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         // to roughly max(...) ≈ 1.4s. Per-task stopwatches still measure each leg's elapsed
         // time, so the timing diagnostic line stays meaningful (the *sum* will exceed the
         // total because legs overlap, which is the expected, intentional signal).
+        // Synthetic Sims have no real owning package path — pass null so downstream
+        // resolvers search the index globally instead of preferring a non-existent file.
+        var preferredPackagePath = preParsedSimInfo is null ? simInfoResource.PackagePath : null;
         var bodyResolutionDiagnostics = new List<string>();
         var bodyCandidateStopwatch = Stopwatch.StartNew();
         var bodyCandidatesTask = BuildSimBodyCandidatesAsync(
             simInfoResource,
             parsedSimInfo,
-            simInfoResource.PackagePath,
+            preferredPackagePath,
             includeCompatibilityFallbackCandidates,
             cancellationToken,
             bodyResolutionDiagnostics);
@@ -683,14 +747,14 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             ? BuildSimCasSlotCandidatesAsync(
                 parsedSimInfo,
                 resolvedMetadata,
-                simInfoResource.PackagePath,
+                preferredPackagePath,
                 cancellationToken)
             : Task.FromResult<IReadOnlyList<SimCasSlotCandidateSummary>>([]);
         var skintoneStopwatch = Stopwatch.StartNew();
         var skintoneRenderTask = TryResolveSimSkintoneRenderSummaryAsync(
             resolvedMetadata,
             parsedSimInfo,
-            simInfoResource.PackagePath,
+            preferredPackagePath,
             cancellationToken);
 
         var bodyCandidates = await bodyCandidatesTask.ConfigureAwait(false);
