@@ -84,20 +84,8 @@ The current render pipeline runs through three layers, only one of which is alre
 
   **Verified end-to-end** via new ProbeAsset subcommand `--probe-synthetic-scene <age> <gender>`. Adult Female produces a 4-mesh composited scene (yfHead + yfTop_Nude + yfBottom_Nude + yfShoes_Nude), 4 materials, 100 bones, bounds (-0.72, 0, -0.12) → (0.72, 1.87, 0.18) — roughly 1.87m tall, anatomically Sim-sized.
 
-- [ ] **R2 — `SceneViewportRenderer` (App layer)**. New file under [src/Sims4ResourceExplorer.App/Services/](../../src/Sims4ResourceExplorer.App/Services/). Helix3D types are App-only. Public:
-  ```csharp
-  public sealed class SceneViewportRenderer {
-      public void Render(Viewport3DX viewport, CanonicalScene scene, SceneRenderConfig config);
-  }
-  public sealed record SceneRenderConfig(
-      SceneRenderMode RenderMode = SceneRenderMode.LitTexture,
-      string? TextureSlot = null,
-      SceneUvChannel UvChannel = SceneUvChannel.Auto,
-      SceneVariantOption? Variant = null);
-  ```
-  Move RenderScene + CreateMaterial + CreateGeometry + helpers (lines listed in dep map) out of MainWindow into this class. MainWindow becomes a thin caller. Acceptance: existing Sim render path in MainWindow produces byte-identical Viewport3DX state to before. Visual smoke-verify required.
-
-- [ ] **R3 — Wire `SimConstructorWindow`**. Add `Viewport3DX` setup in code-behind mirroring MainWindow ctor (camera, EffectsManager, ShadowMap, insertion into `PreviewSurface` Border). Inject `ISimAssetGraphRenderer` + `SceneViewportRenderer` into `SimConstructorViewModel`. On age/gender change → R1 produces CanonicalScene → R2 renders into the viewport. Acceptance: Adult Female shows a rendered Sim body in the constructor viewport. Smoke-sweep all 14 (age × gender) tuples.
+- [x] **R2 — `SceneViewportRenderer` shipped** ([commit `3c4634a`](../../src/Sims4ResourceExplorer.App/Services/SceneViewportRenderer.cs)). Done in worktree by a delegated agent, cherry-picked onto main (manual conflict resolution required — incoming version accepted for the render-method block). `SceneRenderConfig` public record + public sealed `SceneViewportRenderer` class. All ~30 helper methods moved (RenderScene→Render, CreateMaterial+overload, CreateGeometry, SelectTextureCoordinates×2, BuildViewportTextureSelection, CreateViewportTextureModel, BuildUvTransform, ApplySelectedVariantToScene, TryBuildMultiPassPlan, AddOverlayPasses, BuildOverlayPassMaterial/Geometry, IsTransparentMaterial, PickWireframeColor, MeshWireframePalette, etc.). MainWindow's `RenderScene` is now a 6-line shim that builds a `SceneRenderConfig` and delegates. MainWindow.xaml.cs shrank from 2552 → 1093 lines (-1459). UV-preview helpers (`GenerateUvPreviewPanelsAsync`, `SelectUvPreviewTextures`, etc.) updated to call the renderer's internal-static texture-selection helpers. Build clean, 394/394 tests pass. **Visual parity NOT yet verified — needs user run before R4 cleanup.**
+- [x] **R3 — `SimConstructorWindow` viewport wired.** `SimConstructorViewModel` now injects `ISimAssetGraphRenderer`, exposes `CurrentScene` (CanonicalScene) + `SceneStatus`. After AssetGraph builds, the VM calls `BuildSimSceneAsync` and updates `CurrentScene`. `SimConstructorWindow.xaml.cs` mirrors MainWindow's viewport setup (Viewport3DX, PerspectiveCamera, ShadowMap3D, DefaultEffectsManager) and inserts the viewport into `PreviewSurface` (now a Grid). On `CurrentScene` PropertyChanged → constructs a default `SceneRenderConfig(LitTexture, null slot, Auto UV, no variant)` and calls `SceneViewportRenderer.Render`. XAML restructured: viewport fills the centre, status bar at top, diagnostic info moves into the right knob panel under Expanders (Body candidates, Diagnostics). BuildNumber bumped to 0290 — first user-facing visual verification build. Build clean, 394/394 tests pass.
 
 - [ ] **R4 — MainWindow cleanup**. Replace MainWindow's inline `RenderScene` calls with `SceneViewportRenderer.Render`. Replace `TryApplySimBodyProxyPreviewAsync`'s composition section with a call to `ISimAssetGraphRenderer`. MainViewModel keeps its state-setting logic (SelectedSimBodyPreviewLayers, diagnostics caching) but delegates the pure-function rendering. Acceptance: visual parity with the pre-refactor MainWindow Sim preview.
 

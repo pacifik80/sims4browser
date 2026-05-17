@@ -11,7 +11,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="340" />
+            <ColumnDefinition Width="380" />
         </Grid.ColumnDefinitions>
 
         <NavigationView
@@ -42,63 +42,16 @@
         </NavigationView>
 
         <Grid Grid.Column="1" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-            <Border x:Name="PreviewSurface" />
-            <StackPanel x:Name="PreviewPlaceholder"
-                        VerticalAlignment="Center"
-                        HorizontalAlignment="Center"
-                        Spacing="8"
-                        MaxWidth="640">
-                <TextBlock Text="{Binding SeedDisplayName}"
-                           FontSize="24"
-                           FontWeight="SemiBold"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="{Binding OutfitPartCountText}"
+            <Grid x:Name="PreviewSurface" />
+
+            <Border VerticalAlignment="Top"
+                    HorizontalAlignment="Stretch"
+                    Background="{ThemeResource SubtleFillColorTertiaryBrush}"
+                    Padding="12,8">
+                <TextBlock Text="{Binding SceneStatus}"
                            Opacity="0.85"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="{Binding SyntheticFullInstanceHex}"
-                           Opacity="0.6"
-                           FontFamily="Consolas"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="{Binding SeedSummary}"
-                           Opacity="0.7"
-                           TextWrapping="WrapWholeWords"
-                           HorizontalAlignment="Center"
-                           TextAlignment="Center" />
-                <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Padding="16"
-                        Margin="0,16,0,0"
-                        MaxWidth="640"
-                        HorizontalAlignment="Stretch">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="{Binding AssetGraphStatus}"
-                                   FontWeight="SemiBold"
-                                   TextWrapping="WrapWholeWords" />
-                        <TextBlock Text="{Binding BodyCandidatesSummary}"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   Opacity="0.85"
-                                   TextWrapping="NoWrap" />
-                        <Expander Header="Diagnostics" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                            <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto">
-                                <TextBlock Text="{Binding AssetGraphDiagnostics}"
-                                           FontFamily="Consolas"
-                                           FontSize="11"
-                                           Opacity="0.7"
-                                           TextWrapping="WrapWholeWords" />
-                            </ScrollViewer>
-                        </Expander>
-                    </StackPanel>
-                </Border>
-                <TextBlock Text="3D viewport lands in P0.4c — this panel currently surfaces the resolved synthetic asset graph for diagnostic purposes."
-                           Opacity="0.5"
-                           FontStyle="Italic"
-                           Margin="0,8,0,0"
-                           TextWrapping="WrapWholeWords"
-                           HorizontalAlignment="Center"
-                           TextAlignment="Center" />
-            </StackPanel>
+                           TextWrapping="WrapWholeWords" />
+            </Border>
         </Grid>
 
         <Border Grid.Column="2"
@@ -128,9 +81,53 @@
                         </StackPanel>
                     </Border>
 
+                    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="{Binding SeedDisplayName}"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="WrapWholeWords" />
+                            <TextBlock Text="{Binding OutfitPartCountText}"
+                                       Opacity="0.85"
+                                       FontSize="12" />
+                            <TextBlock Text="{Binding SyntheticFullInstanceHex}"
+                                       Opacity="0.6"
+                                       FontFamily="Consolas"
+                                       FontSize="11" />
+                            <TextBlock Text="{Binding AssetGraphStatus}"
+                                       Opacity="0.85"
+                                       FontSize="12"
+                                       TextWrapping="WrapWholeWords" />
+                        </StackPanel>
+                    </Border>
+
+                    <Expander Header="Body candidates" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                        <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                            <TextBlock Text="{Binding BodyCandidatesSummary}"
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Opacity="0.85"
+                                       TextWrapping="NoWrap" />
+                        </ScrollViewer>
+                    </Expander>
+
+                    <Expander Header="Diagnostics" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                        <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+                            <TextBlock Text="{Binding AssetGraphDiagnostics}"
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Opacity="0.7"
+                                       TextWrapping="WrapWholeWords" />
+                        </ScrollViewer>
+                    </Expander>
+
                     <TextBlock x:Name="KnobSectionStub"
                                Text="Skintone, body and face morph sliders land in P1. CAS part pickers (hair, top, bottom, shoes, accessories, makeup) land in P2. Idle clip controls land in P3."
-                               Opacity="0.6"
+                               Opacity="0.5"
+                               FontStyle="Italic"
+                               FontSize="11"
                                TextWrapping="WrapWholeWords" />
                 </StackPanel>
             </ScrollViewer>

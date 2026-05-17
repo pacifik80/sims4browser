@@ -4,24 +4,29 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Core;
+using Sims4ResourceExplorer.Preview.SimRender;
 
 namespace Sims4ResourceExplorer.App.ViewModels;
 
 public sealed partial class SimConstructorViewModel : ObservableObject
 {
     private readonly ISyntheticSimService syntheticSimService;
+    private readonly ISimAssetGraphRenderer simRenderer;
 
     private string selectedAge = "Adult";
     private string selectedGender = "Female";
     private SimConstructorSeed currentSeed;
     private CancellationTokenSource? rebuildCts;
     private string assetGraphStatus = "Building asset graph…";
+    private string sceneStatus = "Waiting for asset graph…";
     private string bodyCandidatesSummary = string.Empty;
     private string assetGraphDiagnostics = string.Empty;
+    private CanonicalScene? currentScene;
 
-    public SimConstructorViewModel(ISyntheticSimService syntheticSimService)
+    public SimConstructorViewModel(ISyntheticSimService syntheticSimService, ISimAssetGraphRenderer simRenderer)
     {
         this.syntheticSimService = syntheticSimService;
+        this.simRenderer = simRenderer;
         AvailableAges = syntheticSimService.AvailableHumanAges;
         AvailableGenders = syntheticSimService.AvailableHumanGenders;
         currentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender);
@@ -76,6 +81,12 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         private set => SetProperty(ref assetGraphStatus, value);
     }
 
+    public string SceneStatus
+    {
+        get => sceneStatus;
+        private set => SetProperty(ref sceneStatus, value);
+    }
+
     public string BodyCandidatesSummary
     {
         get => bodyCandidatesSummary;
@@ -87,6 +98,20 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         get => assetGraphDiagnostics;
         private set => SetProperty(ref assetGraphDiagnostics, value);
     }
+
+    public CanonicalScene? CurrentScene
+    {
+        get => currentScene;
+        private set
+        {
+            if (SetProperty(ref currentScene, value))
+            {
+                OnPropertyChanged(nameof(HasScene));
+            }
+        }
+    }
+
+    public bool HasScene => currentScene is not null;
 
     public string SeedDisplayName => $"{CurrentSeed.SpeciesLabel} | {CurrentSeed.AgeLabel} | {CurrentSeed.GenderLabel}";
 
@@ -108,12 +133,14 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         rebuildCts = new CancellationTokenSource();
         var token = rebuildCts.Token;
         AssetGraphStatus = "Building asset graph…";
+        SceneStatus = "Waiting for asset graph…";
         BodyCandidatesSummary = string.Empty;
         AssetGraphDiagnostics = string.Empty;
-        _ = RebuildAssetGraphAsync(token);
+        CurrentScene = null;
+        _ = RebuildSceneAsync(token);
     }
 
-    private async Task RebuildAssetGraphAsync(CancellationToken token)
+    private async Task RebuildSceneAsync(CancellationToken token)
     {
         try
         {
@@ -127,6 +154,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             {
                 AssetGraphStatus = "Asset graph build failed — no SimGraph produced.";
                 AssetGraphDiagnostics = string.Join("\n", graph.Diagnostics);
+                SceneStatus = "Skipped — no asset graph.";
                 return;
             }
 
@@ -149,7 +177,28 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             }
             BodyCandidatesSummary = sb.ToString().TrimEnd();
 
-            AssetGraphDiagnostics = string.Join("\n", graph.Diagnostics);
+            SceneStatus = "Building scene…";
+            var renderResult = await simRenderer.BuildSimSceneAsync(graph, token).ConfigureAwait(true);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var combinedDiagnostics = new List<string>(graph.Diagnostics);
+            combinedDiagnostics.AddRange(renderResult.Diagnostics);
+            AssetGraphDiagnostics = string.Join("\n", combinedDiagnostics);
+
+            if (renderResult.Scene is null)
+            {
+                SceneStatus = "Scene build failed — viewport remains empty.";
+                CurrentScene = null;
+                return;
+            }
+
+            var b = renderResult.Scene.Bounds;
+            SceneStatus = System.FormattableString.Invariant(
+                $"Scene ready — meshes={renderResult.Scene.Meshes.Count}, materials={renderResult.Scene.Materials.Count}, bones={renderResult.Scene.Bones.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
+            CurrentScene = renderResult.Scene;
         }
         catch (System.OperationCanceledException)
         {
@@ -158,7 +207,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         {
             if (!token.IsCancellationRequested)
             {
-                AssetGraphStatus = $"Asset graph build error: {ex.GetType().Name}: {ex.Message}";
+                AssetGraphStatus = $"Build error: {ex.GetType().Name}: {ex.Message}";
             }
         }
     }

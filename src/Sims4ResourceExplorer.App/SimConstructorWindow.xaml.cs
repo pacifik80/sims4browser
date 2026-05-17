@@ -1,9 +1,16 @@
 using System;
+using System.ComponentModel;
 using System.IO;
+using System.Numerics;
+using HelixToolkit;
+using HelixToolkit.SharpDX;
+using HelixToolkit.WinUI.SharpDX;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Sims4ResourceExplorer.App.Services;
 using Sims4ResourceExplorer.App.ViewModels;
+using Sims4ResourceExplorer.Core;
 using Windows.Graphics;
 using WinRT.Interop;
 
@@ -11,6 +18,22 @@ namespace Sims4ResourceExplorer.App;
 
 public sealed partial class SimConstructorWindow : Window
 {
+    private readonly Viewport3DX sceneViewport;
+    private readonly PerspectiveCamera sceneCamera;
+    private readonly DefaultEffectsManager effectsManager = new();
+    private readonly ShadowMap3D sceneShadowMap = new()
+    {
+        Resolution = new Windows.Foundation.Size(4096, 4096),
+        Bias = 0.0008,
+        Intensity = 0.3,
+        Distance = 240,
+        OrthoWidth = 240,
+        NearFieldDistance = 0.01,
+        FarFieldDistance = 480,
+        AutoCoverCompleteScene = true,
+        IsSceneDynamic = true
+    };
+    private readonly SceneViewportRenderer sceneRenderer = new();
     private AppWindow? appWindow;
 
     public SimConstructorWindow(SimConstructorViewModel viewModel)
@@ -21,6 +44,25 @@ public sealed partial class SimConstructorWindow : Window
         {
             root.DataContext = viewModel;
         }
+        sceneCamera = new PerspectiveCamera
+        {
+            Position = new Vector3(0, 1, 4),
+            LookDirection = new Vector3(0, 0, -4),
+            UpDirection = Vector3.UnitY,
+            NearPlaneDistance = 0.01,
+            FarPlaneDistance = 10000
+        };
+        sceneViewport = new Viewport3DX
+        {
+            Camera = sceneCamera,
+            EffectsManager = effectsManager,
+            ShowCoordinateSystem = true,
+            ShowViewCube = true,
+            IsShadowMappingEnabled = true,
+            Visibility = Visibility.Collapsed
+        };
+        PreviewSurface.Children.Insert(0, sceneViewport);
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         Activated += OnActivated;
         ConfigureWindow();
     }
@@ -31,6 +73,42 @@ public sealed partial class SimConstructorWindow : Window
     {
         Activated -= OnActivated;
         CenterOnScreen();
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SimConstructorViewModel.CurrentScene))
+        {
+            UpdateViewport();
+        }
+    }
+
+    private void UpdateViewport()
+    {
+        var scene = ViewModel.CurrentScene;
+        if (scene is null)
+        {
+            sceneViewport.Items.Clear();
+            sceneViewport.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        sceneViewport.Visibility = Visibility.Visible;
+        var config = new SceneRenderConfig(
+            SceneRenderMode.LitTexture,
+            TextureSlot: null,
+            UvChannel: SceneUvChannelOverride.Auto,
+            Variant: null);
+        try
+        {
+            sceneRenderer.Render(sceneViewport, sceneCamera, sceneShadowMap, scene, config);
+        }
+        catch (Exception ex)
+        {
+            sceneViewport.Items.Clear();
+            sceneViewport.Visibility = Visibility.Collapsed;
+            System.Diagnostics.Debug.WriteLine($"SimConstructorWindow render failed: {ex}");
+        }
     }
 
     private void SectionNav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
