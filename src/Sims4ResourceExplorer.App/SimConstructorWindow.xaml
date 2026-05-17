@@ -64,10 +64,37 @@
                            TextWrapping="WrapWholeWords"
                            HorizontalAlignment="Center"
                            TextAlignment="Center" />
-                <TextBlock Text="{Binding RenderStatusText}"
+                <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="16"
+                        Margin="0,16,0,0"
+                        MaxWidth="640"
+                        HorizontalAlignment="Stretch">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="{Binding AssetGraphStatus}"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="WrapWholeWords" />
+                        <TextBlock Text="{Binding BodyCandidatesSummary}"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   Opacity="0.85"
+                                   TextWrapping="NoWrap" />
+                        <Expander Header="Diagnostics" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                            <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto">
+                                <TextBlock Text="{Binding AssetGraphDiagnostics}"
+                                           FontFamily="Consolas"
+                                           FontSize="11"
+                                           Opacity="0.7"
+                                           TextWrapping="WrapWholeWords" />
+                            </ScrollViewer>
+                        </Expander>
+                    </StackPanel>
+                </Border>
+                <TextBlock Text="3D viewport lands in P0.4c — this panel currently surfaces the resolved synthetic asset graph for diagnostic purposes."
                            Opacity="0.5"
                            FontStyle="Italic"
-                           Margin="0,16,0,0"
+                           Margin="0,8,0,0"
                            TextWrapping="WrapWholeWords"
                            HorizontalAlignment="Center"
                            TextAlignment="Center" />

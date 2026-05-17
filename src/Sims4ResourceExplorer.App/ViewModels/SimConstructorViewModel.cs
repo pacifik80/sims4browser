@@ -1,5 +1,9 @@
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Sims4ResourceExplorer.Assets;
+using Sims4ResourceExplorer.Core;
 
 namespace Sims4ResourceExplorer.App.ViewModels;
 
@@ -10,6 +14,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private string selectedAge = "Adult";
     private string selectedGender = "Female";
     private SimConstructorSeed currentSeed;
+    private CancellationTokenSource? rebuildCts;
+    private string assetGraphStatus = "Building asset graph…";
+    private string bodyCandidatesSummary = string.Empty;
+    private string assetGraphDiagnostics = string.Empty;
 
     public SimConstructorViewModel(ISyntheticSimService syntheticSimService)
     {
@@ -17,6 +25,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         AvailableAges = syntheticSimService.AvailableHumanAges;
         AvailableGenders = syntheticSimService.AvailableHumanGenders;
         currentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender);
+        TriggerRebuild();
     }
 
     public IReadOnlyList<string> AvailableAges { get; }
@@ -29,7 +38,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         {
             if (SetProperty(ref selectedAge, value))
             {
-                RebuildSeed();
+                Rebuild();
             }
         }
     }
@@ -41,7 +50,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         {
             if (SetProperty(ref selectedGender, value))
             {
-                RebuildSeed();
+                Rebuild();
             }
         }
     }
@@ -57,9 +66,26 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 OnPropertyChanged(nameof(SeedSummary));
                 OnPropertyChanged(nameof(SyntheticFullInstanceHex));
                 OnPropertyChanged(nameof(OutfitPartCountText));
-                OnPropertyChanged(nameof(RenderStatusText));
             }
         }
+    }
+
+    public string AssetGraphStatus
+    {
+        get => assetGraphStatus;
+        private set => SetProperty(ref assetGraphStatus, value);
+    }
+
+    public string BodyCandidatesSummary
+    {
+        get => bodyCandidatesSummary;
+        private set => SetProperty(ref bodyCandidatesSummary, value);
+    }
+
+    public string AssetGraphDiagnostics
+    {
+        get => assetGraphDiagnostics;
+        private set => SetProperty(ref assetGraphDiagnostics, value);
     }
 
     public string SeedDisplayName => $"{CurrentSeed.SpeciesLabel} | {CurrentSeed.AgeLabel} | {CurrentSeed.GenderLabel}";
@@ -70,10 +96,70 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     public string OutfitPartCountText => $"Body-driving outfit: {CurrentSeed.OutfitPartCount} part(s)";
 
-    public string RenderStatusText => "Render plumbing lands in P0.4b (graph builder is mid-refactor in the working tree).";
-
-    private void RebuildSeed()
+    private void Rebuild()
     {
         CurrentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender);
+        TriggerRebuild();
+    }
+
+    private void TriggerRebuild()
+    {
+        rebuildCts?.Cancel();
+        rebuildCts = new CancellationTokenSource();
+        var token = rebuildCts.Token;
+        AssetGraphStatus = "Building asset graph…";
+        BodyCandidatesSummary = string.Empty;
+        AssetGraphDiagnostics = string.Empty;
+        _ = RebuildAssetGraphAsync(token);
+    }
+
+    private async Task RebuildAssetGraphAsync(CancellationToken token)
+    {
+        try
+        {
+            var graph = await syntheticSimService.BuildHumanAssetGraphAsync(currentSeed, token).ConfigureAwait(true);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (graph.SimGraph is null)
+            {
+                AssetGraphStatus = "Asset graph build failed — no SimGraph produced.";
+                AssetGraphDiagnostics = string.Join("\n", graph.Diagnostics);
+                return;
+            }
+
+            var sim = graph.SimGraph;
+            AssetGraphStatus = $"Asset graph ready — body assembly: {sim.BodyAssembly.Mode}, layers: {sim.BodyAssembly.Layers.Count}.";
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"Body candidate buckets: {sim.BodyCandidates.Count}");
+            foreach (var bucket in sim.BodyCandidates)
+            {
+                sb.AppendLine($"  • {bucket.Label}  [{bucket.SourceKind}]  count={bucket.Count}");
+                foreach (var opt in bucket.Candidates.Take(2))
+                {
+                    sb.AppendLine($"      {opt.DisplayName}  tgi={opt.RootTgi ?? "<no tgi>"}");
+                }
+                if (bucket.Candidates.Count > 2)
+                {
+                    sb.AppendLine($"      … {bucket.Candidates.Count - 2} more option(s)");
+                }
+            }
+            BodyCandidatesSummary = sb.ToString().TrimEnd();
+
+            AssetGraphDiagnostics = string.Join("\n", graph.Diagnostics);
+        }
+        catch (System.OperationCanceledException)
+        {
+        }
+        catch (System.Exception ex)
+        {
+            if (!token.IsCancellationRequested)
+            {
+                AssetGraphStatus = $"Asset graph build error: {ex.GetType().Name}: {ex.Message}";
+            }
+        }
     }
 }
