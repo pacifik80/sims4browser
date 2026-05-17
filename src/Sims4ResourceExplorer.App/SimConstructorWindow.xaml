@@ -85,6 +85,19 @@
                             BorderThickness="1"
                             CornerRadius="8"
                             Padding="12">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Viewport" FontWeight="SemiBold" />
+                            <ComboBox Header="Render mode"
+                                      HorizontalAlignment="Stretch"
+                                      ItemsSource="{Binding AvailableRenderModes}"
+                                      SelectedItem="{Binding SelectedRenderMode, Mode=TwoWay}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12">
                         <StackPanel Spacing="8">
                             <TextBlock Text="{Binding SeedDisplayName}"
                                        FontWeight="SemiBold"

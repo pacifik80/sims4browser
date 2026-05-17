@@ -77,7 +77,7 @@ public sealed partial class SimConstructorWindow : Window
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(SimConstructorViewModel.CurrentScene))
+        if (e.PropertyName is nameof(SimConstructorViewModel.CurrentScene) or nameof(SimConstructorViewModel.SelectedRenderMode))
         {
             UpdateViewport();
         }
@@ -95,7 +95,7 @@ public sealed partial class SimConstructorWindow : Window
 
         sceneViewport.Visibility = Visibility.Visible;
         var config = new SceneRenderConfig(
-            SceneRenderMode.LitTexture,
+            ViewModel.SelectedRenderMode,
             TextureSlot: null,
             UvChannel: SceneUvChannelOverride.Auto,
             Variant: null);

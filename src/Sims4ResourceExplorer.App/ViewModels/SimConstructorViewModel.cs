@@ -29,6 +29,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private string bodyCandidatesSummary = string.Empty;
     private string assetGraphDiagnostics = string.Empty;
     private CanonicalScene? currentScene;
+    private SceneRenderMode selectedRenderMode = SceneRenderMode.LitTexture;
 
     public SimConstructorViewModel(ISyntheticSimService syntheticSimService, ISimAssetGraphRenderer simRenderer)
     {
@@ -42,6 +43,14 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     public IReadOnlyList<string> AvailableAges { get; }
     public IReadOnlyList<string> AvailableGenders { get; }
+    public IReadOnlyList<SceneRenderMode> AvailableRenderModes { get; } =
+        [SceneRenderMode.LitTexture, SceneRenderMode.FlatTexture, SceneRenderMode.MaterialUv, SceneRenderMode.RawUv, SceneRenderMode.Wireframe];
+
+    public SceneRenderMode SelectedRenderMode
+    {
+        get => selectedRenderMode;
+        set => SetProperty(ref selectedRenderMode, value);
+    }
 
     public string SelectedAge
     {
