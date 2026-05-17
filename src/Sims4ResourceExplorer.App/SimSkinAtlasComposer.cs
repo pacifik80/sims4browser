@@ -43,7 +43,7 @@ namespace Sims4ResourceExplorer.App;
 /// System.Drawing.Bitmap defaults; using premultiplied alpha here would silently scale RGB
 /// down by alpha and produce wrong colours when alpha encodes region masks.
 /// </summary>
-internal static class SimSkinAtlasComposer
+public static class SimSkinAtlasComposer
 {
     public static async Task<byte[]?> BuildAsync(
         byte[]? baseSkinPng,

@@ -2,6 +2,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Sims4ResourceExplorer.App.Services;
 using Sims4ResourceExplorer.Assets;
 using Sims4ResourceExplorer.Core;
 using Sims4ResourceExplorer.Preview.SimRender;
@@ -10,6 +11,12 @@ namespace Sims4ResourceExplorer.App.ViewModels;
 
 public sealed partial class SimConstructorViewModel : ObservableObject
 {
+    // Build 0290: default Human skintone instance. Confirmed present in the user's index
+    // per project memory (5 copies across v6 + v12 TONEs). Without a real skintone, the
+    // skintone-routed body materials render without a diffuse atlas and end up invisible.
+    // P1.1 will replace this constant with a runtime enumeration + swatch picker.
+    private const ulong DefaultHumanSkintoneInstance = 0x0000000000005545ul;
+
     private readonly ISyntheticSimService syntheticSimService;
     private readonly ISimAssetGraphRenderer simRenderer;
 
@@ -29,7 +36,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         this.simRenderer = simRenderer;
         AvailableAges = syntheticSimService.AvailableHumanAges;
         AvailableGenders = syntheticSimService.AvailableHumanGenders;
-        currentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender);
+        currentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, DefaultHumanSkintoneInstance);
         TriggerRebuild();
     }
 
@@ -123,7 +130,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     private void Rebuild()
     {
-        CurrentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender);
+        CurrentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, DefaultHumanSkintoneInstance);
         TriggerRebuild();
     }
 
@@ -186,19 +193,53 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
             var combinedDiagnostics = new List<string>(graph.Diagnostics);
             combinedDiagnostics.AddRange(renderResult.Diagnostics);
-            AssetGraphDiagnostics = string.Join("\n", combinedDiagnostics);
 
             if (renderResult.Scene is null)
             {
+                AssetGraphDiagnostics = string.Join("\n", combinedDiagnostics);
                 SceneStatus = "Scene build failed — viewport remains empty.";
                 CurrentScene = null;
                 return;
             }
 
-            var b = renderResult.Scene.Bounds;
+            var scene = renderResult.Scene;
+            if (sim.SkintoneRender is { } skintone)
+            {
+                SceneStatus = "Composing skin atlas…";
+                var atlas = await SimSkinAtlasComposer.BuildAsync(
+                    skintone.BaseTexturePngBytes,
+                    skintone.DetailNeutralPngBytes,
+                    skintone.DetailOverlayPngBytes,
+                    skintone.FaceOverlayPngBytes,
+                    skintone.FaceCasOverlayPngBytes,
+                    pass2Opacity: skintone.OverlayOpacity / 100f,
+                    skintoneHue: skintone.SkintoneHue,
+                    skintoneSaturation: skintone.SkintoneSaturation,
+                    cancellationToken: token).ConfigureAwait(true);
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+                if (atlas is { Length: > 0 })
+                {
+                    scene = SimSkintoneMaterialBinder.RebindWithAtlas(scene, atlas);
+                    combinedDiagnostics.Add($"Skin atlas: composed {atlas.Length:N0} bytes and rebound on every skintone-routed material.");
+                }
+                else
+                {
+                    combinedDiagnostics.Add("Skin atlas: composition failed (base skin texture missing or decode failed); skintone-routed materials may render without diffuse.");
+                }
+            }
+            else
+            {
+                combinedDiagnostics.Add($"Skin atlas: skipped (no SkintoneRender resolved for synthetic seed with skintoneInstance=0x{currentSeed.SkintoneInstance:X16}).");
+            }
+
+            AssetGraphDiagnostics = string.Join("\n", combinedDiagnostics);
+            var b = scene.Bounds;
             SceneStatus = System.FormattableString.Invariant(
-                $"Scene ready — meshes={renderResult.Scene.Meshes.Count}, materials={renderResult.Scene.Materials.Count}, bones={renderResult.Scene.Bones.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
-            CurrentScene = renderResult.Scene;
+                $"Scene ready — meshes={scene.Meshes.Count}, materials={scene.Materials.Count}, bones={scene.Bones.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
+            CurrentScene = scene;
         }
         catch (System.OperationCanceledException)
         {
