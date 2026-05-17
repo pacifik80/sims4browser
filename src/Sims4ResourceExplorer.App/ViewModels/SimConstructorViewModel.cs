@@ -405,18 +405,20 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         try
         {
             // Body types per docs/workflows/face-cas-bodytype-audit.md:
-            //   4 EyeColor, 14 Brows, 29 Lipstick, 30 Eyeshadow, 31 Eyeliner, 32 Blush.
+            //   bt=4 and bt=14 are heavily reused for non-face geometry (teeth, wrist
+            //   accessories) — DO NOT use for face CAS pickers. Real face CAS makeup uses:
+            //   29 Lipstick, 30 Eyeshadow, 31 Eyeliner, 32 Blush, 34 Brow, 35 EyeColor.
             var tasks = new[] {
-                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(4, CancellationToken.None),
-                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(14, CancellationToken.None),
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(35, CancellationToken.None), // EyeColor
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(34, CancellationToken.None), // Brow
                 syntheticSimService.EnumerateCasPartsByBodyTypeAsync(29, CancellationToken.None),
                 syntheticSimService.EnumerateCasPartsByBodyTypeAsync(30, CancellationToken.None),
                 syntheticSimService.EnumerateCasPartsByBodyTypeAsync(31, CancellationToken.None),
                 syntheticSimService.EnumerateCasPartsByBodyTypeAsync(32, CancellationToken.None),
             };
             var results = await Task.WhenAll(tasks).ConfigureAwait(true);
-            AvailableEyeColors  = Build0(results[0], 4);
-            AvailableBrows      = Build0(results[1], 14);
+            AvailableEyeColors  = Build0(results[0], 35);
+            AvailableBrows      = Build0(results[1], 34);
             AvailableLipsticks  = Build0(results[2], 29);
             AvailableEyeshadows = Build0(results[3], 30);
             AvailableEyeliners  = Build0(results[4], 31);
