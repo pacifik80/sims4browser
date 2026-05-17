@@ -24,13 +24,16 @@ public interface ISyntheticSimService
 /// One row in the constructor's skintone picker. <see cref="Instance"/> is the TONE
 /// resource's full instance id; <see cref="DisplayName"/> is the index'd resource name
 /// when present, otherwise a hex fallback. <see cref="PackagePath"/> identifies which
-/// indexed package shipped this skintone (useful for diagnostics + duplicate detection).
+/// indexed package shipped this skintone. <see cref="SwatchArgb"/> is the first entry
+/// of the TONE's swatchColors list (ARGB-encoded uint) — used for the visual swatch
+/// preview. Null when the TONE failed to parse or had no swatches.
 /// </summary>
 public sealed record SkintoneOption(
     ulong Instance,
     string DisplayName,
     string PackagePath,
-    string FullTgi);
+    string FullTgi,
+    uint? SwatchArgb);
 
 /// <summary>
 /// Public seed describing a synthesised Sim. Carries enough metadata for the
@@ -50,28 +53,65 @@ public sealed class SyntheticSimService : ISyntheticSimService
 {
     private readonly Sims4ResourceExplorer.Core.IAssetGraphBuilder graphBuilder;
     private readonly Sims4ResourceExplorer.Core.IIndexStore indexStore;
+    private readonly Sims4ResourceExplorer.Core.IResourceCatalogService resourceCatalogService;
 
-    public SyntheticSimService(Sims4ResourceExplorer.Core.IAssetGraphBuilder graphBuilder, Sims4ResourceExplorer.Core.IIndexStore indexStore)
+    public SyntheticSimService(
+        Sims4ResourceExplorer.Core.IAssetGraphBuilder graphBuilder,
+        Sims4ResourceExplorer.Core.IIndexStore indexStore,
+        Sims4ResourceExplorer.Core.IResourceCatalogService resourceCatalogService)
     {
         this.graphBuilder = graphBuilder;
         this.indexStore = indexStore;
+        this.resourceCatalogService = resourceCatalogService;
     }
 
     public async Task<IReadOnlyList<SkintoneOption>> EnumerateSkintonesAsync(CancellationToken cancellationToken)
     {
         var resources = await indexStore.GetResourcesByTypeNameAsync("Skintone", cancellationToken).ConfigureAwait(false);
-        return resources
+        // Group by FullInstance — different packages can ship the same TONE; we only need
+        // one representative for the picker. Keep the first PackagePath as the canonical
+        // source for the swatch-color parse below.
+        var grouped = resources
             .GroupBy(r => r.Key.FullInstance)
-            .Select(group =>
-            {
-                var first = group.First();
-                var name = !string.IsNullOrWhiteSpace(first.Name)
-                    ? first.Name
-                    : $"Skintone 0x{first.Key.FullInstance:X16}";
-                return new SkintoneOption(first.Key.FullInstance, name, first.PackagePath, first.Key.FullTgi);
-            })
-            .OrderBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
             .ToArray();
+        // Parse swatchColors[0] in parallel; failures degrade to a null SwatchArgb so the
+        // picker can still surface the entry with a placeholder colour.
+        var parsed = await Task.WhenAll(grouped.Select(async resource =>
+        {
+            uint? swatch = null;
+            try
+            {
+                var bytes = await resourceCatalogService
+                    .GetResourceBytesAsync(resource.PackagePath, resource.Key, raw: false, cancellationToken)
+                    .ConfigureAwait(false);
+                var tone = Sims4ResourceExplorer.Packages.Ts4StructuredResourceMetadataExtractor.ParseSkintone(bytes);
+                if (tone.SwatchColors is { Count: > 0 })
+                {
+                    swatch = tone.SwatchColors[0];
+                }
+            }
+            catch
+            {
+                // Best-effort: leave swatch null.
+            }
+            var name = !string.IsNullOrWhiteSpace(resource.Name)
+                ? resource.Name
+                : $"Skintone 0x{resource.Key.FullInstance:X16}";
+            return new SkintoneOption(resource.Key.FullInstance, name, resource.PackagePath, resource.Key.FullTgi, swatch);
+        })).ConfigureAwait(false);
+        return parsed
+            .OrderBy(o => o.SwatchArgb is { } a ? -RelativeLuminance(a) : double.MaxValue)
+            .ThenBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static double RelativeLuminance(uint argb)
+    {
+        var r = ((argb >> 16) & 0xFF) / 255.0;
+        var g = ((argb >> 8) & 0xFF) / 255.0;
+        var b = (argb & 0xFF) / 255.0;
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
     }
 
     public IReadOnlyList<string> AvailableHumanAges { get; } =

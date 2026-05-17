@@ -19,6 +19,12 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     private readonly ISyntheticSimService syntheticSimService;
     private readonly ISimAssetGraphRenderer simRenderer;
+    // In-memory cache of built scenes keyed by (age, gender, skintone). Per the user's
+    // brief: cache accumulates across selections and survives age/gender switches; new
+    // picks short-circuit to the cached scene if available. No cross-session disk cache
+    // (per feedback_no_cross_session_disk_cache). Cache is unbounded — the constructor
+    // window's process lifetime is the eviction window.
+    private readonly Dictionary<SceneCacheKey, CachedSceneEntry> sceneCache = new();
 
     private string selectedAge = "Adult";
     private string selectedGender = "Female";
@@ -32,6 +38,15 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private SceneRenderMode selectedRenderMode = SceneRenderMode.LitTexture;
     private IReadOnlyList<SkintoneOption> availableSkintones = Array.Empty<SkintoneOption>();
     private SkintoneOption? selectedSkintone;
+
+    private readonly record struct SceneCacheKey(string Age, string Gender, ulong Skintone);
+
+    private sealed record CachedSceneEntry(
+        CanonicalScene Scene,
+        string AssetGraphStatus,
+        string BodyCandidatesSummary,
+        string Diagnostics,
+        string SceneStatus);
 
     public SimConstructorViewModel(ISyntheticSimService syntheticSimService, ISimAssetGraphRenderer simRenderer)
     {
@@ -184,6 +199,17 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     private void TriggerRebuild()
     {
+        var seed = currentSeed;
+        var key = new SceneCacheKey(seed.AgeLabel, seed.GenderLabel, seed.SkintoneInstance);
+
+        // Cache hit: instant apply, no build, leave any in-flight build alone so its
+        // result still lands in the cache.
+        if (sceneCache.TryGetValue(key, out var cached))
+        {
+            ApplyCachedEntry(cached);
+            return;
+        }
+
         rebuildCts?.Cancel();
         rebuildCts = new CancellationTokenSource();
         var token = rebuildCts.Token;
@@ -192,14 +218,23 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         BodyCandidatesSummary = string.Empty;
         AssetGraphDiagnostics = string.Empty;
         CurrentScene = null;
-        _ = RebuildSceneAsync(token);
+        _ = RebuildSceneAsync(seed, key, token);
     }
 
-    private async Task RebuildSceneAsync(CancellationToken token)
+    private void ApplyCachedEntry(CachedSceneEntry entry)
+    {
+        AssetGraphStatus = entry.AssetGraphStatus;
+        BodyCandidatesSummary = entry.BodyCandidatesSummary;
+        AssetGraphDiagnostics = entry.Diagnostics;
+        SceneStatus = $"{entry.SceneStatus}  [from cache]";
+        CurrentScene = entry.Scene;
+    }
+
+    private async Task RebuildSceneAsync(SimConstructorSeed seed, SceneCacheKey key, CancellationToken token)
     {
         try
         {
-            var graph = await syntheticSimService.BuildHumanAssetGraphAsync(currentSeed, token).ConfigureAwait(true);
+            var graph = await syntheticSimService.BuildHumanAssetGraphAsync(seed, token).ConfigureAwait(true);
             if (token.IsCancellationRequested)
             {
                 return;
@@ -214,7 +249,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             }
 
             var sim = graph.SimGraph;
-            AssetGraphStatus = $"Asset graph ready — body assembly: {sim.BodyAssembly.Mode}, layers: {sim.BodyAssembly.Layers.Count}.";
+            var assetGraphStatusText = $"Asset graph ready — body assembly: {sim.BodyAssembly.Mode}, layers: {sim.BodyAssembly.Layers.Count}.";
+            AssetGraphStatus = assetGraphStatusText;
 
             var sb = new StringBuilder();
             sb.AppendLine($"Body candidate buckets: {sim.BodyCandidates.Count}");
@@ -230,7 +266,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                     sb.AppendLine($"      … {bucket.Candidates.Count - 2} more option(s)");
                 }
             }
-            BodyCandidatesSummary = sb.ToString().TrimEnd();
+            var bodyCandidatesText = sb.ToString().TrimEnd();
+            BodyCandidatesSummary = bodyCandidatesText;
 
             SceneStatus = "Building scene…";
             var renderResult = await simRenderer.BuildSimSceneAsync(graph, token).ConfigureAwait(true);
@@ -280,14 +317,31 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             }
             else
             {
-                combinedDiagnostics.Add($"Skin atlas: skipped (no SkintoneRender resolved for synthetic seed with skintoneInstance=0x{currentSeed.SkintoneInstance:X16}).");
+                combinedDiagnostics.Add($"Skin atlas: skipped (no SkintoneRender resolved for synthetic seed with skintoneInstance=0x{seed.SkintoneInstance:X16}).");
             }
 
-            AssetGraphDiagnostics = string.Join("\n", combinedDiagnostics);
+            var diagnosticsText = string.Join("\n", combinedDiagnostics);
             var b = scene.Bounds;
-            SceneStatus = System.FormattableString.Invariant(
+            var sceneStatusText = System.FormattableString.Invariant(
                 $"Scene ready — meshes={scene.Meshes.Count}, materials={scene.Materials.Count}, bones={scene.Bones.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
-            CurrentScene = scene;
+
+            // Populate the cache regardless of whether the selection still matches —
+            // future selections of this tuple will short-circuit.
+            sceneCache[key] = new CachedSceneEntry(
+                Scene: scene,
+                AssetGraphStatus: assetGraphStatusText,
+                BodyCandidatesSummary: bodyCandidatesText,
+                Diagnostics: diagnosticsText,
+                SceneStatus: sceneStatusText);
+
+            // Only apply to the viewport if this build still matches the current pick.
+            var currentKey = new SceneCacheKey(currentSeed.AgeLabel, currentSeed.GenderLabel, currentSeed.SkintoneInstance);
+            if (currentKey.Equals(key))
+            {
+                AssetGraphDiagnostics = diagnosticsText;
+                SceneStatus = $"{sceneStatusText}  [{sceneCache.Count} cached]";
+                CurrentScene = scene;
+            }
         }
         catch (System.OperationCanceledException)
         {
