@@ -12,10 +12,49 @@ public sealed partial class BuildBuySceneBuildService
         cancellationToken.ThrowIfCancellationRequested();
         var stopwatch = Stopwatch.StartNew();
 
-        var geometryRoots = casGraph.GeometryResources
-            .GroupBy(static resource => resource.Key.FullTgi, StringComparer.OrdinalIgnoreCase)
-            .Select(static group => group.First())
+        // Build 0276: collapse LODs per geometry INSTANCE by VERTEX COUNT (highest detail
+        // wins). Previous build 0275 picked by lowest group ID — wrong for humans because
+        // EA's group ordering doesn't always match LOD level. For example acEarsUp's
+        // Lods table maps Level 0 → group 0x71 (NOT the lowest 0x70). Picking by lowest
+        // group caused the male body's "Bottom" layer to render the lowest-detail LOD
+        // (degenerate / nearly-empty mesh) → male sim rendered with no legs visible.
+        // Reading byte sizes is cheap (reflection on already-indexed resources), and the
+        // largest LOD is always the highest-detail one.
+        //
+        // Build 0282: ScanPackageAsync defers UncompressedSize/CompressedSize, so for
+        // GEOMs sourced from a fresh package scan both fields are null. With null sizes
+        // the size comparison degenerates to 0 == 0 and OrderByDescending becomes a
+        // stable sort (preserving load order). For yfHead's LOD 0 KeyIndices=[1,2] this
+        // picked TgiList[1] (an 8.7KB ~96-vert stub) over TgiList[2] (the real 138KB
+        // LOD0) — rendering the YA female head as a tiny floating dot. ymHead got lucky
+        // because its TgiList[1] IS the real LOD0. Verified via tools/ProbeAsset
+        // --probe-cas-lods: both head TgiLists report size=? from ScanPackageAsync.
+        // Fix: when a FullInstance group has >1 candidate, EnrichResourceAsync each
+        // (which calls the package's GetSizeAsync) so the size comparison actually works.
+        // Single-candidate groups skip enrichment to avoid latency.
+        var geometryGroups = casGraph.GeometryResources
+            .GroupBy(static resource => resource.Key.FullInstance)
             .ToArray();
+        var geometryRoots = new ResourceMetadata[geometryGroups.Length];
+        for (var groupIndex = 0; groupIndex < geometryGroups.Length; groupIndex++)
+        {
+            var group = geometryGroups[groupIndex].ToArray();
+            if (group.Length == 1)
+            {
+                geometryRoots[groupIndex] = group[0];
+                continue;
+            }
+            var enriched = new ResourceMetadata[group.Length];
+            for (var i = 0; i < group.Length; i++)
+            {
+                enriched[i] = (group[i].UncompressedSize ?? group[i].CompressedSize) is not null
+                    ? group[i]
+                    : await resourceCatalogService.EnrichResourceAsync(group[i], cancellationToken).ConfigureAwait(false);
+            }
+            geometryRoots[groupIndex] = enriched
+                .OrderByDescending(r => r.UncompressedSize ?? r.CompressedSize ?? 0)
+                .First();
+        }
         if (geometryRoots.Length == 0)
         {
             return new SceneBuildResult(
@@ -213,7 +252,7 @@ public sealed partial class BuildBuySceneBuildService
         // a different rig than the current one (animal child sims). Translates each vertex
         // by the weighted sum of (current_bone_world - authoring_bone_world). For child
         // cats this pulls the ears/tail mesh down from adult-Y=0.4 to child-Y=0.2.
-        var positions = ApplyChildRigBindCorrection(geom, rig.Rig, rig.AuthoringRig);
+        var positions = ApplyChildRigBindCorrection(geom, rig.Rig, rig.AuthoringRig, diagnostics);
         var mesh = new CanonicalMesh(
             $"Mesh_{geometryResource.Key.FullInstance:X16}",
             positions,
@@ -493,24 +532,34 @@ public sealed partial class BuildBuySceneBuildService
             // age is determined by an AsyncLocal hint MainViewModel sets via
             // `BeginSimAgeScope`. Without the hint we fall back to adult-first ordering.
             var ageHint = CurrentSimAgeHint?.Trim().ToLowerInvariant();
+            var speciesHint = CurrentSimSpeciesHint?.Trim().ToLowerInvariant();
             var preferChildRigs = ageHint is "child" or "toddler" or "infant" or "kitten" or "puppy" or "foal";
-            var canonicalRigNames = preferChildRigs
-                ? new[]
-                {
-                    "cuRig", "puRig", "nuRig", "auRig",
-                    "ccRig", "acRig",   // child/adult cat
-                    "cdRig", "adRig",   // child/adult dog (large)
-                    "clRig", "alRig",   // child/adult small dog
-                    "chRig", "ahRig",   // child/adult horse
-                }
-                : new[]
-                {
-                    "auRig", "cuRig", "puRig", "nuRig",
-                    "acRig", "ccRig",   // adult/child cat
-                    "adRig", "cdRig",   // adult/child dog (large)
-                    "alRig", "clRig",   // adult/child small dog (& fox-as-small-dog adult)
-                    "ahRig", "chRig",   // adult/child horse
-                };
+            // Build 0276: order pet rigs by SPECIES first, then age. All pet rigs share the
+            // same 178-bone hash set so without species filtering the first species tried
+            // wins for everyone (e.g. ccRig wins for child dog, then bind correction uses
+            // cat deltas → mesh shifts wrong). Put the matching species' rig pair at the
+            // FRONT so it wins ties. Human rigs (auRig/cuRig/puRig) always come before
+            // any pet rig as a fallback for human meshes.
+            string[] speciesPair = speciesHint switch
+            {
+                "cat"        => preferChildRigs ? new[] { "ccRig", "acRig" } : new[] { "acRig", "ccRig" },
+                "dog"        => preferChildRigs ? new[] { "cdRig", "adRig" } : new[] { "adRig", "cdRig" },
+                "little dog" => preferChildRigs ? new[] { "clRig", "alRig" } : new[] { "alRig", "clRig" },
+                "fox"        => preferChildRigs ? new[] { "clRig", "alRig" } : new[] { "alRig", "clRig" }, // fox uses small-dog rig per TS4SimRipper
+                "horse"      => preferChildRigs ? new[] { "chRig", "ahRig" } : new[] { "ahRig", "chRig" },
+                _            => Array.Empty<string>()
+            };
+            var humanFirst = preferChildRigs
+                ? new[] { "cuRig", "puRig", "nuRig", "auRig" }
+                : new[] { "auRig", "cuRig", "puRig", "nuRig" };
+            var otherPets = preferChildRigs
+                ? new[] { "ccRig", "acRig", "cdRig", "adRig", "clRig", "alRig", "chRig", "ahRig" }
+                : new[] { "acRig", "ccRig", "adRig", "cdRig", "alRig", "clRig", "ahRig", "chRig" };
+            // Concat: humans first, then matched-species pet pair, then other pets.
+            var canonicalRigNames = humanFirst
+                .Concat(speciesPair)
+                .Concat(otherPets.Where(name => !speciesPair.Contains(name)))
+                .ToArray();
             foreach (var rigName in canonicalRigNames)
             {
                 var canonicalHash = ComputeTs4Fnv64(rigName);
@@ -643,7 +692,7 @@ public sealed partial class BuildBuySceneBuildService
             if (adultEquivalentName is not null)
             {
                 var adultHash = ComputeTs4Fnv64(adultEquivalentName);
-                authoringRig = await TryLoadCanonicalRigAsync(adultHash, cancellationToken).ConfigureAwait(false);
+                authoringRig = await TryLoadCanonicalRigAsync(adultHash, geometryResource.PackagePath, cancellationToken, diagnostics).ConfigureAwait(false);
                 if (authoringRig is not null)
                 {
                     diagnostics.Add($"Authoring rig for bind-correction: {adultEquivalentName} (0x{adultHash:X16}).");
@@ -656,35 +705,61 @@ public sealed partial class BuildBuySceneBuildService
 
     private static string? TryGetAdultEquivalentChildRigName(ulong childRigInstance)
     {
-        // FNV-1 64-bit hashes of the four child pet rigs. Map to their adult equivalents.
+        // FNV-1 64-bit hashes (verified via tools/ProbeAsset --probe-rig-hashes). The
+        // bind-correction selectivity check (centroid distance) inside ApplyChildRigBind-
+        // Correction decides per-mesh whether to apply — body meshes already authored at
+        // child positions are skipped, only extremity meshes baked at adult positions get
+        // shifted. Safe to add even for sims whose body wouldn't need correction.
         return childRigInstance switch
         {
+            // Pet child rigs — added in build 0274.
             0xE0FC2EB394790FE3UL => "acRig", // ccRig (child cat) → acRig (adult cat)
             0xA38013B37167E55AUL => "adRig", // cdRig (child dog) → adRig (adult dog large)
             0xE85F5BB3984BC762UL => "alRig", // clRig (child little dog) → alRig (adult little dog)
             0x0C4B17B3AD0032A6UL => "ahRig", // chRig (child horse) → ahRig (adult horse)
+            // Build 0284: human child rigs — was missing, so the canonical-bone fallback
+            // for human children rendered Shoes (and any extremity GEOM authored at adult
+            // positions) at adult-foot height, producing visible "floating feet" on the
+            // child humans the user reported.
+            0x2183C4B327C38FC9UL => "auRig", // cuRig (child human) → auRig (adult human)
+            0x192F5C47F5D28A72UL => "auRig", // puRig (toddler human) → auRig
+            0xE4D84C831F5A9183UL => "auRig", // iuRig (infant human) → auRig
             _ => null
         };
     }
 
-    private async Task<Ts4RigResource?> TryLoadCanonicalRigAsync(ulong canonicalHash, CancellationToken cancellationToken)
+    private async Task<Ts4RigResource?> TryLoadCanonicalRigAsync(ulong canonicalHash, string installRootHint, CancellationToken cancellationToken, List<string>? diagnostics = null)
     {
         try
         {
             var resources = await indexStore.GetResourcesByFullInstanceAsync(canonicalHash, cancellationToken).ConfigureAwait(false);
             var rigResource = resources.FirstOrDefault(static r => r.Key.TypeName == "Rig");
-            // Build 0269 fallback: also probe the well-known base-game packages directly
-            // when the index doesn't surface the rig.
+            // Build 0277 fix: resolve the install root from a real package path passed in
+            // (was hardcoded to `@"C:\GAMES\The Sims 4"` in build 0276 — bug, because
+            // TryResolveGameInstallRoot expects a package PATH and walks up looking for
+            // a "Data" sibling. With the bare install root passed, it walked to the
+            // parent and returned null, so the direct probe never ran. Result: authoring
+            // rig was never loaded for any pet child sim's ears/tail/head/shoes
+            // (only body somehow worked because the main canonical loop uses geometryResource.PackagePath
+            // which IS a real package path). With null authoring rig, my bind correction
+            // returned positions verbatim → ears + tail stayed at adult positions →
+            // user saw them floating above the smaller child body.
             if (rigResource is null)
             {
-                var probeRoot = TryResolveGameInstallRoot(@"C:\GAMES\The Sims 4");
-                var probePaths = probeRoot is null ? Array.Empty<string>() : new[]
+                var probeRoot = TryResolveGameInstallRoot(installRootHint);
+                if (probeRoot is null)
+                {
+                    diagnostics?.Add($"AuthoringRigLoad: indexStore had no Rig at 0x{canonicalHash:X16} AND TryResolveGameInstallRoot('{installRootHint}') returned null — no probe paths to try.");
+                    return null;
+                }
+                var probePaths = new[]
                 {
                     Path.Combine(probeRoot, "Data", "Client", "ClientDeltaBuild0.package"),
                     Path.Combine(probeRoot, "Data", "Simulation", "SimulationDeltaBuild0.package"),
                     Path.Combine(probeRoot, "Data", "Simulation", "SimulationPreload.package"),
                 };
-                foreach (var probePath in probePaths.Where(File.Exists))
+                var existingProbePaths = probePaths.Where(File.Exists).ToArray();
+                foreach (var probePath in existingProbePaths)
                 {
                     try
                     {
@@ -695,16 +770,21 @@ public sealed partial class BuildBuySceneBuildService
                             return Ts4RigResource.Parse(bytes);
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        diagnostics?.Add($"AuthoringRigLoad: probe failed for {Path.GetFileName(probePath)} 0x{canonicalHash:X16}: {ex.GetType().Name}: {ex.Message}");
+                    }
                 }
+                diagnostics?.Add($"AuthoringRigLoad: no Rig resource at 0x{canonicalHash:X16} in indexStore or any of {existingProbePaths.Length} probe path(s).");
                 return null;
             }
             var rigBytes = await resourceCatalogService.GetResourceBytesAsync(
                 rigResource.PackagePath, rigResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
             return Ts4RigResource.Parse(rigBytes);
         }
-        catch
+        catch (Exception ex)
         {
+            diagnostics?.Add($"AuthoringRigLoad: unhandled {ex.GetType().Name} loading 0x{canonicalHash:X16} via '{installRootHint}': {ex.Message}");
             return null;
         }
     }
@@ -725,11 +805,16 @@ public sealed partial class BuildBuySceneBuildService
     private static float[] ApplyChildRigBindCorrection(
         Ts4GeomResource geom,
         Ts4RigResource? currentRig,
-        Ts4RigResource? authoringRig)
+        Ts4RigResource? authoringRig,
+        List<string>? diagnostics = null)
     {
         // Default: copy vertex positions verbatim (3 floats per vertex).
         var positions = geom.Vertices.SelectMany(static vertex => vertex.Position).ToArray();
-        if (currentRig is null || authoringRig is null) return positions;
+        if (currentRig is null || authoringRig is null)
+        {
+            diagnostics?.Add($"BindCorrection: SKIPPED (currentRig={(currentRig is null ? "null" : "set")}, authoringRig={(authoringRig is null ? "null" : "set")})");
+            return positions;
+        }
 
         // Compute world translation for every bone in BOTH rigs (parent-walked).
         var currentByHash = currentRig.Bones.ToDictionary(b => b.NameHash);
@@ -753,7 +838,34 @@ public sealed partial class BuildBuySceneBuildService
                 }
             }
         }
-        if (deltas.Count == 0) return positions;
+        if (deltas.Count == 0)
+        {
+            diagnostics?.Add($"BindCorrection: SKIPPED (no per-bone deltas — current and authoring rigs have same bone positions for this geom's {geom.BoneHashes.Count} bones)");
+            return positions;
+        }
+
+        // Build 0274: only apply correction when the mesh was actually authored against
+        // the adult rig — NOT when it has its own child-specific geometry. Detection:
+        // compute mesh vertex centroid and per-rig "bone centroid" (average position of
+        // bones in this geom's hash set). If centroid is closer to the current (child)
+        // rig's bone centroid, the mesh was already authored at child positions — skip
+        // correction (otherwise we'd shift it BELOW the floor by another -delta, which
+        // 0272 was doing for child cat body/head/shoes). If centroid is closer to the
+        // authoring (adult) rig's bone centroid, the mesh was authored at adult positions
+        // and needs the correction (cat ears + tail share this case).
+        var meshCentroid = ComputeMeshCentroid(geom);
+        var currentCentroid = ComputeBoneCentroid(geom.BoneHashes, currentWorld);
+        var authoringCentroid = ComputeBoneCentroid(geom.BoneHashes, authoringWorld);
+        var distToCurrent = (meshCentroid - currentCentroid).LengthSquared();
+        var distToAuthoring = (meshCentroid - authoringCentroid).LengthSquared();
+        diagnostics?.Add($"BindCorrection: deltas={deltas.Count}, meshCentroid=({meshCentroid.X:0.000},{meshCentroid.Y:0.000},{meshCentroid.Z:0.000}), currentBoneCentroid=({currentCentroid.X:0.000},{currentCentroid.Y:0.000},{currentCentroid.Z:0.000}), authoringBoneCentroid=({authoringCentroid.X:0.000},{authoringCentroid.Y:0.000},{authoringCentroid.Z:0.000}), distToCurrent={distToCurrent:0.######}, distToAuthoring={distToAuthoring:0.######}");
+        if (distToCurrent <= distToAuthoring)
+        {
+            // Mesh's vertices already cluster around current-rig bone positions — skip.
+            diagnostics?.Add($"BindCorrection: SKIPPED selectivity check (mesh closer to current than authoring rig — assumed already at current rig positions)");
+            return positions;
+        }
+        diagnostics?.Add($"BindCorrection: APPLYING correction to {geom.Vertices.Count} vertices using {deltas.Count} bone deltas");
 
         // Apply weighted delta to each vertex. The skin weights are stored on the GEOM
         // vertex via BlendIndices (indices into geom.BoneHashes) and BlendWeights.
@@ -784,6 +896,29 @@ public sealed partial class BuildBuySceneBuildService
             positions[v * 3 + 2] += accum.Z;
         }
         return positions;
+    }
+
+    private static Vector3 ComputeMeshCentroid(Ts4GeomResource geom)
+    {
+        if (geom.Vertices.Count == 0) return Vector3.Zero;
+        var sum = Vector3.Zero;
+        foreach (var v in geom.Vertices) sum += new Vector3(v.Position[0], v.Position[1], v.Position[2]);
+        return sum / geom.Vertices.Count;
+    }
+
+    private static Vector3 ComputeBoneCentroid(IReadOnlyList<uint> boneHashes, Dictionary<uint, Matrix4x4> world)
+    {
+        var sum = Vector3.Zero;
+        var count = 0;
+        foreach (var h in boneHashes)
+        {
+            if (world.TryGetValue(h, out var m))
+            {
+                sum += new Vector3(m.M41, m.M42, m.M43);
+                count++;
+            }
+        }
+        return count == 0 ? Vector3.Zero : sum / count;
     }
 
     private static IReadOnlyList<CanonicalBone> BuildCanonicalBones(Ts4GeomResource geom, Ts4RigResource? rig)
@@ -1261,7 +1396,7 @@ internal readonly record struct Ts4GeomVertex(
     uint? TagVal = null,
     uint? VertexId = null);
 
-internal sealed class Ts4RigResource
+public sealed class Ts4RigResource
 {
     public required IReadOnlyList<Ts4RigBone> Bones { get; init; }
 
@@ -1312,7 +1447,7 @@ internal sealed class Ts4RigResource
     }
 }
 
-internal readonly record struct Ts4RigBone(
+public readonly record struct Ts4RigBone(
     string Name,
     uint NameHash,
     int ParentIndex,

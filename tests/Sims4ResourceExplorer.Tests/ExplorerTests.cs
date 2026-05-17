@@ -1413,15 +1413,37 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
-    public void SimBodyAssemblyPolicy_ActivatesShellUnderlayAlongsideSplitBodyLayers()
+    public void SimBodyAssemblyPolicy_DropsHumanFullBodyShellWhenSplitLayersPresent()
     {
-        var active = SimBodyAssemblyPolicy.ResolveActiveLabels(["Full Body", "Top", "Bottom", "Shoes"]);
+        // Build 0283: per docs/workflows/visual-verification-findings-build0238.md, EA never
+        // ships a Full Body Nude CASPart and the engine never renders a Sim with a Full Body
+        // shell beneath Top+Bottom overlays. Every shipping BodyType=5 CASPart with
+        // DefaultForBodyType*=1 is a clothing item (Bathrobe, RobeCalf, Overalls), so forcing
+        // one in as a human underlay produces visible junk wherever the overlays don't
+        // perfectly cover (kimono sleeves on YA male's bicep, kimono hem at toddler's
+        // ankles). When Top + Bottom are both present for a human, the Full Body shell
+        // must be dropped — the overlays already cover the body.
+        var active = SimBodyAssemblyPolicy.ResolveActiveLabels(["Full Body", "Top", "Bottom", "Shoes"], speciesLabel: "Human");
 
-        Assert.Equal(4, active.Count);
-        Assert.Contains("Full Body", active);
+        Assert.Equal(3, active.Count);
+        Assert.DoesNotContain("Full Body", active);
         Assert.Contains("Top", active);
         Assert.Contains("Bottom", active);
         Assert.Contains("Shoes", active);
+        Assert.Equal(SimBodyAssemblyMode.SplitBodyLayers, SimBodyAssemblyPolicy.GetMode(active));
+    }
+
+    [Fact]
+    public void SimBodyAssemblyPolicy_KeepsAnimalFullBodyShellAlongsideSplitLayers()
+    {
+        // Animals have a single Body shell + Head/Ears/Tail rather than Top/Bottom
+        // overlays, but if Top+Bottom slots happen to be present the shell remains
+        // active for them — only humans drop it. (Note: animals normally don't hit this
+        // branch since their CAS structure doesn't include Top/Bottom.)
+        var active = SimBodyAssemblyPolicy.ResolveActiveLabels(["Full Body", "Top", "Bottom", "Shoes"], speciesLabel: "Cat");
+
+        Assert.Equal(4, active.Count);
+        Assert.Contains("Full Body", active);
         Assert.Equal(SimBodyAssemblyMode.BodyUnderlayWithSplitLayers, SimBodyAssemblyPolicy.GetMode(active));
     }
 
@@ -10142,6 +10164,244 @@ public sealed class ExplorerTests : IDisposable
         Assert.Null(Ts4CanonicalRigCatalog.GetRigInstance("Human", "Unknown", null));
     }
 
+    // === Build 0289 — sim character pipeline rewrite, step 1: SimRigCatalog tests ===
+
+    [Fact]
+    public void SimRigCatalog_HumanArchetypes_ResolveDeterministicRigs()
+    {
+        var auRig = Ts4CanonicalRigCatalog.ComputeFnv64("auRig");
+        var cuRig = Ts4CanonicalRigCatalog.ComputeFnv64("cuRig");
+        var puRig = Ts4CanonicalRigCatalog.ComputeFnv64("puRig");
+        var iuRig = Ts4CanonicalRigCatalog.ComputeFnv64("iuRig");
+
+        Assert.Equal(("auRig", auRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Young Adult", null));
+        Assert.Equal(("auRig", auRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Adult", null));
+        Assert.Equal(("auRig", auRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Teen", null));
+        Assert.Equal(("auRig", auRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Elder", null));
+        Assert.Equal(("cuRig", cuRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Child", null));
+        Assert.Equal(("puRig", puRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Toddler", null));
+        Assert.Equal(("iuRig", iuRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Infant", null));
+    }
+
+    [Fact]
+    public void SimRigCatalog_AnimalArchetypes_ResolveDeterministicRigs()
+    {
+        var acRig = Ts4CanonicalRigCatalog.ComputeFnv64("acRig");
+        var ccRig = Ts4CanonicalRigCatalog.ComputeFnv64("ccRig");
+        var adRig = Ts4CanonicalRigCatalog.ComputeFnv64("adRig");
+        var cdRig = Ts4CanonicalRigCatalog.ComputeFnv64("cdRig");
+        var alRig = Ts4CanonicalRigCatalog.ComputeFnv64("alRig");
+        var ahRig = Ts4CanonicalRigCatalog.ComputeFnv64("ahRig");
+        var chRig = Ts4CanonicalRigCatalog.ComputeFnv64("chRig");
+
+        Assert.Equal(("acRig", acRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Cat", "Adult", null));
+        Assert.Equal(("ccRig", ccRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Cat", "Child", null));
+        Assert.Equal(("adRig", adRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Dog", "Adult", null));
+        Assert.Equal(("cdRig", cdRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Dog", "Child", null));
+        Assert.Equal(("alRig", alRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Little Dog", "Adult", null));
+        // Per TS4SimRipper GetRigPrefix line 2169-2171: Little Dog Child collapses to cdRig (uses "d" not "l").
+        Assert.Equal(("cdRig", cdRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Little Dog", "Child", null));
+        Assert.Equal(("ahRig", ahRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Horse", "Adult", null));
+        Assert.Equal(("chRig", chRig), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Horse", "Child", null));
+    }
+
+    [Fact]
+    public void SimRigCatalog_OccultsOverrideAgeAndSpecies()
+    {
+        var werewolfHash = 0x60FAA42F9B0B4E39ul;
+        var fairyHash = Ts4CanonicalRigCatalog.ComputeFnv64("nuRig");
+
+        Assert.Equal(("werewolfRig", werewolfHash), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Adult", "Werewolf"));
+        Assert.Equal(("nuRig", fairyHash), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Adult", "Fairy"));
+        // Occult labels are case-insensitive.
+        Assert.Equal(("nuRig", fairyHash), Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Child", "fairy"));
+    }
+
+    [Fact]
+    public void SimRigCatalog_UnknownTuples_ReturnNull()
+    {
+        Assert.Null(Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Alien", "Adult", null));
+        Assert.Null(Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve("Human", "Unknown", null));
+        Assert.Null(Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve(null, "Adult", null));
+    }
+
+    [Fact]
+    public void SimBondMorpher_TranslationOnly_AppliesPerBoneOffsetWeightedBySkinWeight()
+    {
+        // Two-bone rig: root at origin, child at (0,1,0). Single vertex at (0,1,0)
+        // weighted 100% to the child bone. Apply a +0.5 X-axis offset adjustment to
+        // the child bone — vertex should move to (0.5, 1, 0).
+        var rig = BuildTwoBoneTestRig();
+        var positions = new[] { new System.Numerics.Vector3(0, 1, 0) };
+        var blendIndices = new[] { new byte[] { 1, 0, 0, 0 } }; // index 1 = child
+        var blendWeights = new[] { new byte[] { 255, 0, 0, 0 } }; // 100% weight
+        var meshBoneHashes = new uint[] { 0x0000_0001u, 0xC000_0001u }; // [root, child]
+
+        var adjustment = new Sims4ResourceExplorer.Core.SimBondAdjustment(
+            BoneHash: 0xC000_0001u,
+            LocalOffset: new System.Numerics.Vector3(0.5f, 0, 0),
+            LocalScale: System.Numerics.Vector3.Zero,
+            LocalRotation: System.Numerics.Quaternion.Identity);
+
+        Sims4ResourceExplorer.Preview.SimRender.SimBondMorpher.ApplyBond(
+            rig, positions, blendIndices, blendWeights, meshBoneHashes,
+            new[] { adjustment }, bondWeight: 1f);
+
+        Assert.Equal(0.5f, positions[0].X, precision: 5);
+        Assert.Equal(1f, positions[0].Y, precision: 5);
+        Assert.Equal(0f, positions[0].Z, precision: 5);
+    }
+
+    [Fact]
+    public void SimBondMorpher_ScaleAdjustment_ShrinksVertexAroundBonePivot()
+    {
+        // SMOKING-GUN TEST for build 0289 rewrite: legacy BondMorpher dropped scale
+        // entirely (BondMorpher.cs:167-169 and BondMorphResolver.cs:147-153). This
+        // is why child sims couldn't render at child scale via body-shape morphs —
+        // the morphs use scale primarily, and our pipeline ignored it.
+        //
+        // Setup: child bone at world (0,1,0). Vertex at (0,2,0) — 1 unit above bone.
+        // Apply -0.5 uniform scale = shrink by 50% around bone pivot.
+        // Expected: vertex moves halfway toward bone → (0,1.5,0).
+        var rig = BuildTwoBoneTestRig();
+        var positions = new[] { new System.Numerics.Vector3(0, 2, 0) };
+        var blendIndices = new[] { new byte[] { 1, 0, 0, 0 } };
+        var blendWeights = new[] { new byte[] { 255, 0, 0, 0 } };
+        var meshBoneHashes = new uint[] { 0x0000_0001u, 0xC000_0001u };
+
+        var adjustment = new Sims4ResourceExplorer.Core.SimBondAdjustment(
+            BoneHash: 0xC000_0001u,
+            LocalOffset: System.Numerics.Vector3.Zero,
+            LocalScale: new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), // shrink by 50%
+            LocalRotation: System.Numerics.Quaternion.Identity);
+
+        Sims4ResourceExplorer.Preview.SimRender.SimBondMorpher.ApplyBond(
+            rig, positions, blendIndices, blendWeights, meshBoneHashes,
+            new[] { adjustment }, bondWeight: 1f);
+
+        // Vertex started at Y=2, bone pivot at Y=1, so centred Y=1. After 0.5 scale,
+        // centred = 0.5, then add pivot back → final Y = 1.5.
+        Assert.Equal(0f, positions[0].X, precision: 5);
+        Assert.Equal(1.5f, positions[0].Y, precision: 5);
+        Assert.Equal(0f, positions[0].Z, precision: 5);
+    }
+
+    [Fact]
+    public void SimBondMorpher_ZeroBondWeight_LeavesVerticesUnchanged()
+    {
+        var rig = BuildTwoBoneTestRig();
+        var positions = new[] { new System.Numerics.Vector3(0, 2, 0) };
+        var blendIndices = new[] { new byte[] { 1, 0, 0, 0 } };
+        var blendWeights = new[] { new byte[] { 255, 0, 0, 0 } };
+        var meshBoneHashes = new uint[] { 0x0000_0001u, 0xC000_0001u };
+
+        var adjustment = new Sims4ResourceExplorer.Core.SimBondAdjustment(
+            BoneHash: 0xC000_0001u,
+            LocalOffset: new System.Numerics.Vector3(99, 99, 99),
+            LocalScale: new System.Numerics.Vector3(99, 99, 99),
+            LocalRotation: System.Numerics.Quaternion.Identity);
+
+        Sims4ResourceExplorer.Preview.SimRender.SimBondMorpher.ApplyBond(
+            rig, positions, blendIndices, blendWeights, meshBoneHashes,
+            new[] { adjustment }, bondWeight: 0f);
+
+        Assert.Equal(0f, positions[0].X);
+        Assert.Equal(2f, positions[0].Y);
+        Assert.Equal(0f, positions[0].Z);
+    }
+
+    [Fact]
+    public void SimBondMorpher_DescendantBoneWeight_AppliesAdjustmentToAncestorAdjustment()
+    {
+        // Three-bone chain: root → mid → tip. Vertex weighted 100% to TIP. Apply
+        // a translation adjustment to the MID bone — TS4SimRipper's BoneMorpher
+        // walks descendants, so the vertex weighted to TIP receives a contribution
+        // from MID's adjustment. (RIG.GetDescendants line 206-216.)
+        var rig = BuildThreeBoneChainTestRig();
+        var positions = new[] { new System.Numerics.Vector3(0, 2, 0) }; // at tip
+        var blendIndices = new[] { new byte[] { 2, 0, 0, 0 } }; // index 2 = tip
+        var blendWeights = new[] { new byte[] { 255, 0, 0, 0 } };
+        var meshBoneHashes = new uint[] { 0x0000_0001u, 0xC000_0001u, 0xD000_0001u };
+
+        var midAdjustment = new Sims4ResourceExplorer.Core.SimBondAdjustment(
+            BoneHash: 0xC000_0001u, // mid
+            LocalOffset: new System.Numerics.Vector3(0.3f, 0, 0),
+            LocalScale: System.Numerics.Vector3.Zero,
+            LocalRotation: System.Numerics.Quaternion.Identity);
+
+        Sims4ResourceExplorer.Preview.SimRender.SimBondMorpher.ApplyBond(
+            rig, positions, blendIndices, blendWeights, meshBoneHashes,
+            new[] { midAdjustment }, bondWeight: 1f);
+
+        // Even though vertex is weighted to tip, the descendants-walk includes tip
+        // as a descendant of mid → contribution applies. Translation only, so the
+        // vertex moves +0.3 in X.
+        Assert.Equal(0.3f, positions[0].X, precision: 5);
+        Assert.Equal(2f, positions[0].Y, precision: 5);
+    }
+
+    /// <summary>Builds a synthetic two-bone rig: root at (0,0,0), child at (0,1,0) world.</summary>
+    private static Sims4ResourceExplorer.Preview.SimRender.SimRig BuildTwoBoneTestRig()
+    {
+        const uint rootHash = 0x0000_0001u;
+        const uint childHash = 0xC000_0001u;
+        var bones = new[]
+        {
+            new Sims4ResourceExplorer.Preview.Ts4RigBone("root",  rootHash,  ParentIndex: -1, Position: new System.Numerics.Vector3(0,0,0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One, ParentHash: null),
+            new Sims4ResourceExplorer.Preview.Ts4RigBone("child", childHash, ParentIndex: 0,  Position: new System.Numerics.Vector3(0,1,0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One, ParentHash: rootHash),
+        };
+        var parsed = new Sims4ResourceExplorer.Preview.Ts4RigResource { Bones = bones };
+        return Sims4ResourceExplorer.Preview.SimRender.SimRigLoader.BuildSimRig(parsed, "twoBoneTest", 0xDEADBEEFul);
+    }
+
+    /// <summary>Builds a synthetic three-bone chain: root → mid → tip, each +1Y from parent.</summary>
+    private static Sims4ResourceExplorer.Preview.SimRender.SimRig BuildThreeBoneChainTestRig()
+    {
+        const uint rootHash = 0x0000_0001u;
+        const uint midHash  = 0xC000_0001u;
+        const uint tipHash  = 0xD000_0001u;
+        var bones = new[]
+        {
+            new Sims4ResourceExplorer.Preview.Ts4RigBone("root", rootHash, ParentIndex: -1, Position: new System.Numerics.Vector3(0,0,0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One, ParentHash: null),
+            new Sims4ResourceExplorer.Preview.Ts4RigBone("mid",  midHash,  ParentIndex: 0,  Position: new System.Numerics.Vector3(0,1,0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One, ParentHash: rootHash),
+            new Sims4ResourceExplorer.Preview.Ts4RigBone("tip",  tipHash,  ParentIndex: 1,  Position: new System.Numerics.Vector3(0,1,0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One, ParentHash: midHash),
+        };
+        var parsed = new Sims4ResourceExplorer.Preview.Ts4RigResource { Bones = bones };
+        return Sims4ResourceExplorer.Preview.SimRender.SimRigLoader.BuildSimRig(parsed, "threeBoneChainTest", 0xDEADBEEFul);
+    }
+
+    [Fact]
+    public void SimRigLoader_BuildSimRig_ComputesWorldBindPosesViaParentWalk()
+    {
+        // Three-bone synthetic rig: root → child A → child B (each at +Y=1 in local space).
+        // World Y for root=0, A=1, B=2. Verifies parent-walk accumulation.
+        const uint rootHash = 0x0000_0001u;
+        const uint childAHash = 0xA000_0001u;
+        const uint childBHash = 0xB000_0001u;
+
+        var raw = new List<Sims4ResourceExplorer.Preview.Ts4RigBone>
+        {
+            new("root", rootHash, ParentIndex: -1, Position: new System.Numerics.Vector3(0, 0, 0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One),
+            new("childA", childAHash, ParentIndex: 0, Position: new System.Numerics.Vector3(0, 1, 0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One),
+            new("childB", childBHash, ParentIndex: 1, Position: new System.Numerics.Vector3(0, 1, 0), Rotation: System.Numerics.Quaternion.Identity, Scale: System.Numerics.Vector3.One),
+        };
+        // Apply the parent-hash backfill the parser does post-load.
+        for (var i = 0; i < raw.Count; i++)
+        {
+            raw[i] = raw[i] with { ParentHash = raw[i].ParentIndex >= 0 ? raw[raw[i].ParentIndex].NameHash : null };
+        }
+        var parsed = new Sims4ResourceExplorer.Preview.Ts4RigResource { Bones = raw };
+
+        var rig = Sims4ResourceExplorer.Preview.SimRender.SimRigLoader.BuildSimRig(parsed, "testRig", 0xDEADBEEFul);
+
+        Assert.Equal(3, rig.Bones.Count);
+        Assert.True(rig.WorldBindPoseByHash.ContainsKey(rootHash));
+        // World Y for each bone = sum of LocalPosition.Y up the chain (no rotations/scales, so M42 = world Y).
+        Assert.Equal(0f, rig.WorldBindPoseByHash[rootHash].M42, precision: 5);
+        Assert.Equal(1f, rig.WorldBindPoseByHash[childAHash].M42, precision: 5);
+        Assert.Equal(2f, rig.WorldBindPoseByHash[childBHash].M42, precision: 5);
+    }
+
     [Fact]
     public void CanonicalBaselineBodyParts_PicksAdultFemale()
     {
@@ -10198,6 +10458,111 @@ public sealed class ExplorerTests : IDisposable
         var pickTop = topType.GetMethod("PickTop", BindingFlags.Public | BindingFlags.Static)!;
         Assert.Null((ulong?)pickTop.Invoke(null, [null, "Female"]));
         Assert.Null((ulong?)pickTop.Invoke(null, ["Unknown", "Female"]));
+    }
+
+    [Fact]
+    public void Ts4SimInfoBuilder_BuildHuman_ProducesAdultFemaleWithBaselineOutfit()
+    {
+        var builderType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4SimInfoBuilder", throwOnError: true)!;
+        var buildHuman = builderType.GetMethod("BuildHuman", BindingFlags.Public | BindingFlags.Static)!;
+
+        var info = buildHuman.Invoke(null, ["Adult", "Female", 0ul])!;
+        var infoType = info.GetType();
+
+        Assert.Equal((uint)1, (uint)infoType.GetProperty("SpeciesValue")!.GetValue(info)!);
+        Assert.Equal((uint)0x20, (uint)infoType.GetProperty("AgeFlags")!.GetValue(info)!);
+        Assert.Equal((uint)0x2000, (uint)infoType.GetProperty("GenderFlags")!.GetValue(info)!);
+        Assert.Equal("Human", (string)infoType.GetProperty("SpeciesLabel")!.GetValue(info)!);
+        Assert.Equal("Adult", (string)infoType.GetProperty("AgeLabel")!.GetValue(info)!);
+        Assert.Equal("Female", (string)infoType.GetProperty("GenderLabel")!.GetValue(info)!);
+        Assert.Equal((ulong)0ul, (ulong)infoType.GetProperty("SkintoneInstance")!.GetValue(info)!);
+
+        Assert.Equal(1, (int)infoType.GetProperty("OutfitCategoryCount")!.GetValue(info)!);
+        Assert.Equal(1, (int)infoType.GetProperty("OutfitEntryCount")!.GetValue(info)!);
+        Assert.Equal(4, (int)infoType.GetProperty("OutfitPartCount")!.GetValue(info)!);
+
+        var outfitParts = (System.Collections.IEnumerable)infoType.GetProperty("OutfitParts")!.GetValue(info)!;
+        var partInstances = new List<(uint BodyType, ulong PartInstance)>();
+        foreach (var part in outfitParts)
+        {
+            var pt = part.GetType();
+            partInstances.Add((
+                (uint)pt.GetProperty("BodyType")!.GetValue(part)!,
+                (ulong)pt.GetProperty("PartInstance")!.GetValue(part)!));
+        }
+
+        Assert.Contains((3u, 0x0000000000001B41ul), partInstances); // yfHead
+        Assert.Contains((6u, 0x000000000000198Cul), partInstances); // yfTop_Nude
+        Assert.Contains((7u, 0x0000000000001990ul), partInstances); // yfBottom_Nude
+        Assert.Contains((8u, 0x000000000000198Ful), partInstances); // yfShoes_Nude
+    }
+
+    [Fact]
+    public void Ts4SimInfoBuilder_BuildHuman_HandlesAllSevenAges()
+    {
+        var builderType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4SimInfoBuilder", throwOnError: true)!;
+        var buildHuman = builderType.GetMethod("BuildHuman", BindingFlags.Public | BindingFlags.Static)!;
+
+        var ages = new (string Label, uint ExpectedFlag)[]
+        {
+            ("Infant", 0x80u),
+            ("Toddler", 0x02u),
+            ("Child", 0x04u),
+            ("Teen", 0x08u),
+            ("Young Adult", 0x10u),
+            ("Adult", 0x20u),
+            ("Elder", 0x40u)
+        };
+
+        foreach (var (label, expectedFlag) in ages)
+        {
+            var info = buildHuman.Invoke(null, [label, "Female", 0ul])!;
+            var ageFlags = (uint)info.GetType().GetProperty("AgeFlags")!.GetValue(info)!;
+            Assert.Equal(expectedFlag, ageFlags);
+
+            var partCount = (int)info.GetType().GetProperty("OutfitPartCount")!.GetValue(info)!;
+            Assert.True(partCount >= 3, $"Age '{label}' produced only {partCount} outfit parts; expected >=3 (Head + Top + Bottom).");
+        }
+    }
+
+    [Fact]
+    public void Ts4SimInfoBuilder_BuildHuman_PreservesSkintoneInstance()
+    {
+        var builderType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4SimInfoBuilder", throwOnError: true)!;
+        var buildHuman = builderType.GetMethod("BuildHuman", BindingFlags.Public | BindingFlags.Static)!;
+
+        var info = buildHuman.Invoke(null, ["Adult", "Male", 0x123456789ABCDEF0ul])!;
+        Assert.Equal((ulong)0x123456789ABCDEF0ul, (ulong)info.GetType().GetProperty("SkintoneInstance")!.GetValue(info)!);
+    }
+
+    [Fact]
+    public void Ts4SimInfoBuilder_SyntheticFullInstance_IsDeterministicAndDistinctPerTuple()
+    {
+        var builderType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4SimInfoBuilder", throwOnError: true)!;
+        var synth = builderType.GetMethod("SyntheticFullInstance", BindingFlags.Public | BindingFlags.Static)!;
+
+        var adultFemale = (ulong)synth.Invoke(null, ["Adult", "Female"])!;
+        var adultFemaleRepeat = (ulong)synth.Invoke(null, ["Adult", "Female"])!;
+        var adultMale = (ulong)synth.Invoke(null, ["Adult", "Male"])!;
+        var teenFemale = (ulong)synth.Invoke(null, ["Teen", "Female"])!;
+
+        Assert.Equal(adultFemale, adultFemaleRepeat);
+        Assert.NotEqual(adultFemale, adultMale);
+        Assert.NotEqual(adultFemale, teenFemale);
+        Assert.NotEqual(adultMale, teenFemale);
+        Assert.NotEqual(0ul, adultFemale);
+    }
+
+    [Fact]
+    public void Ts4SimInfoBuilder_BuildHuman_UnknownAgeProducesEmptyOutfit()
+    {
+        var builderType = typeof(ExplicitAssetGraphBuilder).Assembly.GetType("Sims4ResourceExplorer.Assets.Ts4SimInfoBuilder", throwOnError: true)!;
+        var buildHuman = builderType.GetMethod("BuildHuman", BindingFlags.Public | BindingFlags.Static)!;
+
+        var info = buildHuman.Invoke(null, ["NotAnAge", "Female", 0ul])!;
+        Assert.Equal(0, (int)info.GetType().GetProperty("OutfitCategoryCount")!.GetValue(info)!);
+        Assert.Equal(0, (int)info.GetType().GetProperty("OutfitPartCount")!.GetValue(info)!);
+        Assert.Equal((uint)0u, (uint)info.GetType().GetProperty("AgeFlags")!.GetValue(info)!);
     }
 
     [Fact]

@@ -28,3 +28,4 @@ tmp_*.cs
 junk/local-artifacts/
 docs/references/external/Binary-Templates/
 docs/references/external/TS4SimRipper/
+.claude/

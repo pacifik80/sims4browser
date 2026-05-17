@@ -34,22 +34,32 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     // identical, so we can't distinguish them by bone-overlap alone. They differ only in
     // bind-pose POSITIONS (child rigs are smaller/lower than adult rigs). The Sim's age
     // is the only signal that says which to pick. MainViewModel sets this scope before
-    // each per-layer scene build via `BeginSimAgeScope("Child")` etc.
+    // each per-layer scene build via `BeginSimAgeScope("Child", "Cat")` etc.
+    // Build 0276: extended with species so child dog → cdRig (not ccRig). All pet rigs
+    // share bones, so without species the same age-prefix wins regardless of species.
     private static readonly AsyncLocal<string?> ambientSimAgeHint = new();
+    private static readonly AsyncLocal<string?> ambientSimSpeciesHint = new();
 
-    public static IDisposable BeginSimAgeScope(string? ageLabel)
+    public static IDisposable BeginSimAgeScope(string? ageLabel, string? speciesLabel = null)
     {
-        var previous = ambientSimAgeHint.Value;
+        var previousAge = ambientSimAgeHint.Value;
+        var previousSpecies = ambientSimSpeciesHint.Value;
         ambientSimAgeHint.Value = ageLabel;
-        return new SimAgeScopeReset(previous);
+        ambientSimSpeciesHint.Value = speciesLabel;
+        return new SimAgeScopeReset(previousAge, previousSpecies);
     }
 
-    private sealed class SimAgeScopeReset(string? previous) : IDisposable
+    private sealed class SimAgeScopeReset(string? previousAge, string? previousSpecies) : IDisposable
     {
-        public void Dispose() => ambientSimAgeHint.Value = previous;
+        public void Dispose()
+        {
+            ambientSimAgeHint.Value = previousAge;
+            ambientSimSpeciesHint.Value = previousSpecies;
+        }
     }
 
     internal static string? CurrentSimAgeHint => ambientSimAgeHint.Value;
+    internal static string? CurrentSimSpeciesHint => ambientSimSpeciesHint.Value;
 
     private sealed class SceneBuildTimings
     {

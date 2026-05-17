@@ -37,9 +37,14 @@ public partial class App : Application
                 services.AddSingleton<IResourceCatalogService, LlamaResourceCatalogService>();
                 services.AddSingleton<IResourceMetadataEnrichmentService, ResourceMetadataEnrichmentService>();
                 services.AddSingleton<IAssetGraphBuilder, ExplicitAssetGraphBuilder>();
+                services.AddSingleton<ISyntheticSimService, SyntheticSimService>();
                 services.AddSingleton<BondMorphResolver>();
                 services.AddSingleton<DeformerMapResolver>();
                 services.AddSingleton<BlendGeometryResolver>();
+                // Build 0289 — sim character pipeline rewrite step 5b. SimRigLoader caches
+                // parsed rigs across calls; singleton lifecycle keeps the cache warm for the
+                // whole session.
+                services.AddSingleton<Sims4ResourceExplorer.Preview.SimRender.SimRigLoader>();
                 services.AddSingleton<ITextureDecodeService, BasicTextureDecodeService>();
                 services.AddSingleton<BuildBuySceneBuildService>();
                 services.AddSingleton<CachedSceneBuildService>(static sp =>
@@ -53,6 +58,8 @@ public partial class App : Application
                 services.AddSingleton<PackageIndexCoordinator>();
                 services.AddSingleton<MainViewModel>();
                 services.AddTransient<MainWindow>();
+                services.AddTransient<SimConstructorViewModel>();
+                services.AddTransient<SimConstructorWindow>();
             })
             .Build();
     }

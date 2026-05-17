@@ -124,6 +124,7 @@ public sealed partial class MainWindow : Window
         await dialog.WaitForCloseAsync();
     }
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshActiveBrowserAsync();
+    private void SimConstructor_Click(object sender, RoutedEventArgs e) => App.GetRequiredService<SimConstructorWindow>().Activate();
     private async void LoadMore_Click(object sender, RoutedEventArgs e) => await ViewModel.LoadMoreAsync();
     private async void ResetFilters_Click(object sender, RoutedEventArgs e) => await ViewModel.ResetActiveFiltersAsync();
     private async void RemoveFilterChip_Click(object sender, RoutedEventArgs e)
@@ -716,7 +717,7 @@ public sealed partial class MainWindow : Window
                 IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex, selectedSlot),
                 CullMode = SharpDX.Direct3D11.CullMode.None,
                 RenderWireframe = renderMode == SceneRenderMode.Wireframe,
-                WireframeColor = Microsoft.UI.Colors.Yellow
+                WireframeColor = PickWireframeColor(meshIndex)
             });
 
             if (multiPassPlan is not null)
@@ -726,6 +727,31 @@ public sealed partial class MainWindow : Window
         }
 
         ResetSceneCamera(scene);
+    }
+
+    // Build 0273: distinct wireframe color per mesh so the user can visually separate each
+    // submesh in a layered Sim composition (body / head / ears / tail / shoes / etc.) when
+    // viewing in Wireframe mode. Cycle through a high-contrast palette by mesh index.
+    private static readonly Windows.UI.Color[] MeshWireframePalette =
+    [
+        Microsoft.UI.Colors.Yellow,
+        Microsoft.UI.Colors.Cyan,
+        Microsoft.UI.Colors.Magenta,
+        Microsoft.UI.Colors.LightGreen,
+        Microsoft.UI.Colors.Orange,
+        Microsoft.UI.Colors.HotPink,
+        Microsoft.UI.Colors.LightSkyBlue,
+        Microsoft.UI.Colors.Khaki,
+        Microsoft.UI.Colors.MediumPurple,
+        Microsoft.UI.Colors.Coral,
+        Microsoft.UI.Colors.Aquamarine,
+        Microsoft.UI.Colors.Gold,
+    ];
+
+    private static Windows.UI.Color PickWireframeColor(int meshIndex)
+    {
+        var index = ((meshIndex % MeshWireframePalette.Length) + MeshWireframePalette.Length) % MeshWireframePalette.Length;
+        return MeshWireframePalette[index];
     }
 
     private static MaterialPlan? TryBuildMultiPassPlan(CanonicalMaterial? material, SceneRenderMode renderMode)

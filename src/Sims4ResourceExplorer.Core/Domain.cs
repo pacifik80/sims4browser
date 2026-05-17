@@ -788,6 +788,27 @@ public sealed record SimBoneMorphAdjustment(
     float OffsetZ,
     float Weight = 1f);
 
+/// <summary>
+/// Build 0289 — full TRS bone adjustment from a BOND resource. Replaces the
+/// translation-only <see cref="SimBoneMorphAdjustment"/> for the new pipeline.
+/// Local-frame scale + offset + rotation; consumer (SimBondMorpher) converts to
+/// world frame using the parent bone's world rotation.
+/// </summary>
+public readonly record struct SimBondAdjustment(
+    uint BoneHash,
+    System.Numerics.Vector3 LocalOffset,
+    System.Numerics.Vector3 LocalScale,
+    System.Numerics.Quaternion LocalRotation);
+
+/// <summary>
+/// Build 0289 — one BOND morph: a list of per-bone TRS adjustments plus a global
+/// weight (typically the SimInfo modifier value, 0..1). Multiple BOND morphs
+/// accumulate their effects when applied in sequence.
+/// </summary>
+public sealed record SimBondMorph(
+    IReadOnlyList<SimBondAdjustment> Adjustments,
+    float Weight);
+
 public sealed record Bounds3D(float MinX, float MinY, float MinZ, float MaxX, float MaxY, float MaxZ);
 
 public enum SceneBuildStatus
@@ -1035,7 +1056,20 @@ public static class SimBodyAssemblyPolicy
         if (labels.Contains("Top") && labels.Contains("Bottom"))
         {
             var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Top", "Bottom" };
-            if (preferredShell is not null)
+            // Build 0283: do NOT add the Full Body / Body shell as an underlay when Top +
+            // Bottom overlays are both present for humans. Per docs/workflows/visual-
+            // verification-findings-build0238.md: "EA does not ship a Full Body Nude
+            // CASPart. TS4 the game itself never renders a Sim with *_Nude Top + *_Nude
+            // Bottom alone — the engine ALWAYS overlays clothing." Every shipping Body-
+            // Type=5 CASPart with DefaultForBodyType*=1 is a clothing item (Bathrobe,
+            // RobeCalf, Overalls), and forcing one in as an underlay produced visible
+            // junk wherever the overlays didn't perfectly cover (kimono sleeves on YA
+            // male's bicep, kimono hem at toddler's ankles, dress-female torso overlay).
+            // Animals retain the shell-with-Head/Ears/Tail path below since they don't
+            // hit this Top+Bottom branch (they have Body + Head + Ears + Tail, not
+            // outfit-style overlays). For Sims with a Full-Body-only outfit and no
+            // Top/Bottom overlays, the FullBodyShell branch further down still fires.
+            if (preferredShell is not null && isAnimal)
             {
                 active.Add(preferredShell);
             }

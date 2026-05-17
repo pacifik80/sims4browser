@@ -1200,7 +1200,15 @@ public static class SimSceneComposer
             }
 
             var routes = new List<SimAssemblySkintoneMaterialRouteData>();
-            foreach (var target in ResolveRegionMapAwareSkintoneTargets(payloadData, bodyRegionMaps, headRegionMaps))
+            // Build 0280: pass an "isAnimal" flag through so the route resolver only
+            // creates fallback (no-region-map) targets for animal sims. For humans, the
+            // build 0279 fallback was attaching the SkinBlender atlas to the canonical
+            // Full Body shell mesh — which renders as an extra body-shaped layer over
+            // the proper Top/Bottom/Shoes meshes, causing the "weird piece on left arm"
+            // and "head missing" issues the user reported. Animal Sims don't have this
+            // issue because they don't carry a Top/Bottom/Shoes outfit set.
+            var isAnimalSim = string.IsNullOrWhiteSpace(skintoneRender.SkintoneInstanceHex);
+            foreach (var target in ResolveRegionMapAwareSkintoneTargets(payloadData, bodyRegionMaps, headRegionMaps, isAnimalSim))
             {
                 var material = payloadData.MergedMaterials[target.MaterialIndex];
                 var isBodyShellTarget = target.SourceLabel.Contains("Body shell", StringComparison.OrdinalIgnoreCase) &&
@@ -1245,17 +1253,28 @@ public static class SimSceneComposer
     private static IReadOnlyList<SimAssemblySkintoneMaterialTargetData> ResolveRegionMapAwareSkintoneTargets(
         SimAssemblyPayloadData payloadData,
         IReadOnlyList<CasRegionMapSummary>? bodyRegionMaps,
-        IReadOnlyList<CasRegionMapSummary>? headRegionMaps)
+        IReadOnlyList<CasRegionMapSummary>? headRegionMaps,
+        bool isAnimalSim)
     {
         var targets = new List<SimAssemblySkintoneMaterialTargetData>();
         foreach (var batch in payloadData.MeshBatches)
         {
-            var regionMaps = batch.SourceLabel.StartsWith("Body shell", StringComparison.OrdinalIgnoreCase)
+            var isBodyBatch = batch.SourceLabel.StartsWith("Body shell", StringComparison.OrdinalIgnoreCase);
+            var isHeadBatch = batch.SourceLabel.StartsWith("Head shell", StringComparison.OrdinalIgnoreCase);
+            var regionMaps = isBodyBatch
                 ? bodyRegionMaps ?? []
-                : batch.SourceLabel.StartsWith("Head shell", StringComparison.OrdinalIgnoreCase)
+                : isHeadBatch
                     ? headRegionMaps ?? []
                     : [];
-            if (regionMaps.Count == 0)
+            // Build 0280: only allow body/head batches without region maps to fall through
+            // for animal sims. Animal CASParts (acHead/acEarsUp/acTailLong) don't carry any
+            // region_map resources, so without this fallback animals would get no skintone
+            // routing and render with the bundled species base PNG never attached.
+            // For humans, the no-region-map fallback added in 0279 caused the canonical
+            // Full Body shell mesh to receive the SkinBlender atlas, layering an extra
+            // body-shaped mesh OVER the proper Top/Bottom/Shoes outfit — manifesting as
+            // "missing head" / "weird piece on left arm" / "asymmetric face deform".
+            if (regionMaps.Count == 0 && (!isAnimalSim || (!isBodyBatch && !isHeadBatch)))
             {
                 continue;
             }

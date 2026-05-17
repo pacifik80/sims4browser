@@ -11,4 +11,16 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- Build 0277: bundled species base PNGs from TS4SimRipper (GPL). EA's animal
+       "diffuse" textures are intentionally blank-white because the actual fur color
+       comes from a layered shader composing pelt-layer textures over a species-specific
+       base. We don't decode the per-pelt L8 RLE masks yet, but using these UV-mapped
+       grayscale base PNGs as the diffuse gives cats/dogs/horses recognisable fur
+       patterns instead of featureless white silhouettes. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\CatSkin.png" />
+    <EmbeddedResource Include="Resources\DogSkin.png" />
+    <EmbeddedResource Include="Resources\HorseSkin.png" />
+  </ItemGroup>
+
 </Project>

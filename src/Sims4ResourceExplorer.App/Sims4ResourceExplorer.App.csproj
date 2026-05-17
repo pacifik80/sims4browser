@@ -4,7 +4,7 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>Sims4ResourceExplorer.App</RootNamespace>
-    <BuildNumber>0272</BuildNumber>
+    <BuildNumber>0289</BuildNumber>
     <Version>0.0.$(BuildNumber)</Version>
     <FileVersion>0.0.0.$(BuildNumber)</FileVersion>
     <InformationalVersion>build-$(BuildNumber)</InformationalVersion>
@@ -35,6 +35,15 @@
     <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
     <Content Include="Assets\StoreLogo.png" />
     <Content Include="Assets\AppIcon.ico" />
+    <!-- Build 0277: bundled species base skins from TS4SimRipper (GPL-licensed). EA's
+         animal "diffuse" textures are intentionally blank-white because the actual fur
+         color comes from a layered shader composing pelt-layer textures over a species-
+         specific base. We don't have the L8 RLE decoder for per-pelt masks yet, but we
+         CAN use these UV-mapped grayscale base PNGs as the diffuse to give cats/dogs/
+         horses a recognisable fur pattern instead of a featureless white silhouette. -->
+    <Content Include="Assets\CatSkin.png" />
+    <Content Include="Assets\DogSkin.png" />
+    <Content Include="Assets\HorseSkin.png" />
     <Content Include="Assets\Wide310x150Logo.png" />
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
   </ItemGroup>

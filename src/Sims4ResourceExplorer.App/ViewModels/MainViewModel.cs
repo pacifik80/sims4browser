@@ -27,6 +27,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IPreviewService previewService;
     private readonly CachedSceneBuildService cachedSceneBuildService;
     private readonly BondMorphResolver bondMorphResolver;
+    private readonly Sims4ResourceExplorer.Preview.SimRender.SimRigLoader simRigLoader;
     private readonly DeformerMapResolver deformerMapResolver;
     private readonly BlendGeometryResolver blendGeometryResolver;
     private readonly IRawExportService rawExportService;
@@ -102,6 +103,7 @@ public sealed partial class MainViewModel : ObservableObject
         IPreviewService previewService,
         CachedSceneBuildService cachedSceneBuildService,
         BondMorphResolver bondMorphResolver,
+        Sims4ResourceExplorer.Preview.SimRender.SimRigLoader simRigLoader,
         DeformerMapResolver deformerMapResolver,
         BlendGeometryResolver blendGeometryResolver,
         IRawExportService rawExportService,
@@ -120,6 +122,7 @@ public sealed partial class MainViewModel : ObservableObject
         this.previewService = previewService;
         this.cachedSceneBuildService = cachedSceneBuildService;
         this.bondMorphResolver = bondMorphResolver;
+        this.simRigLoader = simRigLoader;
         this.deformerMapResolver = deformerMapResolver;
         this.blendGeometryResolver = blendGeometryResolver;
         this.rawExportService = rawExportService;
@@ -1064,7 +1067,8 @@ public sealed partial class MainViewModel : ObservableObject
         // so the compiler keeps tracking `selectedAssetGraph.SimGraph` non-null status
         // through the rest of the method.
         var simAgeForRigPicker = selectedAssetGraph is { SimGraph: { } sg } ? sg.Metadata.AgeLabel : null;
-        using var _simAgeScope = BuildBuySceneBuildService.BeginSimAgeScope(simAgeForRigPicker);
+        var simSpeciesForRigPicker = selectedAssetGraph is { SimGraph: { } sg2 } ? sg2.Metadata.SpeciesLabel : null;
+        using var _simAgeScope = BuildBuySceneBuildService.BeginSimAgeScope(simAgeForRigPicker, simSpeciesForRigPicker);
 
         for (var familyIndex = 0; familyIndex < preferredBodyFamilies.Count; familyIndex++)
         {
@@ -1183,17 +1187,43 @@ public sealed partial class MainViewModel : ObservableObject
         // Build 0249: also resolve + apply DMap (DeformerMap) shape morphs — these drive face
         // shape changes via per-vertex UV1 sampling and are what the v21 Adult Female SimInfo's
         // 38 modifiers actually use (their SMODs are DMap-only, no BOND).
+        // Build 0289: legacy bondAdjustments (offset-only) is kept for backward compat in
+        // any callers that still reference it; the rewritten pipeline below uses
+        // simBondMorphs (full TRS per the SimBondMorpher rewrite).
         IReadOnlyList<SimBoneMorphAdjustment> bondAdjustments = [];
+        IReadOnlyList<SimBondMorph> simBondMorphs = [];
+        Sims4ResourceExplorer.Preview.SimRender.SimRig? simRig = null;
         IReadOnlyList<Sims4ResourceExplorer.Packages.Ts4SimDeformerMorph> dmapMorphs = [];
         IReadOnlyList<Sims4ResourceExplorer.Packages.Ts4SimBlendGeometryMorph> bgeoMorphs = [];
         try
         {
-            bondAdjustments = await bondMorphResolver
-                .ResolveAsync(selectedAssetGraph.SimGraph.SimInfoResource, cancellationToken)
+            // Build 0289: prefer the TRS-preserving resolver. Legacy resolution kept for any
+            // callers that still consume bondAdjustments downstream (none in the morph path).
+            simBondMorphs = await bondMorphResolver
+                .ResolveSimBondMorphsAsync(selectedAssetGraph.SimGraph.SimInfoResource, cancellationToken)
                 .ConfigureAwait(true);
-            if (bondAdjustments.Count > 0)
+            var totalAdjustments = simBondMorphs.Sum(m => m.Adjustments.Count);
+            if (simBondMorphs.Count > 0)
             {
-                previewDiagnostics.Add($"BOND morph: resolved {bondAdjustments.Count:N0} bone adjustment(s) from SimInfo body/face modifiers.");
+                previewDiagnostics.Add($"BOND morph: resolved {simBondMorphs.Count:N0} morph(s) with {totalAdjustments:N0} per-bone TRS adjustment(s) from SimInfo body/face modifiers.");
+            }
+
+            // Resolve the canonical rig once for the sim. SimBondSceneMorpher needs the rig's
+            // bind-pose world transforms to convert local-frame BOND adjustments to world frame.
+            var meta = selectedAssetGraph.SimGraph.Metadata;
+            var rigResolution = Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve(meta.SpeciesLabel, meta.AgeLabel, occultLabel: null);
+            if (rigResolution is { } rigInfo)
+            {
+                var installHint = selectedAssetGraph.SimGraph.SimInfoResource.PackagePath;
+                simRig = await simRigLoader.LoadAsync(rigInfo.InstanceHash, rigInfo.Name, installHint, cancellationToken).ConfigureAwait(true);
+                if (simRig is null)
+                {
+                    previewDiagnostics.Add($"BOND morph: rig {rigInfo.Name} (0x{rigInfo.InstanceHash:X16}) failed to load — morphs will be skipped.");
+                }
+            }
+            else
+            {
+                previewDiagnostics.Add($"BOND morph: no canonical rig for ({meta.SpeciesLabel}, {meta.AgeLabel}) — morphs will be skipped.");
             }
         }
         catch (Exception ex)
@@ -1235,16 +1265,20 @@ public sealed partial class MainViewModel : ObservableObject
         {
             if (source is null || source.Scene is null) return source!;
             var working = source;
-            if (bondAdjustments.Count > 0)
+            // Build 0289: SimBondSceneMorpher applies BOND morphs vertex-by-vertex with full
+            // TRS per TS4SimRipper's GEOM.BoneMorpher math. Replaces the legacy BondMorpher
+            // which applied translation only and modified scene bones (which had no effect on
+            // non-animated rendering).
+            if (simBondMorphs.Count > 0 && simRig is not null)
             {
                 try
                 {
-                    var morphed = BondMorpher.MorphScene(working.Scene!, bondAdjustments, previewDiagnostics);
+                    var morphed = Sims4ResourceExplorer.Preview.SimRender.SimBondSceneMorpher.MorphScene(working.Scene!, simRig, simBondMorphs, previewDiagnostics);
                     working = working with { Scene = morphed };
                 }
                 catch (Exception ex)
                 {
-                    previewDiagnostics.Add($"BOND morph application failed: {ex.Message}");
+                    previewDiagnostics.Add($"SimBondSceneMorpher application failed: {ex.Message}");
                 }
             }
             if (dmapMorphs.Count > 0)
@@ -1583,8 +1617,22 @@ public sealed partial class MainViewModel : ObservableObject
             asset.RootKey.FullTgi.Equals(option.RootTgi, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string BuildSimBodyCandidateCacheKey(string? packagePath, string? rootTgi, Guid assetId) =>
-        $"{packagePath ?? string.Empty}|{rootTgi ?? string.Empty}|{assetId:D}";
+    // Build 0275: include the current Sim's age in the candidate cache key. The previous
+    // cache key (PackagePath|RootTgi|AssetId) was age-blind, so when a CASPart is shared
+    // across ages — most importantly the cat ears `acEarsUp`, cat tail `acTailLong`, and
+    // similar pet body parts — opening an Adult cat first cached the ENTIRE preview
+    // (including the bind-corrected scene built with acRig). Opening a Child cat next
+    // hit the cache and returned the adult-positioned scene, bypassing the
+    // CachedSceneBuildService's age key (build 0271) and my rig-resolver age scope (0270)
+    // entirely. Symptom: child cat ears + tail floated above the smaller child body.
+    // Including the age in this outer cache forces a separate slot per age.
+    private string BuildSimBodyCandidateCacheKey(string? packagePath, string? rootTgi, Guid assetId)
+    {
+        var ageSuffix = selectedAssetGraph is { SimGraph: { } sg } && !string.IsNullOrWhiteSpace(sg.Metadata.AgeLabel)
+            ? $"|age={sg.Metadata.AgeLabel}"
+            : string.Empty;
+        return $"{packagePath ?? string.Empty}|{rootTgi ?? string.Empty}|{assetId:D}{ageSuffix}";
+    }
 
     private async Task<IReadOnlyList<ResourceMetadata>> GetSimBodyPackageInstanceResourcesAsync(
         string packagePath,

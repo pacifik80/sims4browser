@@ -105,6 +105,144 @@ if (args.Length > 0 && string.Equals(args[0], "--inspect-resource", StringCompar
     return await InspectResourceAsync(packagePathToInspect, resourceTgiToInspect);
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--probe-cas-lods", StringComparison.OrdinalIgnoreCase))
+{
+    // Parses a CASPart and dumps its Lods table: for each LOD entry shows Level + which
+    // TgiList indices it references + each referenced GEOM's size in bytes. Lets us see
+    // why ResolveCasLodResourcesAsync's "first LOD with geometry" loop picks a stub mesh
+    // for yfHead (build 0281 investigation: female YA head renders as ~96-vertex stub).
+    var clSearchRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    if (args.Length < 3) { Console.Error.WriteLine("Usage: --probe-cas-lods <searchRoot> <caspartTgi> [<caspartTgi> ...]"); return 1; }
+    var clTargets = args.Skip(2).ToArray();
+
+    var clCat = new LlamaResourceCatalogService();
+    var clSrc = new DataSourceDefinition(Guid.NewGuid(), "ProbeCasLods", clSearchRoot, SourceKind.Game);
+    var clPkgs = Directory.EnumerateFiles(clSearchRoot, "*.package", SearchOption.AllDirectories)
+        .OrderBy(static p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+
+    Console.WriteLine($"  scanning {clPkgs.Length} package(s)...");
+    var caspartByTgi = new Dictionary<string, (string Pkg, ResourceKeyRecord Key)>(StringComparer.OrdinalIgnoreCase);
+    var resourceByTgi = new Dictionary<string, (string Pkg, ResourceKeyRecord Key, long? UncompressedSize, long? CompressedSize)>(StringComparer.OrdinalIgnoreCase);
+    foreach (var pkg in clPkgs)
+    {
+        try
+        {
+            var s = await clCat.ScanPackageAsync(clSrc, pkg, progress: null, CancellationToken.None);
+            foreach (var r in s.Resources)
+            {
+                resourceByTgi.TryAdd(r.Key.FullTgi.ToUpperInvariant(), (pkg, r.Key, r.UncompressedSize, r.CompressedSize));
+                if (r.Key.TypeName == "CASPart")
+                    caspartByTgi.TryAdd(r.Key.FullTgi.ToUpperInvariant(), (pkg, r.Key));
+            }
+        }
+        catch { }
+    }
+
+    foreach (var tgi in clTargets)
+    {
+        Console.WriteLine($"\n=== {tgi} ===");
+        if (!caspartByTgi.TryGetValue(tgi.ToUpperInvariant(), out var loc))
+        {
+            Console.WriteLine($"  CASPart not found.");
+            continue;
+        }
+        try
+        {
+            var bytes = await clCat.GetResourceBytesAsync(loc.Pkg, loc.Key, raw: false, CancellationToken.None, null);
+            var casPart = Ts4CasPart.Parse(bytes);
+            Console.WriteLine($"  InternalName: {casPart.InternalName}");
+            Console.WriteLine($"  TgiList ({casPart.TgiList.Count} entries):");
+            for (var i = 0; i < casPart.TgiList.Count; i++)
+            {
+                var entry = casPart.TgiList[i];
+                if (entry.Type == 0) { Console.WriteLine($"    [{i}] (null)"); continue; }
+                resourceByTgi.TryGetValue(entry.FullTgi.ToUpperInvariant(), out var info);
+                var size = info.UncompressedSize ?? info.CompressedSize;
+                Console.WriteLine($"    [{i}] {entry.FullTgi} (type={entry.TypeName ?? "?"}) size={(size is null ? "?" : $"{size:N0} B")}");
+            }
+            Console.WriteLine($"  Lods ({casPart.Lods.Count} entries):");
+            foreach (var lod in casPart.Lods.OrderBy(l => l.Level))
+            {
+                var idxList = string.Join(",", lod.KeyIndices.Select(i => i.ToString()));
+                Console.WriteLine($"    Level={lod.Level}, KeyIndices=[{idxList}]");
+                foreach (var idx in lod.KeyIndices)
+                {
+                    if (idx >= casPart.TgiList.Count) continue;
+                    var entry = casPart.TgiList[idx];
+                    resourceByTgi.TryGetValue(entry.FullTgi.ToUpperInvariant(), out var info);
+                    var size = info.UncompressedSize ?? info.CompressedSize;
+                    var inSamePackage = string.Equals(info.Pkg, loc.Pkg, StringComparison.OrdinalIgnoreCase);
+                    Console.WriteLine($"      → [{idx}] {entry.FullTgi} (type={entry.TypeName ?? "?"}) size={(size is null ? "?" : $"{size:N0} B")} samePkg={inSamePackage} pkg={(info.Pkg ?? "?")}");
+                }
+            }
+            // Replicate the loader's "load all GEOMs from LODs in Level order" logic to see
+            // exactly what casGraph.GeometryResources would contain after BuildCasGraphAsync.
+            Console.WriteLine($"\n  [LOADER SIMULATION] What BuildCasGraphAsync would put into casGraph.GeometryResources:");
+            var sameInstancePkgGeoms = new List<(ResourceKeyRecord Key, long? Size, string Pkg)>();
+            // Step 1: all GEOM resources in the SAME package as the root CASPart
+            try
+            {
+                var rootPkgScan = await clCat.ScanPackageAsync(clSrc, loc.Pkg, progress: null, CancellationToken.None);
+                foreach (var r in rootPkgScan.Resources)
+                {
+                    if (r.Key.TypeName == "Geometry")
+                        sameInstancePkgGeoms.Add((r.Key, r.UncompressedSize ?? r.CompressedSize, loc.Pkg));
+                }
+            }
+            catch { }
+            // Step 2: Iterate Lods in Level order, ResolveCasLodResources resolves each KeyIndex to its package resource (local or cross-package)
+            var loaded = new List<(string Tgi, long? Size, string Source)>();
+            foreach (var lod in casPart.Lods.OrderBy(l => l.Level))
+            {
+                var lodGeoms = new List<(string Tgi, long? Size, string Source)>();
+                foreach (var idx in lod.KeyIndices)
+                {
+                    if (idx >= casPart.TgiList.Count) continue;
+                    var entry = casPart.TgiList[idx];
+                    if (entry.TypeName != "Geometry") continue;
+                    // Replicate ResolveCasGraphResourceAsync: first try local pkg match
+                    var local = sameInstancePkgGeoms.FirstOrDefault(g => g.Key.Type == entry.Type && g.Key.Group == entry.Group && g.Key.FullInstance == entry.FullInstance);
+                    if (local.Key.Type != 0)
+                    {
+                        lodGeoms.Add((entry.FullTgi, local.Size, "local"));
+                    }
+                    else
+                    {
+                        // Cross-package fallback
+                        resourceByTgi.TryGetValue(entry.FullTgi.ToUpperInvariant(), out var crossInfo);
+                        if (crossInfo.Pkg is not null)
+                            lodGeoms.Add((entry.FullTgi, crossInfo.UncompressedSize ?? crossInfo.CompressedSize, $"cross-pkg:{Path.GetFileName(crossInfo.Pkg)}"));
+                        else
+                            lodGeoms.Add((entry.FullTgi, null, "NOT FOUND"));
+                    }
+                }
+                if (lodGeoms.Count > 0)
+                {
+                    loaded.AddRange(lodGeoms);
+                    Console.WriteLine($"    [Level {lod.Level}] resolved {lodGeoms.Count} GEOM(s) — loader would BREAK after this LOD:");
+                    foreach (var g in lodGeoms)
+                        Console.WriteLine($"        {g.Tgi}  size={(g.Size is null ? "?" : $"{g.Size:N0} B")}  source={g.Source}");
+                    break;
+                }
+                else
+                {
+                    Console.WriteLine($"    [Level {lod.Level}] no Geometry resolved — continuing");
+                }
+            }
+            // Step 3: simulate the size-based picker (BuildBuySceneBuildService.Cas.cs)
+            Console.WriteLine($"\n  [PICKER SIMULATION] Group by FullInstance, pick largest per group:");
+            var grouped = loaded.GroupBy(g => g.Tgi.Split(':')[2]).ToArray();
+            foreach (var grp in grouped)
+            {
+                var winner = grp.OrderByDescending(g => g.Size ?? 0).First();
+                Console.WriteLine($"    instance {grp.Key} → picks {winner.Tgi}  size={(winner.Size is null ? "?" : $"{winner.Size:N0} B")}");
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"  parse error: {ex.Message}"); }
+    }
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--scene-resource", StringComparison.OrdinalIgnoreCase))
 {
     var scenePackagePath = args.Length > 1 ? args[1] : string.Empty;
@@ -801,6 +939,47 @@ if (args.Length > 0 && string.Equals(args[0], "--probe-prefix-species", StringCo
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--probe-default-bt5", StringComparison.OrdinalIgnoreCase))
+{
+    // Query: find ALL BodyType=5 CASParts in the cache whose age_label/gender_label match
+    // the requested filter AND have any DefaultForBodyType* flag set. Used to figure out
+    // which CASParts pass IsPreferredDefaultBodyShellCandidate for a given (age, gender).
+    var dpDbPath = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache\index.sqlite";
+    var dpAge = args.Length > 1 ? args[1] : "Toddler";
+    var dpGender = args.Length > 2 ? args[2] : "Female";
+    using var dpConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dpDbPath};Mode=ReadOnly");
+    dpConn.Open();
+    using var dpCmd = dpConn.CreateCommand();
+    dpCmd.CommandText = """
+        SELECT a.root_tgi, a.display_name, a.package_path,
+               f.age_label, f.gender_label, f.species_label, f.body_type,
+               f.default_body_type, f.default_body_type_female, f.default_body_type_male,
+               f.has_naked_link, f.internal_name
+        FROM assets a JOIN cas_part_facts f ON f.asset_id = a.id
+        WHERE f.body_type = 5
+          AND f.age_label LIKE $age
+          AND (f.gender_label LIKE $gender OR f.gender_label LIKE '%Unisex%')
+          AND (f.default_body_type = 1 OR f.default_body_type_female = 1 OR f.default_body_type_male = 1)
+        ORDER BY a.root_tgi
+        """;
+    dpCmd.Parameters.AddWithValue("$age", $"%{dpAge}%");
+    dpCmd.Parameters.AddWithValue("$gender", $"%{dpGender}%");
+    using var dpReader = dpCmd.ExecuteReader();
+    var dpCount = 0;
+    while (dpReader.Read())
+    {
+        dpCount++;
+        Console.WriteLine($"\n  TGI: {dpReader.GetString(0)}");
+        Console.WriteLine($"    display: {dpReader.GetString(1)}");
+        Console.WriteLine($"    pkg: {Path.GetFileName(dpReader.GetString(2))}");
+        Console.WriteLine($"    age={dpReader.GetString(3)} gender={dpReader.GetString(4)} species={dpReader.GetString(5)} bt={dpReader.GetInt32(6)}");
+        Console.WriteLine($"    defBT={dpReader.GetInt32(7)} defBTF={dpReader.GetInt32(8)} defBTM={dpReader.GetInt32(9)} nakedLink={dpReader.GetInt32(10)}");
+        Console.WriteLine($"    internal_name: {(dpReader.IsDBNull(11) ? "<null>" : dpReader.GetString(11))}");
+    }
+    Console.WriteLine($"\n  Total matches for {dpAge}/{dpGender} BodyType=5 with DefaultForBodyType*=1: {dpCount}");
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--probe-tgi-facts", StringComparison.OrdinalIgnoreCase))
 {
     // Looks up facts for one or more CASPart TGIs in the prod cache.
@@ -840,6 +1019,459 @@ if (args.Length > 0 && string.Equals(args[0], "--probe-tgi-facts", StringCompari
         {
             Console.WriteLine($"\n  TGI: {tgi}  [NOT FOUND]");
         }
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--probe-rig-hashes", StringComparison.OrdinalIgnoreCase))
+{
+    // Compute FNV-1 64-bit hashes for canonical rig names so we can identify which name
+    // matches an unknown hash from telemetry. Mirrors Ts4CanonicalRigCatalog.ComputeFnv64.
+    static ulong Fnv64(string name)
+    {
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        var hash = offsetBasis;
+        foreach (var b in System.Text.Encoding.ASCII.GetBytes(name.ToLowerInvariant()))
+        {
+            unchecked { hash *= prime; }
+            hash ^= b;
+        }
+        return hash;
+    }
+    string[] names = {
+        "auRig", "cuRig", "puRig", "iuRig", "nuRig",
+        "acRig", "ccRig",
+        "adRig", "cdRig",
+        "alRig", "clRig",
+        "ahRig", "chRig",
+        "afRig", "cfRig", // fox?
+    };
+    foreach (var n in names)
+        Console.WriteLine($"  0x{Fnv64(n):X16} = {n}");
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--probe-rig-resolve", StringComparison.OrdinalIgnoreCase))
+{
+    // Build 0289: Step 1 of the sim character pipeline rewrite. For every distinct
+    // (species, age) archetype combo in the cache, resolves a SimRig via the new
+    // SimRigCatalog + SimRigLoader and reports: rig name, instance hash, bone count,
+    // and a sanity-check world-bind-pose Y for the root bone (should be 0).
+    var rrDefaultProd = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var rrCacheDir = args.Length > 1 ? args[1] : rrDefaultProd;
+    if (!Directory.Exists(rrCacheDir)) { Console.Error.WriteLine($"Cache dir not found: {rrCacheDir}"); return 1; }
+    var rrCache = new ProbeCacheService(Path.GetFullPath(rrCacheDir + "/.."));
+    rrCache.EnsureCreated();
+    var rrStore = new SqliteIndexStore(rrCache);
+    await rrStore.InitializeAsync(CancellationToken.None);
+    var rrCat = new LlamaResourceCatalogService();
+    var rrLoader = new Sims4ResourceExplorer.Preview.SimRender.SimRigLoader(rrCat, rrStore);
+
+    var rrDb = Path.Combine(rrCacheDir, "index.sqlite");
+    using var rrConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={rrDb};Mode=ReadOnly");
+    rrConn.Open();
+
+    var combos = new List<(string Species, string Age, string SamplePkg)>();
+    using (var cmd = rrConn.CreateCommand())
+    {
+        cmd.CommandText = """
+            SELECT s.species_label, s.age_label, MIN(a.package_path) as pkg
+            FROM sim_template_facts s JOIN assets a ON a.root_tgi = s.root_tgi
+            GROUP BY s.species_label, s.age_label
+            ORDER BY s.species_label, s.age_label
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            combos.Add((r.GetString(0), r.GetString(1), r.GetString(2)));
+        }
+    }
+
+    Console.WriteLine($"Validating SimRigCatalog + SimRigLoader for {combos.Count} (species, age) combos.\n");
+    Console.WriteLine($"{"Species",-12} {"Age",-22} {"RigName",-10} {"InstanceHash",-20} {"Bones",6}  RootWorldY");
+    var nullRigs = new List<string>();
+    var failures = new List<string>();
+    foreach (var combo in combos)
+    {
+        var resolved = Sims4ResourceExplorer.Preview.SimRender.SimRigCatalog.Resolve(combo.Species, combo.Age, null);
+        if (resolved is null)
+        {
+            Console.WriteLine($"{combo.Species,-12} {combo.Age,-22} <unresolvable>");
+            nullRigs.Add($"{combo.Species}/{combo.Age}");
+            continue;
+        }
+        var rig = await rrLoader.LoadAsync(resolved.Value.InstanceHash, resolved.Value.Name, combo.SamplePkg, CancellationToken.None);
+        if (rig is null)
+        {
+            Console.WriteLine($"{combo.Species,-12} {combo.Age,-22} {resolved.Value.Name,-10} 0x{resolved.Value.InstanceHash:X16}  LOAD FAILED");
+            failures.Add($"{combo.Species}/{combo.Age}: rig {resolved.Value.Name} (0x{resolved.Value.InstanceHash:X16}) failed to load");
+            continue;
+        }
+        var rootBone = rig.Bones.FirstOrDefault(b => b.ParentIndex < 0);
+        var rootWorldY = rootBone is null ? float.NaN : rig.WorldBindPoseByHash[rootBone.NameHash].M42;
+        Console.WriteLine($"{combo.Species,-12} {combo.Age,-22} {resolved.Value.Name,-10} 0x{resolved.Value.InstanceHash:X16} {rig.Bones.Count,6}  {rootWorldY:0.000}");
+    }
+
+    Console.WriteLine($"\n=== SUMMARY ===");
+    Console.WriteLine($"Total combos: {combos.Count}");
+    Console.WriteLine($"Resolution failures (catalog returned null): {nullRigs.Count}");
+    if (nullRigs.Count > 0) Console.WriteLine($"  {string.Join(", ", nullRigs)}");
+    Console.WriteLine($"Load failures (rig not in index or probe paths): {failures.Count}");
+    foreach (var f in failures) Console.WriteLine($"  {f}");
+    return failures.Count == 0 && nullRigs.Count == 0 ? 0 : 1;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--probe-bind-correction", StringComparison.OrdinalIgnoreCase))
+{
+    // Build 0288: Run the actual Sim graph build + per-CASPart scene build for a Child Male
+    // archetype, capturing every BindCheck-* diagnostic so we can see why the bind correction
+    // fires for Top but not Bottom/Shoes/Head — without needing the user to launch the GUI.
+    var bcDefaultProd = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var bcCacheDir = args.Length > 1 ? args[1] : bcDefaultProd;
+    if (!Directory.Exists(bcCacheDir)) { Console.Error.WriteLine($"Cache dir not found: {bcCacheDir}"); return 1; }
+    var bcCache = new ProbeCacheService(Path.GetFullPath(bcCacheDir + "/.."));
+    bcCache.EnsureCreated();
+    var bcStore = new SqliteIndexStore(bcCache);
+    await bcStore.InitializeAsync(CancellationToken.None);
+    var bcCat = new LlamaResourceCatalogService();
+    var bcBld = new ExplicitAssetGraphBuilder(bcCat, bcStore);
+    var bcInnerSceneSvc = new BuildBuySceneBuildService(bcCat, bcStore);
+    var bcSceneSvc = new CachedSceneBuildService(bcInnerSceneSvc);
+
+    var bcDb = Path.Combine(bcCacheDir, "index.sqlite");
+    using var bcConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={bcDb};Mode=ReadOnly");
+    bcConn.Open();
+
+    // Pick a Child Male Human SimInfo present in both sim_template_facts AND assets.
+    string? bcSimTgi = null;
+    string? bcSimPkg = null;
+    using (var bcc = bcConn.CreateCommand())
+    {
+        bcc.CommandText = """
+            SELECT s.root_tgi, a.package_path
+            FROM sim_template_facts s
+            JOIN assets a ON a.root_tgi = s.root_tgi
+            WHERE s.species_label = 'Human' AND s.age_label = 'Child' AND s.gender_label = 'Male'
+            LIMIT 1
+            """;
+        using var br = bcc.ExecuteReader();
+        if (br.Read()) { bcSimTgi = br.GetString(0); bcSimPkg = br.GetString(1); }
+    }
+    if (bcSimTgi is null) { Console.Error.WriteLine("No Child Male Human SimInfo found in cache."); return 1; }
+    Console.WriteLine($"Probing Child Male Human SimInfo {bcSimTgi} from {Path.GetFileName(bcSimPkg)}");
+
+    AssetSummary? bcAsset = null;
+    using (var bcc = bcConn.CreateCommand())
+    {
+        bcc.CommandText = """
+            SELECT id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi,
+                   thumbnail_tgi, variant_count, linked_resource_count, diagnostics, package_name, root_type_name,
+                   thumbnail_type_name, primary_geometry_type, identity_type, category_normalized, description
+            FROM assets WHERE root_tgi = $tgi LIMIT 1
+            """;
+        bcc.Parameters.AddWithValue("$tgi", bcSimTgi);
+        using var br = bcc.ExecuteReader();
+        if (br.Read())
+        {
+            var bcTgiParts = bcSimTgi.Split(':');
+            var bcRootKey = new ResourceKeyRecord(
+                Convert.ToUInt32(bcTgiParts[0], 16),
+                Convert.ToUInt32(bcTgiParts[1], 16),
+                Convert.ToUInt64(bcTgiParts[2], 16),
+                br.IsDBNull(13) ? null : br.GetString(13));
+            bcAsset = new AssetSummary(
+                Guid.Parse(br.GetString(0)),
+                Guid.Parse(br.GetString(1)),
+                Enum.Parse<SourceKind>(br.GetString(2)),
+                Enum.Parse<AssetKind>(br.GetString(3)),
+                br.IsDBNull(4) ? "" : br.GetString(4),
+                br.IsDBNull(5) ? null : br.GetString(5),
+                br.GetString(6),
+                bcRootKey,
+                br.IsDBNull(8) ? null : br.GetString(8),
+                br.GetInt32(9), br.GetInt32(10),
+                br.IsDBNull(11) ? "" : br.GetString(11), null,
+                br.IsDBNull(12) ? null : br.GetString(12),
+                br.IsDBNull(13) ? null : br.GetString(13),
+                br.IsDBNull(14) ? null : br.GetString(14),
+                br.IsDBNull(15) ? null : br.GetString(15),
+                br.IsDBNull(16) ? null : br.GetString(16),
+                br.IsDBNull(17) ? null : br.GetString(17),
+                br.IsDBNull(18) ? null : br.GetString(18));
+        }
+    }
+    if (bcAsset is null) { Console.Error.WriteLine("Asset row not found."); return 1; }
+
+    var bcSrcDef = new DataSourceDefinition(bcAsset.DataSourceId, "ProbeBindCorrection", Path.GetDirectoryName(bcSimPkg!) ?? bcSimPkg!, SourceKind.Game);
+    var bcPkgScan = await bcCat.ScanPackageAsync(bcSrcDef, bcSimPkg!, progress: null, CancellationToken.None);
+    Console.WriteLine($"Building asset graph...");
+    using var ageScope = BuildBuySceneBuildService.BeginSimAgeScope("Child", "Human");
+    var bcGraph = await bcBld.BuildAssetGraphAsync(bcAsset, bcPkgScan.Resources, CancellationToken.None);
+    if (bcGraph.SimGraph is null) { Console.Error.WriteLine("No SimGraph produced."); return 1; }
+
+    // For each preferred body family, find its candidate CASPart and build the CAS scene.
+    var bcCandidates = bcGraph.SimGraph.BodyCandidates.Where(c => c.Count > 0 && c.Candidates.Count > 0).ToArray();
+    Console.WriteLine($"\nBody candidates: {string.Join(", ", bcCandidates.Select(c => $"{c.Label}({c.Count})"))}\n");
+
+    // First pass: warm caches by building Top first, then build Bottom/Shoes/Head.
+    // Mimics app's order: Top is processed first by the body assembly pipeline.
+    var bcOrderedCandidates = bcCandidates
+        .OrderBy(c => c.Label switch { "Top" => 0, "Bottom" => 1, "Shoes" => 2, "Head" => 3, _ => 4 })
+        .ToArray();
+    foreach (var bcCand in bcOrderedCandidates)
+    {
+        var bcOpt = bcCand.Candidates[0];
+        Console.WriteLine($"=== {bcCand.Label}: {bcOpt.DisplayName} ({bcOpt.RootTgi}) ===");
+        // Look up the actual asset row to get the correct CASPart package.
+        AssetSummary? bcCasAsset = null;
+        using (var bcc = bcConn.CreateCommand())
+        {
+            bcc.CommandText = """
+                SELECT id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi,
+                       thumbnail_tgi, variant_count, linked_resource_count, diagnostics, package_name, root_type_name,
+                       thumbnail_type_name, primary_geometry_type, identity_type, category_normalized, description
+                FROM assets WHERE root_tgi = $tgi LIMIT 1
+                """;
+            bcc.Parameters.AddWithValue("$tgi", bcOpt.RootTgi);
+            using var br = bcc.ExecuteReader();
+            if (br.Read())
+            {
+                var bcTgiParts = bcOpt.RootTgi.Split(':');
+                var bcRootKey = new ResourceKeyRecord(
+                    Convert.ToUInt32(bcTgiParts[0], 16),
+                    Convert.ToUInt32(bcTgiParts[1], 16),
+                    Convert.ToUInt64(bcTgiParts[2], 16),
+                    br.IsDBNull(13) ? null : br.GetString(13));
+                bcCasAsset = new AssetSummary(
+                    Guid.Parse(br.GetString(0)),
+                    Guid.Parse(br.GetString(1)),
+                    Enum.Parse<SourceKind>(br.GetString(2)),
+                    Enum.Parse<AssetKind>(br.GetString(3)),
+                    br.IsDBNull(4) ? "" : br.GetString(4),
+                    br.IsDBNull(5) ? null : br.GetString(5),
+                    br.GetString(6), bcRootKey,
+                    br.IsDBNull(8) ? null : br.GetString(8),
+                    br.GetInt32(9), br.GetInt32(10),
+                    br.IsDBNull(11) ? "" : br.GetString(11), null,
+                    br.IsDBNull(12) ? null : br.GetString(12),
+                    br.IsDBNull(13) ? null : br.GetString(13),
+                    br.IsDBNull(14) ? null : br.GetString(14),
+                    br.IsDBNull(15) ? null : br.GetString(15),
+                    br.IsDBNull(16) ? null : br.GetString(16),
+                    br.IsDBNull(17) ? null : br.GetString(17),
+                    br.IsDBNull(18) ? null : br.GetString(18));
+            }
+        }
+        if (bcCasAsset is null) { Console.WriteLine("  Asset row not found for CASPart."); continue; }
+        var bcCasPkgScan = await bcCat.ScanPackageAsync(bcSrcDef, bcCasAsset.PackagePath, progress: null, CancellationToken.None);
+        var bcCasGraph = await bcBld.BuildAssetGraphAsync(bcCasAsset, bcCasPkgScan.Resources, CancellationToken.None);
+        if (bcCasGraph.CasGraph is null) { Console.WriteLine($"  No CasGraph produced. Diags: {string.Join(" | ", bcCasGraph.Diagnostics.Take(3))}"); continue; }
+        var bcSceneResult = await bcSceneSvc.BuildSceneAsync(bcCasGraph.CasGraph, CancellationToken.None);
+        Console.WriteLine($"  Status: {bcSceneResult.Status}");
+        foreach (var line in bcSceneResult.Diagnostics)
+        {
+            if (line.Contains("BindCheck", StringComparison.Ordinal) || line.Contains("BindCorrection", StringComparison.Ordinal) || line.Contains("Authoring rig", StringComparison.Ordinal) || line.Contains("Resolved canonical rig", StringComparison.Ordinal) || line.Contains("AuthoringRig", StringComparison.Ordinal) || line.Contains("Selected geometry root", StringComparison.Ordinal))
+                Console.WriteLine($"    {line}");
+        }
+        Console.WriteLine();
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--probe-archetype-templates", StringComparison.OrdinalIgnoreCase))
+{
+    // Lists all SimInfo templates for a given (species, age, gender) with their skintone
+    // instance + outfit-part count + face/body modifier counts. Used to figure out why a
+    // wrong "Representative" template is being picked (e.g., infant male picking an alien
+    // template with skintone 0x148DD instead of normal human).
+    var defaultDb = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache\index.sqlite";
+    var dbPath = args.Length > 1 ? args[1] : defaultDb;
+    var ageArg = args.Length > 2 ? args[2] : "Infant";
+    var genderArg = args.Length > 3 ? args[3] : "Male";
+    var speciesArg = args.Length > 4 ? args[4] : "Human";
+    if (!File.Exists(dbPath)) { Console.Error.WriteLine($"DB not found: {dbPath}"); return 1; }
+    using var atConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+    atConn.Open();
+    // Discover schema first
+    using (var schemaCmd = atConn.CreateCommand())
+    {
+        schemaCmd.CommandText = "PRAGMA table_info(sim_template_facts)";
+        using var sr = schemaCmd.ExecuteReader();
+        Console.Write("Columns: ");
+        while (sr.Read()) Console.Write($"{sr.GetString(1)} ");
+        Console.WriteLine();
+    }
+    // Diagnostic: show distinct values for the requested filter columns
+    using (var diag = atConn.CreateCommand())
+    {
+        diag.CommandText = "SELECT DISTINCT species_label, age_label, gender_label, COUNT(*) FROM sim_template_facts GROUP BY species_label, age_label, gender_label ORDER BY species_label, age_label, gender_label";
+        using var dr = diag.ExecuteReader();
+        Console.WriteLine($"\nAll distinct (species, age, gender, count):");
+        while (dr.Read()) Console.WriteLine($"  '{dr.GetString(0)}' | '{dr.GetString(1)}' | '{dr.GetString(2)}' x {dr.GetInt32(3)}");
+    }
+    using var atCmd = atConn.CreateCommand();
+    atCmd.CommandText = """
+        SELECT s.root_tgi, s.outfit_part_count, s.body_modifier_count, s.face_modifier_count,
+               a.display_name, s.has_skintone, s.authoritative_body_driving_outfit_count, s.notes
+        FROM sim_template_facts s
+        LEFT JOIN assets a ON a.root_tgi = s.root_tgi
+        WHERE s.species_label LIKE $sp
+          AND s.age_label LIKE $age
+          AND s.gender_label LIKE $g
+        ORDER BY s.outfit_part_count DESC, s.body_modifier_count DESC, s.face_modifier_count DESC
+        LIMIT 30
+        """;
+    atCmd.Parameters.AddWithValue("$sp", $"%{speciesArg}%");
+    atCmd.Parameters.AddWithValue("$age", $"%{ageArg}%");
+    atCmd.Parameters.AddWithValue("$g", $"%{genderArg}%");
+    using var atReader = atCmd.ExecuteReader();
+    Console.WriteLine($"\nTemplates for Species={speciesArg} Age={ageArg} Gender={genderArg}:");
+    Console.WriteLine($"{"OutfitParts",-12} {"BodyMod",-8} {"FaceMod",-8} {"HasSkin",-8} {"BodyDriv",-9} TGI / DisplayName");
+    while (atReader.Read())
+    {
+        var tgi = atReader.GetString(0);
+        var outfitParts = atReader.GetInt32(1);
+        var bodyMod = atReader.GetInt32(2);
+        var faceMod = atReader.GetInt32(3);
+        var dn = atReader.IsDBNull(4) ? "" : atReader.GetString(4);
+        var hasSkin = atReader.IsDBNull(5) ? "?" : atReader.GetInt32(5).ToString();
+        var bodyDriving = atReader.IsDBNull(6) ? "?" : atReader.GetInt32(6).ToString();
+        Console.WriteLine($"{outfitParts,-12} {bodyMod,-8} {faceMod,-8} {hasSkin,-8} {bodyDriving,-9} {tgi}  {dn}");
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--probe-archetypes", StringComparison.OrdinalIgnoreCase))
+{
+    // Build 0283: SYSTEMATIC validation across all (species, age, gender) combinations.
+    // For each distinct combination present in sim_template_facts, picks one representative
+    // SimInfo, runs ExplicitAssetGraphBuilder.BuildAssetGraphAsync (the production code
+    // path), and reports the resolved BodyAssembly mode + active layer labels. Flags
+    // humans that still have a Full Body underlay alongside Top+Bottom (the kimono-junk
+    // scenario) and any animal that's missing expected Body / Head / Ears / Tail layers.
+    var paDefaultProd = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var paCacheDir = args.Length > 1 ? args[1] : paDefaultProd;
+    if (!Directory.Exists(paCacheDir)) { Console.Error.WriteLine($"Cache dir not found: {paCacheDir}"); return 1; }
+    var paCache = new ProbeCacheService(Path.GetFullPath(paCacheDir + "/.."));
+    paCache.EnsureCreated();
+    var paStore = new SqliteIndexStore(paCache);
+    await paStore.InitializeAsync(CancellationToken.None);
+    var paCat = new LlamaResourceCatalogService();
+    var paBld = new ExplicitAssetGraphBuilder(paCat, paStore);
+
+    var paDbPath = Path.Combine(paCacheDir, "index.sqlite");
+    var paConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={paDbPath};Mode=ReadOnly");
+    paConn.Open();
+
+    // Enumerate distinct (species, age, gender) combos. For each, pick one SimInfo whose
+    // root_tgi exists in BOTH sim_template_facts AND assets (we need the asset row).
+    var combos = new List<(string Species, string Age, string Gender, string Tgi, string Pkg)>();
+    using (var c = paConn.CreateCommand())
+    {
+        c.CommandText = """
+            WITH ranked AS (
+                SELECT s.species_label, s.age_label, s.gender_label, s.root_tgi, a.package_path,
+                       ROW_NUMBER() OVER (PARTITION BY s.species_label, s.age_label, s.gender_label ORDER BY a.package_path) AS rn
+                FROM sim_template_facts s
+                JOIN assets a ON a.root_tgi = s.root_tgi
+                WHERE COALESCE(s.species_label, '') <> ''
+                  AND COALESCE(s.age_label, '') <> ''
+                  AND COALESCE(s.gender_label, '') <> ''
+            )
+            SELECT species_label, age_label, gender_label, root_tgi, package_path
+            FROM ranked WHERE rn = 1
+            ORDER BY species_label, age_label, gender_label
+            """;
+        using var r = c.ExecuteReader();
+        while (r.Read())
+            combos.Add((r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4)));
+    }
+    Console.WriteLine($"Validating {combos.Count} distinct (species, age, gender) archetype combinations.\n");
+
+    var humanWithUnderlay = new List<string>();
+    var headerPrinted = false;
+    foreach (var combo in combos)
+    {
+        AssetSummary? simAsset = null;
+        using (var c = paConn.CreateCommand())
+        {
+            c.CommandText = """
+                SELECT id, data_source_id, source_kind, asset_kind, display_name, category, package_path, root_tgi,
+                       thumbnail_tgi, variant_count, linked_resource_count, diagnostics, package_name, root_type_name,
+                       thumbnail_type_name, primary_geometry_type, identity_type, category_normalized, description
+                FROM assets WHERE root_tgi = $tgi LIMIT 1
+                """;
+            c.Parameters.AddWithValue("$tgi", combo.Tgi);
+            using var r = c.ExecuteReader();
+            if (r.Read())
+            {
+                var tgiParts = combo.Tgi.Split(':');
+                var rootKey = new ResourceKeyRecord(
+                    Convert.ToUInt32(tgiParts[0], 16),
+                    Convert.ToUInt32(tgiParts[1], 16),
+                    Convert.ToUInt64(tgiParts[2], 16),
+                    r.IsDBNull(13) ? null : r.GetString(13));
+                simAsset = new AssetSummary(
+                    Guid.Parse(r.GetString(0)),
+                    Guid.Parse(r.GetString(1)),
+                    Enum.Parse<SourceKind>(r.GetString(2)),
+                    Enum.Parse<AssetKind>(r.GetString(3)),
+                    r.IsDBNull(4) ? "" : r.GetString(4),
+                    r.IsDBNull(5) ? null : r.GetString(5),
+                    r.GetString(6),
+                    rootKey,
+                    r.IsDBNull(8) ? null : r.GetString(8),
+                    r.GetInt32(9), r.GetInt32(10),
+                    r.IsDBNull(11) ? "" : r.GetString(11),
+                    null,
+                    r.IsDBNull(12) ? null : r.GetString(12),
+                    r.IsDBNull(13) ? null : r.GetString(13),
+                    r.IsDBNull(14) ? null : r.GetString(14),
+                    r.IsDBNull(15) ? null : r.GetString(15),
+                    r.IsDBNull(16) ? null : r.GetString(16),
+                    r.IsDBNull(17) ? null : r.GetString(17),
+                    r.IsDBNull(18) ? null : r.GetString(18));
+            }
+        }
+        if (simAsset is null) continue;
+
+        try
+        {
+            var srcDef = new DataSourceDefinition(simAsset.DataSourceId, "ProbeArchetypes", Path.GetDirectoryName(combo.Pkg) ?? combo.Pkg, SourceKind.Game);
+            var pkgScan = await paCat.ScanPackageAsync(srcDef, combo.Pkg, progress: null, CancellationToken.None);
+            var paGraph = await paBld.BuildAssetGraphAsync(simAsset, pkgScan.Resources, CancellationToken.None);
+            if (paGraph.SimGraph is null) continue;
+            var sg = paGraph.SimGraph;
+            var activeLayers = sg.BodyAssembly.Layers.Where(l => l.State == SimBodyAssemblyLayerState.Active).Select(l => l.Label).ToArray();
+            var mode = sg.BodyAssembly.Mode;
+            var labels = string.Join(",", activeLayers);
+            if (!headerPrinted) { Console.WriteLine($"{"Species",-10} {"Age",-22} {"Gender",-9} {"Mode",-32} ActiveLayers"); headerPrinted = true; }
+            Console.WriteLine($"{combo.Species,-10} {combo.Age,-22} {combo.Gender,-9} {mode,-32} {labels}");
+            // Flag suspicious assemblies
+            var isHuman = string.Equals(combo.Species, "Human", StringComparison.OrdinalIgnoreCase);
+            if (isHuman && (activeLayers.Contains("Full Body") || activeLayers.Contains("Body")) &&
+                activeLayers.Contains("Top") && activeLayers.Contains("Bottom"))
+            {
+                humanWithUnderlay.Add($"{combo.Species}/{combo.Age}/{combo.Gender}: {mode} layers={labels} tgi={combo.Tgi}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"{combo.Species,-10} {combo.Age,-22} {combo.Gender,-9} ERROR: {ex.Message}");
+        }
+    }
+
+    Console.WriteLine($"\n=== VALIDATION SUMMARY ===");
+    Console.WriteLine($"Archetypes validated: {combos.Count}");
+    if (humanWithUnderlay.Count > 0)
+    {
+        Console.WriteLine($"\n  Humans with Full Body underlay alongside Top+Bottom (kimono-junk regression candidates):");
+        foreach (var item in humanWithUnderlay) Console.WriteLine($"    {item}");
+    }
+    else
+    {
+        Console.WriteLine($"  No humans had Full Body underlay alongside Top+Bottom — fix is uniformly applied.");
     }
     return 0;
 }
@@ -4001,6 +4633,430 @@ if (args.Length > 0 && string.Equals(args[0], "--global-scan-rig", StringCompari
         catch { /* not in this package */ }
     }
     Console.WriteLine($"\nTotal hits: {found}");
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--mimic-rig-picker", StringComparison.OrdinalIgnoreCase))
+{
+    // Mimics the canonical-rig fallback in TryResolveRigAsync for the cat ears, with
+    // age=Child preferring child rigs first. Prints which rig wins to expose any
+    // ordering or scoring bug.
+    static ulong Fnv64(string name)
+    {
+        const ulong basis = 14695981039346656037UL; const ulong prime = 1099511628211UL;
+        ulong h = basis;
+        foreach (var b in System.Text.Encoding.ASCII.GetBytes(name.ToLowerInvariant())) { h *= prime; h ^= b; }
+        return h;
+    }
+    var mrpEarsTgi = "015A1849:0062AC70:81FA08FA08FD9B91";
+    var mrpPkg = @"C:\GAMES\The Sims 4\EP04\ClientFullBuild0.package";
+    var mrpRigPkg = @"C:\GAMES\The Sims 4\Data\Client\ClientDeltaBuild0.package";
+    var mrpCat = new LlamaResourceCatalogService();
+    var p = mrpEarsTgi.Split(':');
+    var earsKey = new ResourceKeyRecord(Convert.ToUInt32(p[0],16), Convert.ToUInt32(p[1],16), Convert.ToUInt64(p[2],16), "Geometry");
+    var earsBytes = await mrpCat.GetResourceBytesAsync(mrpPkg, earsKey, raw: false, CancellationToken.None, null);
+    var earsGeom = Sims4ResourceExplorer.Preview.Ts4GeomResource.Parse(earsBytes);
+    var geomBoneHashes = earsGeom.BoneHashes.ToHashSet();
+    Console.WriteLine($"Ears GEOM has {geomBoneHashes.Count} distinct bone hashes.");
+
+    // Same canonicalRigNames list as the production code (preferChildRigs=true).
+    var rigNames = new[]
+    {
+        "cuRig", "puRig", "nuRig", "auRig",
+        "ccRig", "acRig",
+        "cdRig", "adRig",
+        "clRig", "alRig",
+        "chRig", "ahRig",
+    };
+
+    Sims4ResourceExplorer.Preview.Ts4RigResource? bestRig = null;
+    string? bestName = null;
+    var bestOverlap = -1;
+
+    foreach (var rigName in rigNames)
+    {
+        var hash = Fnv64(rigName);
+        var key = new ResourceKeyRecord(0x8EAF13DE, 0u, hash, "Rig");
+        Sims4ResourceExplorer.Preview.Ts4RigResource? rig = null;
+        try
+        {
+            var b = await mrpCat.GetResourceBytesAsync(mrpRigPkg, key, raw: false, CancellationToken.None, null);
+            if (b is { Length: > 0 }) rig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(b);
+        }
+        catch { }
+        if (rig is null)
+        {
+            Console.WriteLine($"  {rigName,-8} 0x{hash:X16}  NOT IN PACKAGE");
+            continue;
+        }
+        var overlap = rig.Bones.Count(bo => geomBoneHashes.Contains(bo.NameHash));
+        var win = bestRig is null || overlap > bestOverlap;
+        Console.WriteLine($"  {rigName,-8} 0x{hash:X16}  overlap={overlap,3}/{rig.Bones.Count,3}  bestSoFar={bestOverlap,3} {(win ? "WIN" : "skip")}");
+        if (win)
+        {
+            bestRig = rig; bestName = rigName; bestOverlap = overlap;
+        }
+    }
+    Console.WriteLine($"\nFINAL pick: {bestName} (overlap {bestOverlap})");
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--check-connectivity", StringComparison.OrdinalIgnoreCase))
+{
+    // For a known set of layer geoms (adult cat OR child cat), apply build 0274 selectivity
+    // + bind correction and report per-mesh 3D bounds. Then for each non-Body layer compute
+    // the minimum vertex distance to the Body mesh — if it's > some threshold the layer is
+    // floating. Args: --check-connectivity [adult|child]
+    var ccvAge = (args.Length > 1 ? args[1] : "child").ToLowerInvariant();
+    var ccvPkg = @"C:\GAMES\The Sims 4\EP04\ClientFullBuild0.package";
+    var (ccvBody, ccvHead, ccvShoes, ccvEars, ccvTail) = ccvAge == "adult"
+        ? ("015A1849:004517B8:56B8369D5124339A", "015A1849:00BD7DB4:3C05626C2198E7DB", "015A1849:00D41EB8:138187FD59765608", "015A1849:0062AC70:81FA08FA08FD9B91", "015A1849:00E24764:E89D9BE2E081DA65")
+        : ("015A1849:0071DE20:1514D0CBFC1633D4", "015A1849:005999D8:816DCA25B3579981", "015A1849:00602EBC:AD626467F1D25BBA", "015A1849:0062AC70:81FA08FA08FD9B91", "015A1849:00E24764:E89D9BE2E081DA65");
+    var ccvCurrentRigInst = ccvAge == "adult" ? 0x26E972C565C68FC1UL : 0xE0FC2EB394790FE3UL; // acRig vs ccRig
+    var ccvAuthoringRigInst = 0x26E972C565C68FC1UL; // acRig is authoring for shared meshes
+    var ccvRigPkg = @"C:\GAMES\The Sims 4\Data\Client\ClientDeltaBuild0.package";
+    var ccvCat = new LlamaResourceCatalogService();
+    var currentRig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(await ccvCat.GetResourceBytesAsync(ccvRigPkg, new ResourceKeyRecord(0x8EAF13DE, 0u, ccvCurrentRigInst, "Rig"), raw: false, CancellationToken.None, null));
+    var authoringRig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(await ccvCat.GetResourceBytesAsync(ccvRigPkg, new ResourceKeyRecord(0x8EAF13DE, 0u, ccvAuthoringRigInst, "Rig"), raw: false, CancellationToken.None, null));
+    static Dictionary<uint, System.Numerics.Matrix4x4> RigWorld(Sims4ResourceExplorer.Preview.Ts4RigResource rig)
+    {
+        var byHash = rig.Bones.ToDictionary(b => b.NameHash);
+        var cache = new Dictionary<uint, System.Numerics.Matrix4x4>();
+        System.Numerics.Matrix4x4 W(Sims4ResourceExplorer.Preview.Ts4RigBone b)
+        {
+            if (cache.TryGetValue(b.NameHash, out var c)) return c;
+            var local = System.Numerics.Matrix4x4.CreateScale(b.Scale)
+                * System.Numerics.Matrix4x4.CreateFromQuaternion(b.Rotation)
+                * System.Numerics.Matrix4x4.CreateTranslation(b.Position);
+            var w = b.ParentHash is uint ph && byHash.TryGetValue(ph, out var p) ? local * W(p) : local;
+            cache[b.NameHash] = w;
+            return w;
+        }
+        foreach (var b in rig.Bones) W(b);
+        return cache;
+    }
+    var curWorld = RigWorld(currentRig);
+    var authWorld = RigWorld(authoringRig);
+
+    static System.Numerics.Vector3[] LoadCorrected(LlamaResourceCatalogService cat, string pkg, string tgi, Dictionary<uint, System.Numerics.Matrix4x4> curW, Dictionary<uint, System.Numerics.Matrix4x4> authW, bool sameRigs)
+    {
+        var p = tgi.Split(':');
+        var key = new ResourceKeyRecord(Convert.ToUInt32(p[0],16), Convert.ToUInt32(p[1],16), Convert.ToUInt64(p[2],16), "Geometry");
+        var geom = Sims4ResourceExplorer.Preview.Ts4GeomResource.Parse(cat.GetResourceBytesAsync(pkg, key, raw: false, CancellationToken.None, null).GetAwaiter().GetResult());
+        var positions = new System.Numerics.Vector3[geom.Vertices.Count];
+        for (var i = 0; i < geom.Vertices.Count; i++) positions[i] = new System.Numerics.Vector3(geom.Vertices[i].Position[0], geom.Vertices[i].Position[1], geom.Vertices[i].Position[2]);
+        if (sameRigs) return positions;
+
+        // Selectivity: skip if mesh centroid closer to current rig.
+        var meshC = positions.Aggregate(System.Numerics.Vector3.Zero, (a, v) => a + v) / positions.Length;
+        var curC = System.Numerics.Vector3.Zero; var authC = System.Numerics.Vector3.Zero; var n = 0;
+        foreach (var h in geom.BoneHashes)
+            if (curW.TryGetValue(h, out var c) && authW.TryGetValue(h, out var a))
+            { curC += new System.Numerics.Vector3(c.M41, c.M42, c.M43); authC += new System.Numerics.Vector3(a.M41, a.M42, a.M43); n++; }
+        if (n == 0) return positions;
+        curC /= n; authC /= n;
+        if ((meshC - curC).LengthSquared() <= (meshC - authC).LengthSquared()) return positions;
+
+        // Apply weighted delta per vertex.
+        var deltas = new Dictionary<uint, System.Numerics.Vector3>();
+        foreach (var h in geom.BoneHashes)
+            if (curW.TryGetValue(h, out var c) && authW.TryGetValue(h, out var a))
+            { var d = new System.Numerics.Vector3(c.M41 - a.M41, c.M42 - a.M42, c.M43 - a.M43); if (d.LengthSquared() > 1e-8f) deltas[h] = d; }
+        for (var i = 0; i < geom.Vertices.Count; i++)
+        {
+            var v = geom.Vertices[i];
+            if (v.BlendIndices is null || v.BlendWeights is null) continue;
+            var totalW = 0f; foreach (var w in v.BlendWeights) totalW += MathF.Max(w, 0f);
+            if (totalW <= 0f) continue;
+            var accum = System.Numerics.Vector3.Zero;
+            for (var j = 0; j < v.BlendIndices.Length && j < v.BlendWeights.Length; j++)
+            {
+                var w = v.BlendWeights[j]; if (w <= 0f) continue;
+                var bi = v.BlendIndices[j]; if (bi < 0 || bi >= geom.BoneHashes.Count) continue;
+                if (deltas.TryGetValue(geom.BoneHashes[bi], out var d)) accum += d * (w / totalW);
+            }
+            positions[i] += accum;
+        }
+        return positions;
+    }
+
+    var sameRigs = ccvCurrentRigInst == ccvAuthoringRigInst;
+    var layers = new (string label, string color, System.Numerics.Vector3[] verts)[]
+    {
+        ("Body  ", "Yellow",     LoadCorrected(ccvCat, ccvPkg, ccvBody, curWorld, authWorld, sameRigs)),
+        ("Head  ", "Cyan",       LoadCorrected(ccvCat, ccvPkg, ccvHead, curWorld, authWorld, sameRigs)),
+        ("Shoes ", "Magenta",    LoadCorrected(ccvCat, ccvPkg, ccvShoes, curWorld, authWorld, sameRigs)),
+        ("Ears  ", "LightGreen", LoadCorrected(ccvCat, ccvPkg, ccvEars, curWorld, authWorld, sameRigs)),
+        ("Tail  ", "Orange",     LoadCorrected(ccvCat, ccvPkg, ccvTail, curWorld, authWorld, sameRigs)),
+    };
+
+    Console.WriteLine($"Sim age={ccvAge}, current rig=0x{ccvCurrentRigInst:X16}, sameRigs={sameRigs}\n");
+    Console.WriteLine($"{"Layer",-7} {"Color",-11} {"verts",6}  bounds  X:[min..max]  Y:[min..max]  Z:[min..max]");
+    var bounds = new (System.Numerics.Vector3 min, System.Numerics.Vector3 max)[layers.Length];
+    for (var i = 0; i < layers.Length; i++)
+    {
+        var min = new System.Numerics.Vector3(float.PositiveInfinity);
+        var max = new System.Numerics.Vector3(float.NegativeInfinity);
+        foreach (var v in layers[i].verts) { min = System.Numerics.Vector3.Min(min, v); max = System.Numerics.Vector3.Max(max, v); }
+        bounds[i] = (min, max);
+        Console.WriteLine($"{layers[i].label} {layers[i].color,-11} {layers[i].verts.Length,6}  X:[{min.X:F3}..{max.X:F3}]  Y:[{min.Y:F3}..{max.Y:F3}]  Z:[{min.Z:F3}..{max.Z:F3}]");
+    }
+
+    // Honest surface-proximity check: filter to vertices ACTUALLY USED by triangles
+    // (skip unused/zero-padded vertices that give false 0m readings), then report median
+    // and 5th-percentile nearest-vertex distance — not just the min, which can hit a
+    // single coincidental near pair while the bulk of the layer floats far away.
+    static System.Numerics.Vector3[] LoadUsedVerts(LlamaResourceCatalogService cat, string pkg, string tgi)
+    {
+        var p = tgi.Split(':');
+        var key = new ResourceKeyRecord(Convert.ToUInt32(p[0],16), Convert.ToUInt32(p[1],16), Convert.ToUInt64(p[2],16), "Geometry");
+        var geom = Sims4ResourceExplorer.Preview.Ts4GeomResource.Parse(cat.GetResourceBytesAsync(pkg, key, raw: false, CancellationToken.None, null).GetAwaiter().GetResult());
+        var used = new HashSet<int>();
+        foreach (var idx in geom.Indices) used.Add((int)idx);
+        return used.Where(i => i < geom.Vertices.Count)
+            .Select(i => new System.Numerics.Vector3(geom.Vertices[i].Position[0], geom.Vertices[i].Position[1], geom.Vertices[i].Position[2]))
+            .ToArray();
+    }
+
+    Console.WriteLine($"\nReal-surface connectivity check (vertices used by triangles only):");
+    Console.WriteLine($"  For each non-Body layer: min/median/5th-percentile distance to nearest Body vertex");
+    var bodyTgis = new[] { ccvBody, ccvHead, ccvShoes, ccvEars, ccvTail };
+    var bodyUsed = LoadUsedVerts(ccvCat, ccvPkg, ccvBody);
+    for (var i = 1; i < layers.Length; i++)
+    {
+        var layerUsed = LoadUsedVerts(ccvCat, ccvPkg, bodyTgis[i]);
+        // Apply the same bind-correction transform we computed already by reading from layers[i].verts.
+        // But layers[i].verts indexing differs from used-vertex indexing — recompute by mapping per used index.
+        // Simpler: just use the corrected layers[i].verts directly and filter to used indices manually.
+        var p = bodyTgis[i].Split(':');
+        var key = new ResourceKeyRecord(Convert.ToUInt32(p[0],16), Convert.ToUInt32(p[1],16), Convert.ToUInt64(p[2],16), "Geometry");
+        var geom = Sims4ResourceExplorer.Preview.Ts4GeomResource.Parse(await ccvCat.GetResourceBytesAsync(ccvPkg, key, raw: false, CancellationToken.None, null));
+        var usedIndices = new HashSet<int>();
+        foreach (var idx in geom.Indices) usedIndices.Add((int)idx);
+
+        var dists = new List<float>(layers[i].verts.Length);
+        foreach (var (vert, idx) in layers[i].verts.Select((v, j) => (v, j)))
+        {
+            if (!usedIndices.Contains(idx)) continue;
+            var minSq = float.PositiveInfinity;
+            foreach (var b in bodyUsed)
+            {
+                var d = (vert - b).LengthSquared();
+                if (d < minSq) minSq = d;
+            }
+            dists.Add(MathF.Sqrt(minSq));
+        }
+        if (dists.Count == 0) { Console.WriteLine($"  {layers[i].label} → no used vertices"); continue; }
+        dists.Sort();
+        var median = dists[dists.Count / 2];
+        var p05 = dists[Math.Max(0, dists.Count / 20)]; // 5th percentile
+        var min = dists[0];
+        var max = dists[dists.Count - 1];
+        var attached = p05 < 0.005f;
+        var status = attached ? "ATTACHED" : (p05 < 0.03f ? "loose attach" : "FLOATING");
+        Console.WriteLine($"  {layers[i].label} → Body  min={min:F3}  p5={p05:F3}  median={median:F3}  max={max:F3}  {status}");
+
+        // Print the closest-vertex pair so we can see WHERE in 3D the alleged attachment is.
+        var closestLayerIdx = -1;
+        var closestBodyIdx = -1;
+        var closestSq = float.PositiveInfinity;
+        var l = layers[i].verts;
+        for (var li = 0; li < l.Length; li++)
+        {
+            if (!usedIndices.Contains(li)) continue;
+            for (var bi = 0; bi < bodyUsed.Length; bi++)
+            {
+                var d = (l[li] - bodyUsed[bi]).LengthSquared();
+                if (d < closestSq) { closestSq = d; closestLayerIdx = li; closestBodyIdx = bi; }
+            }
+        }
+        if (closestLayerIdx >= 0)
+        {
+            var lp = l[closestLayerIdx];
+            var bp = bodyUsed[closestBodyIdx];
+            Console.WriteLine($"      closest pair: layer({lp.X:F3}, {lp.Y:F3}, {lp.Z:F3}) ↔ body({bp.X:F3}, {bp.Y:F3}, {bp.Z:F3})");
+        }
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--simulate-child-cat-composition", StringComparison.OrdinalIgnoreCase))
+{
+    // Simulates the build 0272 bind correction across ALL 5 child cat layers and prints
+    // bounds before/after for each, so we can spot which mesh ends up where in the
+    // assembly. Layer colors match build 0273 wireframe palette: 0=Yellow, 1=Cyan,
+    // 2=Magenta, 3=LightGreen, 4=Orange.
+    var sccPkg = @"C:\GAMES\The Sims 4\EP04\ClientFullBuild0.package";
+    var sccLayers = new (string label, string color, string tgi, bool sharedAdult)[]
+    {
+        ("Body  ", "Yellow",     "015A1849:0071DE20:1514D0CBFC1633D4", false),
+        ("Head  ", "Cyan",       "015A1849:005999D8:816DCA25B3579981", false),
+        ("Shoes ", "Magenta",    "015A1849:00602EBC:AD626467F1D25BBA", false),
+        ("Ears  ", "LightGreen", "015A1849:0062AC70:81FA08FA08FD9B91", true),  // shared with adult
+        ("Tail  ", "Orange",     "015A1849:00E24764:E89D9BE2E081DA65", true),  // shared with adult
+    };
+
+    var sccCat = new LlamaResourceCatalogService();
+    var rigPkg = @"C:\GAMES\The Sims 4\Data\Client\ClientDeltaBuild0.package";
+    var ccRigBytes = await sccCat.GetResourceBytesAsync(rigPkg, new ResourceKeyRecord(0x8EAF13DE, 0u, 0xE0FC2EB394790FE3UL, "Rig"), raw: false, CancellationToken.None, null);
+    var acRigBytes = await sccCat.GetResourceBytesAsync(rigPkg, new ResourceKeyRecord(0x8EAF13DE, 0u, 0x26E972C565C68FC1UL, "Rig"), raw: false, CancellationToken.None, null);
+    var ccRig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(ccRigBytes);
+    var acRig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(acRigBytes);
+
+    // Compute world matrices for both rigs.
+    static Dictionary<uint, System.Numerics.Matrix4x4> ComputeAllWorld(Sims4ResourceExplorer.Preview.Ts4RigResource rig)
+    {
+        var byHash = rig.Bones.ToDictionary(b => b.NameHash);
+        var cache = new Dictionary<uint, System.Numerics.Matrix4x4>();
+        System.Numerics.Matrix4x4 World(Sims4ResourceExplorer.Preview.Ts4RigBone b)
+        {
+            if (cache.TryGetValue(b.NameHash, out var c)) return c;
+            var local = System.Numerics.Matrix4x4.CreateScale(b.Scale)
+                * System.Numerics.Matrix4x4.CreateFromQuaternion(b.Rotation)
+                * System.Numerics.Matrix4x4.CreateTranslation(b.Position);
+            var w = b.ParentHash is uint ph && byHash.TryGetValue(ph, out var p) ? local * World(p) : local;
+            cache[b.NameHash] = w;
+            return w;
+        }
+        foreach (var b in rig.Bones) World(b);
+        return cache;
+    }
+    var ccWorld = ComputeAllWorld(ccRig);
+    var acWorld = ComputeAllWorld(acRig);
+
+    Console.WriteLine($"{"Layer",-7} {"Color",-11} {"Vertices",9}  {"min Y → max Y BEFORE",-25}  {"min Y → max Y AFTER",-25}");
+    Console.WriteLine(new string('-', 100));
+    foreach (var (label, color, tgi, _shared) in sccLayers)
+    {
+        var p = tgi.Split(':');
+        var key = new ResourceKeyRecord(Convert.ToUInt32(p[0],16), Convert.ToUInt32(p[1],16), Convert.ToUInt64(p[2],16), "Geometry");
+        var bytes = await sccCat.GetResourceBytesAsync(sccPkg, key, raw: false, CancellationToken.None, null);
+        var geom = Sims4ResourceExplorer.Preview.Ts4GeomResource.Parse(bytes);
+
+        // Compute bounds BEFORE correction.
+        var minBefore = new System.Numerics.Vector3(float.PositiveInfinity);
+        var maxBefore = new System.Numerics.Vector3(float.NegativeInfinity);
+        foreach (var v in geom.Vertices)
+        {
+            minBefore.Y = MathF.Min(minBefore.Y, v.Position[1]);
+            maxBefore.Y = MathF.Max(maxBefore.Y, v.Position[1]);
+        }
+
+        // Compute deltas per bone present in BOTH rigs AND in this geom.
+        var deltas = new Dictionary<uint, System.Numerics.Vector3>();
+        foreach (var hash in geom.BoneHashes)
+        {
+            if (ccWorld.TryGetValue(hash, out var c) && acWorld.TryGetValue(hash, out var a))
+            {
+                var d = new System.Numerics.Vector3(c.M41 - a.M41, c.M42 - a.M42, c.M43 - a.M43);
+                if (d.LengthSquared() > 1e-8f) deltas[hash] = d;
+            }
+        }
+
+        // Build 0274 selectivity check: only correct if mesh centroid is closer to authoring rig.
+        var meshCentroidY = geom.Vertices.Count > 0 ? geom.Vertices.Average(v => v.Position[1]) : 0f;
+        var ccBoneCentroidY = geom.BoneHashes.Where(h => ccWorld.ContainsKey(h)).Select(h => ccWorld[h].M42).DefaultIfEmpty(0f).Average();
+        var acBoneCentroidY = geom.BoneHashes.Where(h => acWorld.ContainsKey(h)).Select(h => acWorld[h].M42).DefaultIfEmpty(0f).Average();
+        var distToCC = MathF.Abs(meshCentroidY - ccBoneCentroidY);
+        var distToAC = MathF.Abs(meshCentroidY - acBoneCentroidY);
+        var shouldCorrect = distToCC > distToAC;
+
+        // Apply weighted delta to each vertex (or skip if shouldCorrect=false).
+        var minAfter = new System.Numerics.Vector3(float.PositiveInfinity);
+        var maxAfter = new System.Numerics.Vector3(float.NegativeInfinity);
+        foreach (var v in geom.Vertices)
+        {
+            var ny = v.Position[1];
+            if (shouldCorrect && v.BlendIndices is not null && v.BlendWeights is not null)
+            {
+                var totalW = 0f;
+                foreach (var w in v.BlendWeights) totalW += MathF.Max(w, 0f);
+                if (totalW > 0f)
+                {
+                    var accum = System.Numerics.Vector3.Zero;
+                    for (var i = 0; i < v.BlendIndices.Length && i < v.BlendWeights.Length; i++)
+                    {
+                        var w = v.BlendWeights[i];
+                        if (w <= 0f) continue;
+                        var bi = v.BlendIndices[i];
+                        if (bi < 0 || bi >= geom.BoneHashes.Count) continue;
+                        if (deltas.TryGetValue(geom.BoneHashes[bi], out var d)) accum += d * (w / totalW);
+                    }
+                    ny += accum.Y;
+                }
+            }
+            minAfter.Y = MathF.Min(minAfter.Y, ny);
+            maxAfter.Y = MathF.Max(maxAfter.Y, ny);
+        }
+
+        var mark = shouldCorrect ? " corrected" : " skipped";
+        Console.WriteLine($"{label} {color,-11} {geom.Vertices.Count,9}  Y=({minBefore.Y:F3} -> {maxBefore.Y:F3})  Y=({minAfter.Y:F3} -> {maxAfter.Y:F3}) {mark} (cent={meshCentroidY:F3}, cc-bone={ccBoneCentroidY:F3}, ac-bone={acBoneCentroidY:F3})");
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--check-bundled-skins", StringComparison.OrdinalIgnoreCase))
+{
+    // Verify the bundled species skin PNGs are embedded and loadable from the Assets DLL.
+    var asm = typeof(Sims4ResourceExplorer.Assets.ExplicitAssetGraphBuilder).Assembly;
+    Console.WriteLine($"Embedded resources in {asm.GetName().Name}:");
+    foreach (var n in asm.GetManifestResourceNames().OrderBy(x => x))
+    {
+        using var s = asm.GetManifestResourceStream(n);
+        Console.WriteLine($"  {n}  ({s?.Length ?? 0:N0} bytes)");
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--dump-l8-rle", StringComparison.OrdinalIgnoreCase))
+{
+    // Dumps the raw bytes of an L8 RLE texture (the pelt-mask format) so we can
+    // understand the binary layout and write a decoder. Args: --dump-l8-rle <inst>
+    var dlrInst = args.Length > 1 ? args[1] : "1DAFA537C05DB1C7";  // cat pelt 0x1C50C textureKey
+    var dlrCacheDir = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var dlrCache = new ProbeCacheService(Path.GetFullPath(dlrCacheDir + "/.."));
+    dlrCache.EnsureCreated();
+    var dlrStore = new SqliteIndexStore(dlrCache);
+    await dlrStore.InitializeAsync(CancellationToken.None);
+    var dlrInstU = Convert.ToUInt64(dlrInst, 16);
+    var dlrResources = await dlrStore.GetResourcesByFullInstanceAsync(dlrInstU, CancellationToken.None);
+    var dlrRes = dlrResources.FirstOrDefault();
+    if (dlrRes is null) { Console.Error.WriteLine($"Not in index: 0x{dlrInstU:X16}"); return 1; }
+    Console.WriteLine($"Resource: {dlrRes.Key.FullTgi} from {Path.GetFileName(dlrRes.PackagePath)}");
+    var dlrCat = new LlamaResourceCatalogService();
+    // raw=false means GetResourceBytesAsync attempts to decode (DDS→PNG, etc.). For
+    // discovering the L8 RLE format we want the DECOMPRESSED bytes but NOT decoded.
+    // Going via the package's GetAsync directly would be cleaner; here we just read
+    // the raw bytes (which is zlib-compressed in the package) and inflate ourselves.
+    var rawCompressed = await dlrCat.GetResourceBytesAsync(dlrRes.PackagePath, dlrRes.Key, raw: true, CancellationToken.None, null);
+    byte[] raw;
+    using (var inflate = new System.IO.Compression.ZLibStream(new MemoryStream(rawCompressed), System.IO.Compression.CompressionMode.Decompress))
+    using (var ms = new MemoryStream())
+    {
+        inflate.CopyTo(ms);
+        raw = ms.ToArray();
+    }
+    Console.WriteLine($"Raw bytes: {raw.Length}");
+    Console.WriteLine($"\nHex dump (first 128 bytes):");
+    for (var i = 0; i < Math.Min(128, raw.Length); i += 16)
+    {
+        var hex = string.Join(" ", raw.Skip(i).Take(16).Select(b => $"{b:X2}"));
+        var ascii = string.Join("", raw.Skip(i).Take(16).Select(b => b >= 32 && b < 127 ? (char)b : '.'));
+        Console.WriteLine($"  {i:X4}: {hex,-48}  {ascii}");
+    }
+    // Parse header attempts
+    if (raw.Length >= 16)
+    {
+        var magic = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan(0, 4));
+        Console.WriteLine($"\nMagic uint32 LE: 0x{magic:X8}  ({(char)(magic & 0xFF)}{(char)((magic >> 8) & 0xFF)}{(char)((magic >> 16) & 0xFF)}{(char)((magic >> 24) & 0xFF)})");
+        var version = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan(4, 4));
+        var width = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(raw.AsSpan(8, 2));
+        var height = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(raw.AsSpan(10, 2));
+        var mipCount = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(raw.AsSpan(12, 2));
+        var unk = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(raw.AsSpan(14, 2));
+        Console.WriteLine($"Version: 0x{version:X8}");
+        Console.WriteLine($"Dimensions: {width}x{height}, mipCount={mipCount}, unk=0x{unk:X4}");
+    }
     return 0;
 }
 

@@ -1487,12 +1487,24 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         // is the single biggest cost in the Sim-graph build (per profiling in build 0262
         // session logs). Most Sims share their skintone instance, so memoizing by
         // (instance, age, gender, package) collapses subsequent opens to a no-op.
-        if (indexStore is null || string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex))
+        // Build 0279 fix: previous early-return at this line bypassed the inner function
+        // for animals (which have empty SkintoneInstanceHex) — including build 0268's
+        // pelt-tint synthesis and build 0278's species-base-PNG attachment. Symptom:
+        // animals rendered with no texture at all (black materials in lit mode). Now
+        // we only short-circuit for animals that ALSO have no PeltLayers; otherwise we
+        // run the inner resolver and let it produce the synthesised animal summary.
+        var hasPeltLayers = parsedSimInfo is { PeltLayers.Count: > 0 };
+        if (indexStore is null || (string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex) && !hasPeltLayers))
         {
             return Task.FromResult<SimSkintoneRenderSummary?>(null);
         }
 
-        var cacheKey = $"{metadata.SkintoneInstanceHex}|{metadata.AgeLabel}|{metadata.GenderLabel}|{preferredPackagePath ?? string.Empty}";
+        // For animals (no SkintoneInstanceHex) the cache key uses species so two animals
+        // sharing age/gender/package don't collide on a single cache slot.
+        var keyInstance = string.IsNullOrWhiteSpace(metadata.SkintoneInstanceHex)
+            ? $"animal:{metadata.SpeciesLabel}:{(parsedSimInfo?.PeltLayers.FirstOrDefault()?.Variant ?? 0u):X8}"
+            : metadata.SkintoneInstanceHex;
+        var cacheKey = $"{keyInstance}|{metadata.AgeLabel}|{metadata.GenderLabel}|{preferredPackagePath ?? string.Empty}";
         var cachedTask = skintoneRenderCache.GetOrAdd(cacheKey, _ => TryResolveSimSkintoneRenderSummaryUncachedAsync(
             metadata, parsedSimInfo, preferredPackagePath, CancellationToken.None));
         // Surface cancellation back to the per-call caller while keeping the underlying
@@ -1533,17 +1545,26 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             {
                 var firstPelt = parsedSimInfo.PeltLayers[0];
                 var tintColor = ToCanonicalColor(firstPelt.Variant);
+                // Build 0278: load the bundled TS4SimRipper species base PNG and pass it as
+                // BaseTexturePngBytes so the route system in SimSceneComposer attaches it as
+                // the diffuse for body shell materials, replacing EA's blank-white texture.
+                // The first pelt color is still applied as ViewportTintColor (build 0268)
+                // so the gray base PNG gets tinted to the cat/dog/horse's actual fur colour.
+                var baseSkinPng = TryLoadSpeciesBaseSkinPng(metadata.SpeciesLabel);
                 return new SimSkintoneRenderSummary(
                     SkintoneInstanceHex: null,
                     SkintoneShift: null,
                     SkintoneResourceTgi: null,
                     SkintonePackagePath: null,
-                    BaseTextureResourceTgi: null,
+                    BaseTextureResourceTgi: baseSkinPng is not null ? $"PROJECT_BUNDLED:{metadata.SpeciesLabel}Skin.png" : null,
                     BaseTexturePackagePath: null,
                     OverlayTextureCount: 0,
                     SwatchColorCount: parsedSimInfo.PeltLayers.Count,
                     ViewportTintColor: tintColor,
-                    Notes: $"Animal pelt tint synthesised from first PeltLayer (instance 0x{firstPelt.Instance:X16}, color 0x{firstPelt.Variant:X8}). Full per-pelt L8-mask compositing pending.");
+                    Notes: baseSkinPng is not null
+                        ? $"Animal pelt tint synthesised from first PeltLayer (instance 0x{firstPelt.Instance:X16}, color 0x{firstPelt.Variant:X8}). Bundled {metadata.SpeciesLabel}Skin.png base attached ({baseSkinPng.Length:N0} bytes). Per-pelt L8-mask compositing still pending."
+                        : $"Animal pelt tint synthesised from first PeltLayer (instance 0x{firstPelt.Instance:X16}, color 0x{firstPelt.Variant:X8}). No bundled base for species '{metadata.SpeciesLabel}'.",
+                    BaseTexturePngBytes: baseSkinPng);
             }
             return null;
         }
@@ -2140,6 +2161,35 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         // (TS4SimRipper TONE.cs), not an ARGB color. Synthesizing a viewport tint from it
         // produced garbage. Use a neutral skin-tone fallback so the Sim is at least visible.
         return SkintoneFallbackColor;
+    }
+
+    // Build 0278: cache for bundled species base-skin PNGs. Loaded on first request from
+    // the assembly's embedded resources (Cat/Dog/Horse), then reused. Sourced from
+    // TS4SimRipper/src/Resources/* (GPL-licensed). Fox uses the dog base; little-dog
+    // uses the dog base too — both are dog-rig variants per TS4SimRipper convention.
+    private static readonly ConcurrentDictionary<string, byte[]?> bundledSpeciesSkinCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static byte[]? TryLoadSpeciesBaseSkinPng(string? speciesLabel)
+    {
+        if (string.IsNullOrWhiteSpace(speciesLabel)) return null;
+        var resourceName = speciesLabel.Trim().ToLowerInvariant() switch
+        {
+            "cat"        => "Sims4ResourceExplorer.Assets.Resources.CatSkin.png",
+            "dog"        => "Sims4ResourceExplorer.Assets.Resources.DogSkin.png",
+            "little dog" => "Sims4ResourceExplorer.Assets.Resources.DogSkin.png",
+            "fox"        => "Sims4ResourceExplorer.Assets.Resources.DogSkin.png",
+            "horse"      => "Sims4ResourceExplorer.Assets.Resources.HorseSkin.png",
+            _ => null
+        };
+        if (resourceName is null) return null;
+        return bundledSpeciesSkinCache.GetOrAdd(resourceName, key =>
+        {
+            using var stream = typeof(ExplicitAssetGraphBuilder).Assembly.GetManifestResourceStream(key);
+            if (stream is null) return null;
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return ms.ToArray();
+        });
     }
 
     private static CanonicalColor ToCanonicalColor(uint argb)
@@ -3721,7 +3771,17 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             return false;
         }
 
-        if (facts.HasNakedLink || facts.DefaultForBodyType)
+        // Build 0281: HasNakedLink is NOT a "this is a nude shell" signal — it just means the
+        // CASPart references a separate nude underlay via NakedKey, which every clothing item
+        // carries. Per docs/workflows/canonical-baseline-bodies.md and TS4SimRipper's CASP.cs,
+        // the engine's nude-shell selection rule is DefaultForBodyType*, not NakedKey presence.
+        // Treating HasNakedLink as positive let kimono outfits (e.g. ymBody_EP10KimonoMale_*,
+        // puBody_EP10KimonoHifu_*) pass through as the "Full Body underlay" — the kimono's
+        // sleeves/hem then poked out past Top/Bottom/Shoes overlays as visible junk on bicep,
+        // ankles, etc. (visual-verification-findings-build0238.md confirms EA does not ship a
+        // Full Body Nude CASPart; for sims with Top+Bottom+Shoes the underlay should simply
+        // not pick a clothing item.)
+        if (facts.DefaultForBodyType)
         {
             return true;
         }

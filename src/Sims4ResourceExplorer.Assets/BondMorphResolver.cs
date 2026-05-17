@@ -24,6 +24,7 @@ public sealed class BondMorphResolver
     // so cache the resolved adjustments by SimInfo FullInstance. Cleared when the app exits;
     // never persisted to disk because morph code evolves between sessions.
     private readonly Dictionary<ulong, IReadOnlyList<SimBoneMorphAdjustment>> resolutionCache = new();
+    private readonly Dictionary<ulong, IReadOnlyList<SimBondMorph>> bondMorphCache = new();
     private readonly object cacheLock = new();
 
     public BondMorphResolver(IIndexStore indexStore, IResourceCatalogService resourceCatalogService)
@@ -70,6 +71,108 @@ public sealed class BondMorphResolver
     {
         lock (cacheLock) resolutionCache[key] = value;
         return value;
+    }
+
+    /// <summary>
+    /// Build 0289 — TRS-preserving BOND morph resolver. Returns one
+    /// <see cref="SimBondMorph"/> per modifier, with the BOND's full per-bone scale,
+    /// offset, and rotation adjustments preserved (the legacy
+    /// <see cref="ResolveAsync(ResourceMetadata, CancellationToken)"/> drops scale +
+    /// rotation by collapsing each adjustment to translation-only).
+    /// </summary>
+    public async Task<IReadOnlyList<SimBondMorph>> ResolveSimBondMorphsAsync(
+        ResourceMetadata simInfoResource,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(simInfoResource);
+        var cacheKey = simInfoResource.Key.FullInstance;
+        lock (cacheLock)
+        {
+            if (bondMorphCache.TryGetValue(cacheKey, out var cached)) return cached;
+        }
+        byte[] bytes;
+        try
+        {
+            bytes = await resourceCatalogService.GetResourceBytesAsync(
+                simInfoResource.PackagePath, simInfoResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return MemoizeBondMorphs(cacheKey, []);
+        }
+
+        Ts4SimInfo simInfo;
+        try { simInfo = Ts4SimInfoParser.Parse(bytes); }
+        catch { return MemoizeBondMorphs(cacheKey, []); }
+
+        var morphs = new List<SimBondMorph>();
+        await AppendSimBondMorphsAsync(simInfo.BodyModifiers, morphs, cancellationToken).ConfigureAwait(false);
+        await AppendSimBondMorphsAsync(simInfo.FaceModifiers, morphs, cancellationToken).ConfigureAwait(false);
+        return MemoizeBondMorphs(cacheKey, morphs);
+    }
+
+    private IReadOnlyList<SimBondMorph> MemoizeBondMorphs(ulong key, IReadOnlyList<SimBondMorph> value)
+    {
+        lock (cacheLock) bondMorphCache[key] = value;
+        return value;
+    }
+
+    private async Task AppendSimBondMorphsAsync(
+        IReadOnlyList<Ts4SimModifierEntry> modifiers,
+        List<SimBondMorph> sink,
+        CancellationToken cancellationToken)
+    {
+        foreach (var modifier in modifiers)
+        {
+            if (modifier.ModifierKey is not { } smodKey) continue;
+            if (Math.Abs(modifier.Value) < 1e-6f) continue;
+            if (!float.IsFinite(modifier.Value) || Math.Abs(modifier.Value) > MaxAbsModifierWeight) continue;
+
+            var smodResources = await indexStore.GetResourcesByFullInstanceAsync(smodKey.FullInstance, cancellationToken).ConfigureAwait(false);
+            var smodResource = smodResources.FirstOrDefault(r => r.Key.Type == smodKey.Type);
+            if (smodResource is null) continue;
+
+            byte[] smodBytes;
+            try
+            {
+                smodBytes = await resourceCatalogService.GetResourceBytesAsync(
+                    smodResource.PackagePath, smodResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+            }
+            catch { continue; }
+
+            Ts4SimModifierResource smod;
+            try { smod = Ts4SimModifierResource.Parse(smodBytes); }
+            catch { continue; }
+            if (!smod.HasBondReference) continue;
+
+            var bondResources = await indexStore.GetResourcesByFullInstanceAsync(smod.BonePoseKey.Instance, cancellationToken).ConfigureAwait(false);
+            var bondResource = bondResources.FirstOrDefault(r => r.Key.Type == smod.BonePoseKey.Type);
+            if (bondResource is null) continue;
+
+            byte[] bondBytes;
+            try
+            {
+                bondBytes = await resourceCatalogService.GetResourceBytesAsync(
+                    bondResource.PackagePath, bondResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+            }
+            catch { continue; }
+
+            Ts4BondResource bond;
+            try { bond = Ts4BondResource.Parse(bondBytes); }
+            catch { continue; }
+
+            // Preserve scale + offset + rotation for each per-bone adjustment.
+            var adjustments = new List<SimBondAdjustment>(bond.Adjustments.Count);
+            foreach (var adj in bond.Adjustments)
+            {
+                adjustments.Add(new SimBondAdjustment(
+                    BoneHash: adj.SlotHash,
+                    LocalOffset: new System.Numerics.Vector3(adj.OffsetX, adj.OffsetY, adj.OffsetZ),
+                    LocalScale: new System.Numerics.Vector3(adj.ScaleX, adj.ScaleY, adj.ScaleZ),
+                    LocalRotation: new System.Numerics.Quaternion(adj.QuatX, adj.QuatY, adj.QuatZ, adj.QuatW)));
+            }
+            sink.Add(new SimBondMorph(adjustments, modifier.Value));
+        }
     }
 
     internal async Task<IReadOnlyList<SimBoneMorphAdjustment>> ResolveAsync(
