@@ -86,6 +86,20 @@
                             CornerRadius="8"
                             Padding="12">
                         <StackPanel Spacing="10">
+                            <TextBlock Text="Skintone" FontWeight="SemiBold" />
+                            <ComboBox Header="Skintone"
+                                      HorizontalAlignment="Stretch"
+                                      ItemsSource="{Binding AvailableSkintones}"
+                                      SelectedItem="{Binding SelectedSkintone, Mode=TwoWay}"
+                                      DisplayMemberPath="DisplayName" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12">
+                        <StackPanel Spacing="10">
                             <TextBlock Text="Viewport" FontWeight="SemiBold" />
                             <ComboBox Header="Render mode"
                                       HorizontalAlignment="Stretch"

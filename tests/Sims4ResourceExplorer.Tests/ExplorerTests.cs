@@ -12509,6 +12509,7 @@ public sealed class ExplorerTests : IDisposable
                 string.Equals(resource.PackagePath, packagePath, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(resource.Key.FullTgi, fullTgi, StringComparison.OrdinalIgnoreCase)));
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => string.Equals(resource.Key.FullTgi, fullTgi, StringComparison.OrdinalIgnoreCase)).ToArray());
+        public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTypeNameAsync(string typeName, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>(resources.Where(resource => string.Equals(resource.Key.TypeName, typeName, StringComparison.OrdinalIgnoreCase)).ToArray());
         public Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken)
         {
             var expectedBodyType = slotCategory switch

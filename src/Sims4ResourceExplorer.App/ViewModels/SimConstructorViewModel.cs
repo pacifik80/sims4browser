@@ -12,9 +12,9 @@ namespace Sims4ResourceExplorer.App.ViewModels;
 public sealed partial class SimConstructorViewModel : ObservableObject
 {
     // Build 0290: default Human skintone instance. Confirmed present in the user's index
-    // per project memory (5 copies across v6 + v12 TONEs). Without a real skintone, the
-    // skintone-routed body materials render without a diffuse atlas and end up invisible.
-    // P1.1 will replace this constant with a runtime enumeration + swatch picker.
+    // per project memory (5 copies across v6 + v12 TONEs). Used as the initial fallback
+    // until the runtime skintone enumeration completes; once the user picks a swatch from
+    // AvailableSkintones the value comes from SelectedSkintone instead.
     private const ulong DefaultHumanSkintoneInstance = 0x0000000000005545ul;
 
     private readonly ISyntheticSimService syntheticSimService;
@@ -30,6 +30,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private string assetGraphDiagnostics = string.Empty;
     private CanonicalScene? currentScene;
     private SceneRenderMode selectedRenderMode = SceneRenderMode.LitTexture;
+    private IReadOnlyList<SkintoneOption> availableSkintones = Array.Empty<SkintoneOption>();
+    private SkintoneOption? selectedSkintone;
 
     public SimConstructorViewModel(ISyntheticSimService syntheticSimService, ISimAssetGraphRenderer simRenderer)
     {
@@ -38,6 +40,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         AvailableAges = syntheticSimService.AvailableHumanAges;
         AvailableGenders = syntheticSimService.AvailableHumanGenders;
         currentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, DefaultHumanSkintoneInstance);
+        _ = LoadSkintonesAsync();
         TriggerRebuild();
     }
 
@@ -50,6 +53,24 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     {
         get => selectedRenderMode;
         set => SetProperty(ref selectedRenderMode, value);
+    }
+
+    public IReadOnlyList<SkintoneOption> AvailableSkintones
+    {
+        get => availableSkintones;
+        private set => SetProperty(ref availableSkintones, value);
+    }
+
+    public SkintoneOption? SelectedSkintone
+    {
+        get => selectedSkintone;
+        set
+        {
+            if (SetProperty(ref selectedSkintone, value) && value is not null)
+            {
+                Rebuild();
+            }
+        }
     }
 
     public string SelectedAge
@@ -139,8 +160,26 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     private void Rebuild()
     {
-        CurrentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, DefaultHumanSkintoneInstance);
+        var skintone = selectedSkintone?.Instance ?? DefaultHumanSkintoneInstance;
+        CurrentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, skintone);
         TriggerRebuild();
+    }
+
+    private async Task LoadSkintonesAsync()
+    {
+        try
+        {
+            var skintones = await syntheticSimService.EnumerateSkintonesAsync(CancellationToken.None).ConfigureAwait(true);
+            AvailableSkintones = skintones;
+            // Align SelectedSkintone with the seed's current instance so the picker reflects state
+            // without triggering an extra rebuild via the SelectedSkintone setter.
+            selectedSkintone = skintones.FirstOrDefault(s => s.Instance == currentSeed.SkintoneInstance);
+            OnPropertyChanged(nameof(SelectedSkintone));
+        }
+        catch
+        {
+            // Picker stays empty; the constructor still works with the default skintone.
+        }
     }
 
     private void TriggerRebuild()

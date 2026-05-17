@@ -586,6 +586,19 @@ public sealed class SqliteIndexStore : IIndexStore
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTypeNameAsync(string typeName, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+        {
+            return [];
+        }
+        var results = await Task.WhenAll(GetServingDatabasePaths().Select(path => GetResourcesByTypeNameFromDatabaseAsync(path, typeName, cancellationToken)));
+        return OrderByResource(
+                results.SelectMany(static items => items),
+                RawResourceSort.Tgi)
+            .ToArray();
+    }
+
     public async Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(archetypeKey))
@@ -909,6 +922,23 @@ public sealed class SqliteIndexStore : IIndexStore
             ORDER BY package_path, type_name;
             """;
         command.Parameters.AddWithValue("$fullTgi", fullTgi);
+        return await ReadResourcesAsync(command, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTypeNameFromDatabaseAsync(string databasePath, string typeName, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT id, data_source_id, source_kind, package_path, type_hex, type_name, group_hex, instance_hex, full_tgi, name, description,
+                   catalog_signal_0020, catalog_signal_002c, catalog_signal_0030, catalog_signal_0034,
+                   compressed_size, uncompressed_size, is_compressed, preview_kind, is_previewable, is_export_capable, asset_linkage_summary, diagnostics, scene_root_tgi_hint
+            FROM resources
+            WHERE type_name = $typeName
+            ORDER BY instance_hex, package_path;
+            """;
+        command.Parameters.AddWithValue("$typeName", typeName);
         return await ReadResourcesAsync(command, cancellationToken);
     }
 

@@ -2327,6 +2327,7 @@ public sealed class IndexingPipelineTests
         public Task<IReadOnlyList<AssetVariantSummary>> GetAssetVariantsAsync(Guid assetId, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetVariantSummary>>([]);
         public Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken) => Task.FromResult<ResourceMetadata?>(null);
         public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
+        public Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTypeNameAsync(string typeName, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ResourceMetadata>>([]);
         public Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AssetSummary>>([]);
         public Task<BodyRecipeAvailabilitySnapshot> ProbeBodyRecipeAvailabilityAsync(SimInfoSummary metadata, CancellationToken cancellationToken) => Task.FromResult(new BodyRecipeAvailabilitySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         public Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<SimTemplateFactSummary>>([]);
