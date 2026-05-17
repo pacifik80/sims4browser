@@ -1776,6 +1776,89 @@ if (args.Length > 0 && string.Equals(args[0], "--probe-synthetic-sim", StringCom
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--probe-synthetic-scene", StringComparison.OrdinalIgnoreCase))
+{
+    // Runs the full P0.4c R1 pipeline: synthesise a SimInfo for (age, gender), feed it
+    // through BuildSyntheticHumanSimGraphAsync, then run SimAssetGraphRenderer to produce
+    // a composited CanonicalScene. Dumps mesh count, material count, bone count, bounds,
+    // per-layer scene info, and the morph/assembly diagnostics. This is the harness for
+    // verifying that R1 actually renders a Sim from the synthetic seed end-to-end.
+    //
+    // Usage: --probe-synthetic-scene <age> <gender> [skintoneInstanceHex16]
+    var pscAge    = args.Length > 1 ? args[1] : "Adult";
+    var pscGender = args.Length > 2 ? args[2] : "Female";
+    var pscSkin   = 0ul;
+    if (args.Length > 3 &&
+        !ulong.TryParse(args[3], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out pscSkin))
+    {
+        Console.Error.WriteLine($"Could not parse skintone instance hex: {args[3]}");
+        return 2;
+    }
+
+    var pscCacheDir = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var pscDb = Path.Combine(pscCacheDir, "index.sqlite");
+    if (!File.Exists(pscDb))
+    {
+        Console.Error.WriteLine($"Index store not found: {pscDb}. Run --update-index first via the app.");
+        return 3;
+    }
+
+    var pscCache = new ProbeCacheService(Path.GetFullPath(pscCacheDir + "/.."));
+    pscCache.EnsureCreated();
+    var pscStore = new SqliteIndexStore(pscCache);
+    await pscStore.InitializeAsync(CancellationToken.None);
+    var pscCat = new LlamaResourceCatalogService();
+    var pscBld = new ExplicitAssetGraphBuilder(pscCat, pscStore);
+    var pscScene = new Sims4ResourceExplorer.Preview.BuildBuySceneBuildService(pscCat, pscStore);
+    var pscBondRes = new Sims4ResourceExplorer.Assets.BondMorphResolver(pscStore, pscCat);
+    var pscDmapRes = new Sims4ResourceExplorer.Assets.DeformerMapResolver(pscStore, pscCat);
+    var pscBgeoRes = new Sims4ResourceExplorer.Assets.BlendGeometryResolver(pscStore, pscCat);
+    var pscRigLoad = new Sims4ResourceExplorer.Preview.SimRender.SimRigLoader(pscCat, pscStore);
+    var pscRenderer = new Sims4ResourceExplorer.Preview.SimRender.SimAssetGraphRenderer(
+        pscStore, pscBld, pscScene, pscBondRes, pscDmapRes, pscBgeoRes, pscRigLoad);
+
+    Console.WriteLine($"Synthesising Sim: age={pscAge} gender={pscGender} skintoneInstance=0x{pscSkin:X16}");
+    var pscSw = Stopwatch.StartNew();
+    var pscGraph = await pscBld.BuildSyntheticHumanSimGraphAsync(pscAge, pscGender, pscSkin, CancellationToken.None);
+    var pscGraphMs = pscSw.ElapsedMilliseconds;
+    Console.WriteLine($"  Graph built in {pscGraphMs} ms; simGraph={pscGraph.SimGraph != null}.");
+    if (pscGraph.SimGraph is null) { Console.WriteLine("Bailing — no SimGraph."); return 4; }
+
+    Console.WriteLine();
+    Console.WriteLine("Building scene via SimAssetGraphRenderer...");
+    pscSw.Restart();
+    var pscResult = await pscRenderer.BuildSimSceneAsync(pscGraph, CancellationToken.None);
+    var pscSceneMs = pscSw.ElapsedMilliseconds;
+    Console.WriteLine($"  Scene built in {pscSceneMs} ms.");
+    Console.WriteLine();
+
+    if (pscResult.Scene is null)
+    {
+        Console.WriteLine("Renderer produced no CanonicalScene. Diagnostics:");
+        foreach (var d in pscResult.Diagnostics) Console.WriteLine($"  {d}");
+        return 5;
+    }
+
+    var pscS = pscResult.Scene;
+    Console.WriteLine($"Composited scene:");
+    Console.WriteLine($"  Meshes:    {pscS.Meshes.Count}");
+    Console.WriteLine($"  Materials: {pscS.Materials.Count}");
+    Console.WriteLine($"  Bones:     {pscS.Bones.Count}");
+    var pscB = pscS.Bounds;
+    Console.WriteLine($"  Bounds:    min=({pscB.MinX:0.###},{pscB.MinY:0.###},{pscB.MinZ:0.###}) max=({pscB.MaxX:0.###},{pscB.MaxY:0.###},{pscB.MaxZ:0.###})");
+    Console.WriteLine($"  Layers:    {pscResult.Layers.Count}");
+    foreach (var layer in pscResult.Layers)
+    {
+        var mc = layer.Scene?.Meshes.Count ?? 0;
+        Console.WriteLine($"    {layer.Resource.Key.FullTgi}  meshes={mc}  status={layer.Status}");
+    }
+    Console.WriteLine();
+    Console.WriteLine($"Diagnostics ({pscResult.Diagnostics.Count}):");
+    foreach (var d in pscResult.Diagnostics.Take(40)) Console.WriteLine($"  {d}");
+    if (pscResult.Diagnostics.Count > 40) Console.WriteLine($"  ... {pscResult.Diagnostics.Count - 40} more.");
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--simulate-body-candidates", StringComparison.OrdinalIgnoreCase))
 {
     // Replicates the EXACT production SQL from GetIndexedDefaultBodyRecipeAssetsFromDatabaseAsync

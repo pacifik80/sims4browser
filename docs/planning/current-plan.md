@@ -78,19 +78,11 @@ The current render pipeline runs through three layers, only one of which is alre
 2. **ScenePreviewContent[] → CanonicalScene**. Already a clean static method: [SimSceneComposer.ComposeBodyAndHead](../../src/Sims4ResourceExplorer.Core/SimSceneComposer.cs#L9) in Core. No ViewModel coupling. **Reusable as-is.**
 3. **CanonicalScene → Viewport3DX**. Today: `MainWindow.RenderScene(CanonicalScene)` [MainWindow.xaml.cs:646-730](../../src/Sims4ResourceExplorer.App/MainWindow.xaml.cs#L646) + helpers (`CreateMaterial`, `CreateGeometry`, `ApplySelectedVariantToScene`, `TryBuildMultiPassPlan`, `AddOverlayPasses`, `ResetSceneCamera`, `BuildViewportTextureSelection`, ~500-600 LOC reusable). Reads `ViewModel.SelectedSceneRenderMode/Variant/TextureSlot/UvChannel`. **Needs extraction.**
 
-- [ ] **R1 — `ISimAssetGraphRenderer` service**. New file under [src/Sims4ResourceExplorer.Preview/SimRender/](../../src/Sims4ResourceExplorer.Preview/SimRender/). Public:
-  ```csharp
-  public interface ISimAssetGraphRenderer {
-      Task<SimRenderResult> BuildSimSceneAsync(AssetGraph graph, CancellationToken ct);
-  }
-  public sealed record SimRenderResult(
-      CanonicalScene? Scene,
-      IReadOnlyList<ScenePreviewContent> Layers,
-      SimAssemblyPlanSummary? AssemblyPlan,
-      SimAssemblyGraphSummary? AssemblyGraph,
-      IReadOnlyList<string> Diagnostics);
-  ```
-  Implementation: walk `SimGraph.BodyCandidates`, resolve CASPart resources, build CasAssetGraph + Scene per candidate, resolve morphs (BondMorphResolver, DeformerMapResolver, BlendGeometryResolver), apply via `SimBondSceneMorpher`, `DeformerMapMorpher`, `BlendGeometryMorpher`, call `SimSceneComposer.ComposeBodyAndHead`. Returns CanonicalScene + per-layer diagnostics. DI Singleton. Verifiable via new ProbeAsset `--probe-synthetic-scene <age> <gender>` that dumps scene mesh count + bounds.
+- [x] **R1 — `ISimAssetGraphRenderer` service shipped.** [SimAssetGraphRenderer](../../src/Sims4ResourceExplorer.Preview/SimRender/SimAssetGraphRenderer.cs) in Preview. Pure-function: walks `SimGraph.BodyCandidates`, picks first candidate per bucket, resolves AssetSummary via index (with package-id-lookup-first / TGI-query-fallback), builds CasAssetGraph through `IAssetGraphBuilder`, builds scene via `ISceneBuildService`, wraps as `ScenePreviewContent`, composes multi-layer bodies via `CanonicalSceneComposer.Compose`, resolves BOND/DMap/BGEO morphs through the three resolvers, loads the canonical rig via `SimRigLoader`, applies morphs via `SimBondSceneMorpher`/`DeformerMapMorpher`/`BlendGeometryMorpher`, and composes the final scene through `SimSceneComposer.ComposeBodyAndHead` with skintone + region map routing.
+
+  Head treated as a special case (BodyAssembly often marks Head Available rather than Active; renderer always tries to resolve the Head bucket if it exists). DI Singleton (App.xaml.cs registration updated to use the public constructor). Required adding `Sims4ResourceExplorer.Assets` project reference to `Sims4ResourceExplorer.Preview` so the morph resolvers are visible — no cycle (Assets doesn't reference Preview).
+
+  **Verified end-to-end** via new ProbeAsset subcommand `--probe-synthetic-scene <age> <gender>`. Adult Female produces a 4-mesh composited scene (yfHead + yfTop_Nude + yfBottom_Nude + yfShoes_Nude), 4 materials, 100 bones, bounds (-0.72, 0, -0.12) → (0.72, 1.87, 0.18) — roughly 1.87m tall, anatomically Sim-sized.
 
 - [ ] **R2 — `SceneViewportRenderer` (App layer)**. New file under [src/Sims4ResourceExplorer.App/Services/](../../src/Sims4ResourceExplorer.App/Services/). Helix3D types are App-only. Public:
   ```csharp
