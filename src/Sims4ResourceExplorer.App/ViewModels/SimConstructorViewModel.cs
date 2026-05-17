@@ -55,6 +55,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private FaceCasOption? selectedEyeshadow;
     private FaceCasOption? selectedEyeliner;
     private FaceCasOption? selectedBlush;
+    private float baseSkinAlpha = 1f;
     private float detailNeutralAlpha = 1f;
     private float detailOverlayAlpha = 1f;
     private float pass3HueAlpha = 1f;
@@ -222,6 +223,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     public FaceCasOption? SelectedEyeliner  { get => selectedEyeliner;  set { if (SetProperty(ref selectedEyeliner, value))  RebuildSkinLayers(); } }
     public FaceCasOption? SelectedBlush     { get => selectedBlush;     set { if (SetProperty(ref selectedBlush, value))     RebuildSkinLayers(); } }
 
+    public float BaseSkinAlpha        { get => baseSkinAlpha;        set { if (SetProperty(ref baseSkinAlpha, value))        RebuildSkinLayers(); } }
     public float DetailNeutralAlpha   { get => detailNeutralAlpha;   set { if (SetProperty(ref detailNeutralAlpha, value))   RebuildSkinLayers(); } }
     public float DetailOverlayAlpha   { get => detailOverlayAlpha;   set { if (SetProperty(ref detailOverlayAlpha, value))   RebuildSkinLayers(); } }
     public float Pass3HueAlpha        { get => pass3HueAlpha;        set { if (SetProperty(ref pass3HueAlpha, value))        RebuildSkinLayers(); } }
@@ -235,6 +237,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     public SkinLayerSettings CurrentSkinLayers => new()
     {
+        BaseSkinAlpha = baseSkinAlpha,
         DetailNeutralAlpha = detailNeutralAlpha,
         DetailOverlayAlpha = detailOverlayAlpha,
         Pass3HueAlpha = pass3HueAlpha,
@@ -346,7 +349,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 detailNeutralAlpha: settings.DetailNeutralAlpha,
                 pass3HueAlpha: settings.Pass3HueAlpha,
                 faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
-                faceCasOverlayAlphas: overlayAlphas).ConfigureAwait(true);
+                faceCasOverlayAlphas: overlayAlphas,
+                baseSkinAlpha: settings.BaseSkinAlpha).ConfigureAwait(true);
             if (token.IsCancellationRequested)
             {
                 return;

@@ -10,6 +10,7 @@ namespace Sims4ResourceExplorer.App.ViewModels;
 /// </summary>
 public sealed record SkinLayerSettings
 {
+    public float BaseSkinAlpha        { get; init; } = 1f;
     public float DetailNeutralAlpha   { get; init; } = 1f;
     public float DetailOverlayAlpha   { get; init; } = 1f;
     public float Pass3HueAlpha        { get; init; } = 1f;
@@ -31,6 +32,7 @@ public sealed record SkinLayerSettings
         unchecked
         {
             long h = 17;
+            h = h * 31 + System.BitConverter.SingleToInt32Bits(BaseSkinAlpha);
             h = h * 31 + System.BitConverter.SingleToInt32Bits(DetailNeutralAlpha);
             h = h * 31 + System.BitConverter.SingleToInt32Bits(DetailOverlayAlpha);
             h = h * 31 + System.BitConverter.SingleToInt32Bits(Pass3HueAlpha);
@@ -46,6 +48,7 @@ public sealed record SkinLayerSettings
     }
 
     public bool IsDefault() =>
+        BaseSkinAlpha == 1f &&
         DetailNeutralAlpha == 1f &&
         DetailOverlayAlpha == 1f &&
         Pass3HueAlpha == 1f &&

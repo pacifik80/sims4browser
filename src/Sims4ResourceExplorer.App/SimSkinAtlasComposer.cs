@@ -60,8 +60,10 @@ public static class SimSkinAtlasComposer
         float detailNeutralAlpha = 1f,
         float pass3HueAlpha = 1f,
         float faceOverlayAlpha = 1f,
-        IReadOnlyList<float>? faceCasOverlayAlphas = null)
+        IReadOnlyList<float>? faceCasOverlayAlphas = null,
+        float baseSkinAlpha = 1f)
     {
+        var clampedBaseSkinAlpha = System.Math.Clamp(baseSkinAlpha, 0f, 1f);
         var clampedDetailNeutralAlpha = System.Math.Clamp(detailNeutralAlpha, 0f, 1f);
         var clampedPass3HueAlpha = System.Math.Clamp(pass3HueAlpha, 0f, 1f);
         var clampedFaceOverlayAlpha = System.Math.Clamp(faceOverlayAlpha, 0f, 1f);
@@ -79,6 +81,20 @@ public static class SimSkinAtlasComposer
         var width = skin.Value.Width;
         var height = skin.Value.Height;
         var skinPixels = skin.Value.Pixels;
+
+        // Base skin alpha — biases the substrate toward a neutral mid-gray. At 1 the
+        // skintone's base PNG is used as-is; at 0 the substrate becomes flat mid-gray
+        // (useful as a diagnostic for "is the brown blotch in the base texture?").
+        if (clampedBaseSkinAlpha < 1f)
+        {
+            for (var i = 0; i < skinPixels.Length; i += 4)
+            {
+                for (var c = 0; c < 3; c++)
+                {
+                    skinPixels[i + c] = (byte)((skinPixels[i + c] * clampedBaseSkinAlpha) + (128f * (1f - clampedBaseSkinAlpha)));
+                }
+            }
+        }
 
         // 1. Build the details canvas. Start with the neutral details, then draw the overlay
         //    row on top (when present, e.g. adult / elder). Both are resized to (width × height)

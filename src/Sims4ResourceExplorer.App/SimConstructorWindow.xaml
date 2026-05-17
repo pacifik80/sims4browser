@@ -197,6 +197,17 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Base skin" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding BaseSkinAlpha, Mode=OneWay}" Opacity="0.7" />
+                                </Grid>
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding BaseSkinAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
                                     <TextBlock Text="Detail (neutral)" FontWeight="SemiBold" />
                                     <TextBlock Grid.Column="1" Text="{Binding DetailNeutralAlpha, Mode=OneWay}" Opacity="0.7" />
                                 </Grid>
