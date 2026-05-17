@@ -111,6 +111,14 @@ public sealed partial class SimConstructorWindow : Window
         }
     }
 
+    private void SkintonePickerGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.AddedItems.Count > 0)
+        {
+            SkintonePickerFlyout.Hide();
+        }
+    }
+
     private void SectionNav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (args.SelectedItem is NavigationViewItem item && item.Tag is string sectionTag)

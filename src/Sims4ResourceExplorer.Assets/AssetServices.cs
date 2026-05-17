@@ -78,6 +78,16 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         };
     }
 
+    public Task<SimSkintoneRenderSummary?> ResolveHumanSkintoneAsync(
+        string ageLabel,
+        string genderLabel,
+        ulong skintoneInstance,
+        CancellationToken cancellationToken)
+    {
+        var parsedSimInfo = Ts4SimInfoBuilder.BuildHuman(ageLabel, genderLabel, skintoneInstance);
+        return TryResolveSimSkintoneRenderSummaryAsync(parsedSimInfo.ToSummary(), parsedSimInfo, preferredPackagePath: null, cancellationToken);
+    }
+
     public Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(
         string ageLabel,
         string genderLabel,

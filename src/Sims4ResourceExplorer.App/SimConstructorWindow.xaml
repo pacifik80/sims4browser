@@ -91,36 +91,65 @@
                             Padding="12">
                         <StackPanel Spacing="10">
                             <TextBlock Text="Skintone" FontWeight="SemiBold" />
-                            <GridView
-                                ItemsSource="{Binding AvailableSkintones}"
-                                SelectedItem="{Binding SelectedSkintone, Mode=TwoWay}"
-                                SelectionMode="Single"
-                                IsItemClickEnabled="False"
-                                HorizontalAlignment="Stretch">
-                                <GridView.ItemContainerStyle>
-                                    <Style TargetType="GridViewItem">
-                                        <Setter Property="MinWidth" Value="0" />
-                                        <Setter Property="MinHeight" Value="0" />
-                                        <Setter Property="Margin" Value="2" />
-                                        <Setter Property="Padding" Value="0" />
-                                    </Style>
-                                </GridView.ItemContainerStyle>
-                                <GridView.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Width="32"
-                                                Height="32"
-                                                CornerRadius="4"
-                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                BorderThickness="1"
-                                                Background="{Binding SwatchArgb, Converter={StaticResource SwatchBrush}}"
-                                                ToolTipService.ToolTip="{Binding DisplayName}" />
-                                    </DataTemplate>
-                                </GridView.ItemTemplate>
-                            </GridView>
-                            <TextBlock Text="{Binding SelectedSkintone.DisplayName, FallbackValue=No skintone}"
-                                       FontSize="11"
-                                       Opacity="0.6"
-                                       TextWrapping="WrapWholeWords" />
+                            <Button x:Name="SkintonePickerButton"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    Padding="6">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Width="24"
+                                            Height="24"
+                                            CornerRadius="4"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            Background="{Binding SelectedSkintone.SwatchArgb, Converter={StaticResource SwatchBrush}}" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding SelectedSkintone.DisplayName, FallbackValue=Select skintone…}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <FontIcon Grid.Column="2"
+                                              Glyph="&#xE70D;"
+                                              FontSize="12"
+                                              VerticalAlignment="Center"
+                                              Opacity="0.6" />
+                                </Grid>
+                                <Button.Flyout>
+                                    <Flyout x:Name="SkintonePickerFlyout" Placement="Bottom">
+                                        <GridView x:Name="SkintonePickerGrid"
+                                                  ItemsSource="{Binding AvailableSkintones}"
+                                                  SelectedItem="{Binding SelectedSkintone, Mode=TwoWay}"
+                                                  SelectionMode="Single"
+                                                  IsItemClickEnabled="False"
+                                                  SelectionChanged="SkintonePickerGrid_SelectionChanged"
+                                                  Width="360"
+                                                  MaxHeight="420">
+                                            <GridView.ItemContainerStyle>
+                                                <Style TargetType="GridViewItem">
+                                                    <Setter Property="MinWidth" Value="0" />
+                                                    <Setter Property="MinHeight" Value="0" />
+                                                    <Setter Property="Margin" Value="2" />
+                                                    <Setter Property="Padding" Value="0" />
+                                                </Style>
+                                            </GridView.ItemContainerStyle>
+                                            <GridView.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Width="32"
+                                                            Height="32"
+                                                            CornerRadius="4"
+                                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                            BorderThickness="1"
+                                                            Background="{Binding SwatchArgb, Converter={StaticResource SwatchBrush}}"
+                                                            ToolTipService.ToolTip="{Binding DisplayName}" />
+                                                </DataTemplate>
+                                            </GridView.ItemTemplate>
+                                        </GridView>
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
                         </StackPanel>
                     </Border>
 

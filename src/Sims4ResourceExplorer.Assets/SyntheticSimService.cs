@@ -14,6 +14,12 @@ public interface ISyntheticSimService
         SimConstructorSeed seed,
         CancellationToken cancellationToken);
 
+    Task<Sims4ResourceExplorer.Core.SimSkintoneRenderSummary?> ResolveSkintoneRenderAsync(
+        string ageLabel,
+        string genderLabel,
+        ulong skintoneInstance,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<SkintoneOption>> EnumerateSkintonesAsync(CancellationToken cancellationToken);
 
     IReadOnlyList<string> AvailableHumanAges { get; }
@@ -124,6 +130,13 @@ public sealed class SyntheticSimService : ISyntheticSimService
         SimConstructorSeed seed,
         CancellationToken cancellationToken) =>
         graphBuilder.BuildSyntheticHumanSimGraphAsync(seed.AgeLabel, seed.GenderLabel, seed.SkintoneInstance, cancellationToken);
+
+    public Task<Sims4ResourceExplorer.Core.SimSkintoneRenderSummary?> ResolveSkintoneRenderAsync(
+        string ageLabel,
+        string genderLabel,
+        ulong skintoneInstance,
+        CancellationToken cancellationToken) =>
+        graphBuilder.ResolveHumanSkintoneAsync(ageLabel, genderLabel, skintoneInstance, cancellationToken);
 
     public SimConstructorSeed CreateHumanSeed(string ageLabel, string genderLabel, ulong skintoneInstance = 0ul)
     {

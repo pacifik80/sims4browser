@@ -83,7 +83,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         {
             if (SetProperty(ref selectedSkintone, value) && value is not null)
             {
-                Rebuild();
+                RebuildForSkintoneChange(value);
             }
         }
     }
@@ -180,6 +180,128 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         TriggerRebuild();
     }
 
+    /// <summary>
+    /// Skintone-only change. Tries the fast path first: if any scene for the current
+    /// (age, gender) is already in the cache, we can reuse its geometry + bones and only
+    /// re-compose the skin atlas and rebind the skintone-routed materials. Falls back to
+    /// the full rebuild when no base scene is available yet.
+    /// </summary>
+    private void RebuildForSkintoneChange(SkintoneOption newSkintone)
+    {
+        CurrentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, newSkintone.Instance);
+        var key = new SceneCacheKey(selectedAge, selectedGender, newSkintone.Instance);
+
+        if (sceneCache.TryGetValue(key, out var cached))
+        {
+            ApplyCachedEntry(cached);
+            return;
+        }
+
+        var baseEntry = FindBaseSceneForArchetype(selectedAge, selectedGender);
+        if (baseEntry is null)
+        {
+            // No prior build for this (age, gender) — fall back to the full path.
+            TriggerRebuild();
+            return;
+        }
+
+        rebuildCts?.Cancel();
+        rebuildCts = new CancellationTokenSource();
+        SceneStatus = "Re-composing skin atlas (fast path)…";
+        _ = ApplySkintoneInPlaceAsync(baseEntry, newSkintone, key, rebuildCts.Token);
+    }
+
+    private CachedSceneEntry? FindBaseSceneForArchetype(string age, string gender)
+    {
+        foreach (var (k, v) in sceneCache)
+        {
+            if (string.Equals(k.Age, age, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(k.Gender, gender, StringComparison.OrdinalIgnoreCase))
+            {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    private async Task ApplySkintoneInPlaceAsync(
+        CachedSceneEntry baseEntry,
+        SkintoneOption newSkintone,
+        SceneCacheKey key,
+        CancellationToken token)
+    {
+        try
+        {
+            var skintone = await syntheticSimService
+                .ResolveSkintoneRenderAsync(selectedAge, selectedGender, newSkintone.Instance, token)
+                .ConfigureAwait(true);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (skintone is null)
+            {
+                SceneStatus = "Skintone resolution failed; viewport unchanged.";
+                return;
+            }
+
+            var atlas = await SimSkinAtlasComposer.BuildAsync(
+                skintone.BaseTexturePngBytes,
+                skintone.DetailNeutralPngBytes,
+                skintone.DetailOverlayPngBytes,
+                skintone.FaceOverlayPngBytes,
+                skintone.FaceCasOverlayPngBytes,
+                pass2Opacity: skintone.OverlayOpacity / 100f,
+                skintoneHue: skintone.SkintoneHue,
+                skintoneSaturation: skintone.SkintoneSaturation,
+                cancellationToken: token).ConfigureAwait(true);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var rebound = atlas is { Length: > 0 }
+                ? SimSkintoneMaterialBinder.RebindWithAtlas(baseEntry.Scene, atlas)
+                : baseEntry.Scene;
+
+            var diagnostics = atlas is { Length: > 0 }
+                ? $"{baseEntry.Diagnostics}\nSkin atlas (fast path): re-composed {atlas.Length:N0} bytes for skintone 0x{newSkintone.Instance:X16}."
+                : $"{baseEntry.Diagnostics}\nSkin atlas (fast path): composition failed for skintone 0x{newSkintone.Instance:X16}; materials retain the previous binding.";
+            var b = rebound.Bounds;
+            var statusText = System.FormattableString.Invariant(
+                $"Scene ready (fast path) — meshes={rebound.Meshes.Count}, materials={rebound.Materials.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
+
+            var newEntry = new CachedSceneEntry(
+                Scene: rebound,
+                AssetGraphStatus: baseEntry.AssetGraphStatus,
+                BodyCandidatesSummary: baseEntry.BodyCandidatesSummary,
+                Diagnostics: diagnostics,
+                SceneStatus: statusText);
+            sceneCache[key] = newEntry;
+
+            var currentKey = new SceneCacheKey(currentSeed.AgeLabel, currentSeed.GenderLabel, currentSeed.SkintoneInstance);
+            if (currentKey.Equals(key))
+            {
+                AssetGraphStatus = baseEntry.AssetGraphStatus;
+                BodyCandidatesSummary = baseEntry.BodyCandidatesSummary;
+                AssetGraphDiagnostics = diagnostics;
+                SceneStatus = $"{statusText}  [{sceneCache.Count} cached]";
+                CurrentScene = rebound;
+            }
+        }
+        catch (System.OperationCanceledException)
+        {
+        }
+        catch (System.Exception ex)
+        {
+            if (!token.IsCancellationRequested)
+            {
+                SceneStatus = $"Skintone update error: {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+    }
+
     private async Task LoadSkintonesAsync()
     {
         try
@@ -214,10 +336,9 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         rebuildCts = new CancellationTokenSource();
         var token = rebuildCts.Token;
         AssetGraphStatus = "Building asset graph…";
-        SceneStatus = "Waiting for asset graph…";
-        BodyCandidatesSummary = string.Empty;
-        AssetGraphDiagnostics = string.Empty;
-        CurrentScene = null;
+        SceneStatus = currentScene is null ? "Waiting for asset graph…" : "Rebuilding scene (viewport keeps the previous one until ready)…";
+        // Leave CurrentScene alone — keep the previously rendered Sim visible while the
+        // new build runs. The viewport will swap in the new scene atomically on success.
         _ = RebuildSceneAsync(seed, key, token);
     }
 
@@ -282,8 +403,9 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             if (renderResult.Scene is null)
             {
                 AssetGraphDiagnostics = string.Join("\n", combinedDiagnostics);
-                SceneStatus = "Scene build failed — viewport remains empty.";
-                CurrentScene = null;
+                SceneStatus = currentScene is null
+                    ? "Scene build failed — viewport remains empty."
+                    : "Scene build failed — viewport keeps the previous Sim.";
                 return;
             }
 
