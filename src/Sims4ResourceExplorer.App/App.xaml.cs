@@ -45,6 +45,7 @@ public partial class App : Application
                 // parsed rigs across calls; singleton lifecycle keeps the cache warm for the
                 // whole session.
                 services.AddSingleton<Sims4ResourceExplorer.Preview.SimRender.SimRigLoader>();
+                services.AddSingleton<Sims4ResourceExplorer.Preview.SimRender.ISimAssetGraphRenderer, Sims4ResourceExplorer.Preview.SimRender.SimAssetGraphRenderer>();
                 services.AddSingleton<ITextureDecodeService, BasicTextureDecodeService>();
                 services.AddSingleton<BuildBuySceneBuildService>();
                 services.AddSingleton<CachedSceneBuildService>(static sp =>

@@ -65,7 +65,54 @@ P0 must serialise (other phases depend on the synthesis path and Window shell). 
 - [x] **P0.3** [Ts4SimInfoBuilder](../../src/Sims4ResourceExplorer.Assets/Ts4SimInfoBuilder.cs) shipped. Public API: `BuildHuman(ageLabel, genderLabel, skintoneInstance=0) → Ts4SimInfo` (internal type; accessed via reflection in tests) and `SyntheticFullInstance(age, gender) → ulong` (deterministic FNV-1a 64 of `synthetic:human:{age}:{gender}` for resolver cache-key distinctness). Populates body-driving outfit (category 5 = Nude) with canonical Head/Top/Bottom/Shoes from `Ts4CanonicalBaselineBodyParts` per (age × gender). All modifier/sculpt/pelt/genetic lists empty; counts consistent with list sizes. SimInfo version pinned to 33 (modern: pronouns + skintone shift supported). Five new xUnit tests (Adult/Female outfit shape, all 7 ages mapped, skintone preserved, synthetic FullInstance determinism + distinctness, unknown-age yields empty outfit) — 5/5 pass.
 - [x] **P0.4a** Public `ISyntheticSimService` + `SimConstructorSeed` record shipped at [SyntheticSimService.cs](../../src/Sims4ResourceExplorer.Assets/SyntheticSimService.cs). Wraps the internal `Ts4SimInfoBuilder` so the App can construct a synthetic Sim without seeing the internal `Ts4SimInfo`. DI Singleton in `App.xaml.cs`. [SimConstructorViewModel](../../src/Sims4ResourceExplorer.App/ViewModels/SimConstructorViewModel.cs) (CommunityToolkit `ObservableObject`) injects the service, exposes age/gender pickers, rebuilds the seed on pick. SimConstructorWindow XAML wires age + gender ComboBoxes under Genetics → Base; centre panel displays `SeedDisplayName`, `OutfitPartCountText`, `SyntheticFullInstanceHex`, `SeedSummary`, `RenderStatusText`. DI Transient registration for the VM. Build clean (0 warnings, 0 errors). 394/394 tests pass.
 - [x] **P0.4b** Synthetic-seed → AssetGraph pipeline shipped (commit `bba9763` cleared the conflict, this packet follows). Approach (b) per the plan note: extended `IAssetGraphBuilder` with `BuildSyntheticHumanSimGraphAsync(age, gender, skintoneInstance)`. `BuildSimGraphAsync` (private) now accepts optional `Ts4SimInfo? preParsedSimInfo` — when provided, the resource-lookup + package-read + parse steps are skipped and the same downstream pipeline runs unchanged. Downstream resolvers (body candidates / CAS slots / skintone) get `preferredPackagePath = null` for the synthetic path so they search the index globally instead of preferring a non-existent file. `ISyntheticSimService.BuildHumanAssetGraphAsync(SimConstructorSeed)` delegates to the new builder method. **Verified end-to-end via** new ProbeAsset subcommand `--probe-synthetic-sim <age> <gender>`. Adult Female resolves yfHead/yfTop_Nude/yfBottom_Nude/yfShoes_Nude as ExactPartLink (all 4 layers, SplitBodyLayers mode). Child Male resolves cuHead/cuTop_Nude/cuBottom_Nude/cuShoes_Nude. 394/394 tests pass (after stubbing the new method on 3 fake `IAssetGraphBuilder` impls in `IndexingPipelineTests.cs`).
-- [ ] **P0.4c** Wire the AssetGraph into a multi-mesh scene + viewport in `SimConstructorWindow`. Steps: (1) inject `IAssetGraphBuilder` + `ISceneBuildService` + `IIndexStore` into `SimConstructorViewModel`; (2) on age/gender change call `BuildHumanAssetGraphAsync`, walk `SimGraph.BodyCandidates`, resolve each candidate to a real CASPart `ResourceMetadata` via the index, build a `CasAssetGraph` per candidate, call `ISceneBuildService.BuildSceneAsync(CasAssetGraph)`; (3) compose multiple scenes into a single viewport via Helix3D `Viewport3DX` (mirror MainWindow's setup); (4) smoke-sweep all 14 (age × gender) tuples confirming each shows at least the body shell.
+- [x] **P0.4c.1** Async asset-graph rebuild + diagnostic panel shipped. `SimConstructorViewModel.RebuildAssetGraphAsync` cancels on re-pick and surfaces status / body candidates / diagnostics into the centre panel of the constructor window. Build clean; 394/394 tests pass.
+- [ ] **P0.4c.2** Actual pixel rendering — user chose **option B: refactor `ISimSceneRenderer` first** (2026-05-17). Split into 4 packets R1–R4. Multi-session work.
+
+### Refactor packets — Sim scene rendering extraction
+
+**Architectural shape (per dependency map, 2026-05-17):**
+
+The current render pipeline runs through three layers, only one of which is already clean:
+
+1. **AssetGraph → ScenePreviewContent[]** (per body candidate). Today implemented inline inside `MainViewModel.TryApplySimBodyProxyPreviewAsync` [MainViewModel.cs:1034-1427](../../src/Sims4ResourceExplorer.App/ViewModels/MainViewModel.cs#L1034). Reads `selectedAssetGraph`, walks body candidates, resolves CASParts via `IIndexStore`, builds `CasAssetGraph` per candidate, builds scenes via `ISceneBuildService`, wraps as `ScenePreviewContent`. Also resolves BOND/DMap/BGEO morphs via the three resolvers and applies them. **NOT a reusable service.**
+2. **ScenePreviewContent[] → CanonicalScene**. Already a clean static method: [SimSceneComposer.ComposeBodyAndHead](../../src/Sims4ResourceExplorer.Core/SimSceneComposer.cs#L9) in Core. No ViewModel coupling. **Reusable as-is.**
+3. **CanonicalScene → Viewport3DX**. Today: `MainWindow.RenderScene(CanonicalScene)` [MainWindow.xaml.cs:646-730](../../src/Sims4ResourceExplorer.App/MainWindow.xaml.cs#L646) + helpers (`CreateMaterial`, `CreateGeometry`, `ApplySelectedVariantToScene`, `TryBuildMultiPassPlan`, `AddOverlayPasses`, `ResetSceneCamera`, `BuildViewportTextureSelection`, ~500-600 LOC reusable). Reads `ViewModel.SelectedSceneRenderMode/Variant/TextureSlot/UvChannel`. **Needs extraction.**
+
+- [ ] **R1 — `ISimAssetGraphRenderer` service**. New file under [src/Sims4ResourceExplorer.Preview/SimRender/](../../src/Sims4ResourceExplorer.Preview/SimRender/). Public:
+  ```csharp
+  public interface ISimAssetGraphRenderer {
+      Task<SimRenderResult> BuildSimSceneAsync(AssetGraph graph, CancellationToken ct);
+  }
+  public sealed record SimRenderResult(
+      CanonicalScene? Scene,
+      IReadOnlyList<ScenePreviewContent> Layers,
+      SimAssemblyPlanSummary? AssemblyPlan,
+      SimAssemblyGraphSummary? AssemblyGraph,
+      IReadOnlyList<string> Diagnostics);
+  ```
+  Implementation: walk `SimGraph.BodyCandidates`, resolve CASPart resources, build CasAssetGraph + Scene per candidate, resolve morphs (BondMorphResolver, DeformerMapResolver, BlendGeometryResolver), apply via `SimBondSceneMorpher`, `DeformerMapMorpher`, `BlendGeometryMorpher`, call `SimSceneComposer.ComposeBodyAndHead`. Returns CanonicalScene + per-layer diagnostics. DI Singleton. Verifiable via new ProbeAsset `--probe-synthetic-scene <age> <gender>` that dumps scene mesh count + bounds.
+
+- [ ] **R2 — `SceneViewportRenderer` (App layer)**. New file under [src/Sims4ResourceExplorer.App/Services/](../../src/Sims4ResourceExplorer.App/Services/). Helix3D types are App-only. Public:
+  ```csharp
+  public sealed class SceneViewportRenderer {
+      public void Render(Viewport3DX viewport, CanonicalScene scene, SceneRenderConfig config);
+  }
+  public sealed record SceneRenderConfig(
+      SceneRenderMode RenderMode = SceneRenderMode.LitTexture,
+      string? TextureSlot = null,
+      SceneUvChannel UvChannel = SceneUvChannel.Auto,
+      SceneVariantOption? Variant = null);
+  ```
+  Move RenderScene + CreateMaterial + CreateGeometry + helpers (lines listed in dep map) out of MainWindow into this class. MainWindow becomes a thin caller. Acceptance: existing Sim render path in MainWindow produces byte-identical Viewport3DX state to before. Visual smoke-verify required.
+
+- [ ] **R3 — Wire `SimConstructorWindow`**. Add `Viewport3DX` setup in code-behind mirroring MainWindow ctor (camera, EffectsManager, ShadowMap, insertion into `PreviewSurface` Border). Inject `ISimAssetGraphRenderer` + `SceneViewportRenderer` into `SimConstructorViewModel`. On age/gender change → R1 produces CanonicalScene → R2 renders into the viewport. Acceptance: Adult Female shows a rendered Sim body in the constructor viewport. Smoke-sweep all 14 (age × gender) tuples.
+
+- [ ] **R4 — MainWindow cleanup**. Replace MainWindow's inline `RenderScene` calls with `SceneViewportRenderer.Render`. Replace `TryApplySimBodyProxyPreviewAsync`'s composition section with a call to `ISimAssetGraphRenderer`. MainViewModel keeps its state-setting logic (SelectedSimBodyPreviewLayers, diagnostics caching) but delegates the pure-function rendering. Acceptance: visual parity with the pre-refactor MainWindow Sim preview.
+
+**Risks / red lines:**
+- Must not break MainWindow's Sim render path. R2 + R4 each need visual verification builds.
+- The morph application in R1 must produce results equal to MainViewModel's current path (same BOND/DMap/BGEO output for the same SimInfo + rig).
+- `SceneRenderMode` + variant state is currently spread across MainWindow + MainViewModel; R2 must consolidate the contract so both windows see the same render-config API.
 - [ ] **P0.5** TS4-style three-pane layout: left tab-rail (Genetics / Outfits / Animation) via WinUI NavigationView; center viewport (reuse the Helix3D control already used by MainWindow); right knob panel that swaps content per tab. P0.5 just stubs the layout — knobs are filled in P1/P2/P3.
 - [ ] **P0.6** Smoke-sweep all 14 (age × gender) tuples. Each must render without crash. Bugs caught here usually mean `Ts4CanonicalBaselineBodyParts` is missing an instance for that tuple — fix by extending the catalog or routing the tuple to its nearest neighbour with a documented note.
 
