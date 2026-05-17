@@ -111,34 +111,31 @@ public sealed partial class SimConstructorWindow : Window
         }
     }
 
-    private void SkintonePickerGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void SkintonePickerGrid_ItemClick(object sender, ItemClickEventArgs e)
     {
-        // SelectionChanged can fire from the SelectedSkintone binding before the Flyout is
-        // realized (Flyouts live in a deferred popup tree). Guard against both that and
-        // the case where the Flyout is closed already.
-        if (SkintonePickerFlyout is null || e.AddedItems.Count == 0)
-        {
-            return;
-        }
+        // Close the flyout only on real user clicks — SelectionChanged also fires when the
+        // SelectedSkintone binding pushes a value during flyout open, and slamming Hide()
+        // mid-open leaves the light-dismiss overlay stuck (which silently captures all
+        // subsequent clicks on the right panel). ItemClick never fires from a binding push.
         try
         {
-            SkintonePickerFlyout.Hide();
+            SkintonePickerFlyout?.Hide();
         }
         catch
         {
         }
     }
 
-    private void SectionRadio_Checked(object sender, RoutedEventArgs e)
+    private void SectionNav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        // RadioButton.Checked with IsChecked="True" in XAML can fire during InitializeComponent
-        // before the rest of the visual tree (KnobSectionTitle, KnobSectionStub — declared later
-        // in the markup) is constructed. Guard against the early-fire NRE.
+        // NavigationView SelectionChanged can fire during InitializeComponent if the
+        // IsSelected="True" item is materialised before KnobSectionTitle/Stub later in the
+        // markup. Same defensive guard as anywhere else in this window's init path.
         if (KnobSectionTitle is null || KnobSectionStub is null)
         {
             return;
         }
-        if (sender is RadioButton radio && radio.Tag is string sectionTag)
+        if (args.SelectedItem is NavigationViewItem item && item.Tag is string sectionTag)
         {
             KnobSectionTitle.Text = sectionTag;
             KnobSectionStub.Text = sectionTag switch
