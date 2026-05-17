@@ -18,32 +18,50 @@
             <ColumnDefinition Width="380" />
         </Grid.ColumnDefinitions>
 
-        <NavigationView
-            x:Name="SectionNav"
-            PaneDisplayMode="LeftCompact"
-            IsBackButtonVisible="Collapsed"
-            IsSettingsVisible="False"
-            OpenPaneLength="200"
-            CompactPaneLength="56"
-            SelectionChanged="SectionNav_SelectionChanged">
-            <NavigationView.MenuItems>
-                <NavigationViewItem Content="Genetics" Tag="Genetics" IsSelected="True">
-                    <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="People" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="Outfits" Tag="Outfits">
-                    <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Shop" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="Animation" Tag="Animation">
-                    <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Play" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-            </NavigationView.MenuItems>
-        </NavigationView>
+        <Border Grid.Column="0"
+                Width="56"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="0,0,1,0"
+                Background="{ThemeResource SubtleFillColorTertiaryBrush}">
+            <StackPanel x:Name="SectionRail"
+                        Orientation="Vertical"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Top"
+                        Spacing="4"
+                        Padding="0,12,0,0">
+                <RadioButton x:Name="SectionGenetics"
+                             GroupName="ConstructorSection"
+                             Tag="Genetics"
+                             IsChecked="True"
+                             Checked="SectionRadio_Checked"
+                             Width="40"
+                             Height="40"
+                             Padding="0"
+                             ToolTipService.ToolTip="Genetics">
+                    <SymbolIcon Symbol="People" />
+                </RadioButton>
+                <RadioButton x:Name="SectionOutfits"
+                             GroupName="ConstructorSection"
+                             Tag="Outfits"
+                             Checked="SectionRadio_Checked"
+                             Width="40"
+                             Height="40"
+                             Padding="0"
+                             ToolTipService.ToolTip="Outfits">
+                    <SymbolIcon Symbol="Shop" />
+                </RadioButton>
+                <RadioButton x:Name="SectionAnimation"
+                             GroupName="ConstructorSection"
+                             Tag="Animation"
+                             Checked="SectionRadio_Checked"
+                             Width="40"
+                             Height="40"
+                             Padding="0"
+                             ToolTipService.ToolTip="Animation">
+                    <SymbolIcon Symbol="Play" />
+                </RadioButton>
+            </StackPanel>
+        </Border>
 
         <Grid Grid.Column="1" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
             <Grid x:Name="PreviewSurface" />

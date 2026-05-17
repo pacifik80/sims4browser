@@ -119,9 +119,9 @@ public sealed partial class SimConstructorWindow : Window
         }
     }
 
-    private void SectionNav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private void SectionRadio_Checked(object sender, RoutedEventArgs e)
     {
-        if (args.SelectedItem is NavigationViewItem item && item.Tag is string sectionTag)
+        if (sender is RadioButton radio && radio.Tag is string sectionTag)
         {
             KnobSectionTitle.Text = sectionTag;
             KnobSectionStub.Text = sectionTag switch
