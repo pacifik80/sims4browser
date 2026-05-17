@@ -71,6 +71,13 @@ public sealed class SyntheticSimService : ISyntheticSimService
         this.resourceCatalogService = resourceCatalogService;
     }
 
+    /// <summary>
+    /// Sentinel "no skintone" option (Instance == 0) — when picked the renderer skips atlas
+    /// composition and the body materials render without any skintone binding. The UI shows
+    /// it as a red-crossed-circle tile.
+    /// </summary>
+    public static readonly SkintoneOption NoneSkintone = new(0ul, "None (no skintone)", string.Empty, string.Empty, null);
+
     public async Task<IReadOnlyList<SkintoneOption>> EnumerateSkintonesAsync(CancellationToken cancellationToken)
     {
         var resources = await indexStore.GetResourcesByTypeNameAsync("Skintone", cancellationToken).ConfigureAwait(false);
@@ -106,10 +113,10 @@ public sealed class SyntheticSimService : ISyntheticSimService
                 : $"Skintone 0x{resource.Key.FullInstance:X16}";
             return new SkintoneOption(resource.Key.FullInstance, name, resource.PackagePath, resource.Key.FullTgi, swatch);
         })).ConfigureAwait(false);
-        return parsed
+        var ordered = parsed
             .OrderBy(o => o.SwatchArgb is { } a ? -RelativeLuminance(a) : double.MaxValue)
-            .ThenBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .ThenBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase);
+        return new[] { NoneSkintone }.Concat(ordered).ToArray();
     }
 
     private static double RelativeLuminance(uint argb)

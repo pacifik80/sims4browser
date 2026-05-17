@@ -38,6 +38,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private SceneRenderMode selectedRenderMode = SceneRenderMode.LitTexture;
     private IReadOnlyList<SkintoneOption> availableSkintones = Array.Empty<SkintoneOption>();
     private SkintoneOption? selectedSkintone;
+    private bool isBuilding;
 
     private readonly record struct SceneCacheKey(string Age, string Gender, ulong Skintone);
 
@@ -74,6 +75,12 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     {
         get => availableSkintones;
         private set => SetProperty(ref availableSkintones, value);
+    }
+
+    public bool IsBuilding
+    {
+        get => isBuilding;
+        private set => SetProperty(ref isBuilding, value);
     }
 
     public SkintoneOption? SelectedSkintone
@@ -197,6 +204,15 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             return;
         }
 
+        // "None" skintone (instance=0) can't use the fast path — the fast path rebinds
+        // materials to a freshly composed atlas, but we want to actively un-bind any
+        // previously bound atlas. That only happens through the full pipeline.
+        if (newSkintone.Instance == 0ul)
+        {
+            TriggerRebuild();
+            return;
+        }
+
         var baseEntry = FindBaseSceneForArchetype(selectedAge, selectedGender);
         if (baseEntry is null)
         {
@@ -208,6 +224,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         rebuildCts?.Cancel();
         rebuildCts = new CancellationTokenSource();
         SceneStatus = "Re-composing skin atlas (fast path)…";
+        IsBuilding = true;
         _ = ApplySkintoneInPlaceAsync(baseEntry, newSkintone, key, rebuildCts.Token);
     }
 
@@ -300,6 +317,13 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 SceneStatus = $"Skintone update error: {ex.GetType().Name}: {ex.Message}";
             }
         }
+        finally
+        {
+            if (!token.IsCancellationRequested)
+            {
+                IsBuilding = false;
+            }
+        }
     }
 
     private async Task LoadSkintonesAsync()
@@ -337,6 +361,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         var token = rebuildCts.Token;
         AssetGraphStatus = "Building asset graph…";
         SceneStatus = currentScene is null ? "Waiting for asset graph…" : "Rebuilding scene (viewport keeps the previous one until ready)…";
+        IsBuilding = true;
         // Leave CurrentScene alone — keep the previously rendered Sim visible while the
         // new build runs. The viewport will swap in the new scene atomically on success.
         _ = RebuildSceneAsync(seed, key, token);
@@ -349,6 +374,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         AssetGraphDiagnostics = entry.Diagnostics;
         SceneStatus = $"{entry.SceneStatus}  [from cache]";
         CurrentScene = entry.Scene;
+        IsBuilding = false;
     }
 
     private async Task RebuildSceneAsync(SimConstructorSeed seed, SceneCacheKey key, CancellationToken token)
@@ -473,6 +499,13 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             if (!token.IsCancellationRequested)
             {
                 AssetGraphStatus = $"Build error: {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+        finally
+        {
+            if (!token.IsCancellationRequested)
+            {
+                IsBuilding = false;
             }
         }
     }

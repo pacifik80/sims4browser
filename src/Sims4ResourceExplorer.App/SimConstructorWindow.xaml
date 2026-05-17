@@ -11,6 +11,8 @@
     <Grid>
         <Grid.Resources>
             <converters:UintArgbToBrushConverter x:Key="SwatchBrush" />
+            <converters:ZeroToVisibilityConverter x:Key="ZeroVisible" />
+            <converters:BoolToVisibilityConverter x:Key="BoolToVisible" />
         </Grid.Resources>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
@@ -50,6 +52,26 @@
 
         <Grid Grid.Column="1" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
             <Grid x:Name="PreviewSurface" />
+
+            <Border VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    Background="#80000000"
+                    CornerRadius="12"
+                    Padding="24"
+                    Visibility="{Binding IsBuilding, Converter={StaticResource BoolToVisible}}">
+                <StackPanel Orientation="Vertical"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="12">
+                    <ProgressRing IsActive="True" Width="48" Height="48" Foreground="White" />
+                    <TextBlock Text="{Binding SceneStatus}"
+                               Foreground="White"
+                               TextWrapping="WrapWholeWords"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               MaxWidth="320" />
+                </StackPanel>
+            </Border>
 
             <Border VerticalAlignment="Top"
                     HorizontalAlignment="Stretch"
@@ -140,13 +162,20 @@
                                             </GridView.ItemContainerStyle>
                                             <GridView.ItemTemplate>
                                                 <DataTemplate>
-                                                    <Border Width="32"
-                                                            Height="32"
-                                                            CornerRadius="4"
-                                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                            BorderThickness="1"
-                                                            Background="{Binding SwatchArgb, Converter={StaticResource SwatchBrush}}"
-                                                            ToolTipService.ToolTip="{Binding DisplayName}" />
+                                                    <Grid Width="32"
+                                                          Height="32"
+                                                          ToolTipService.ToolTip="{Binding DisplayName}">
+                                                        <Border CornerRadius="4"
+                                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                                BorderThickness="1"
+                                                                Background="{Binding SwatchArgb, Converter={StaticResource SwatchBrush}}" />
+                                                        <Path Visibility="{Binding Instance, Converter={StaticResource ZeroVisible}}"
+                                                              Stroke="#E81123"
+                                                              StrokeThickness="2"
+                                                              StrokeStartLineCap="Round"
+                                                              StrokeEndLineCap="Round"
+                                                              Data="M 6,6 L 26,26 M 26,6 L 6,26" />
+                                                    </Grid>
                                                 </DataTemplate>
                                             </GridView.ItemTemplate>
                                         </GridView>
