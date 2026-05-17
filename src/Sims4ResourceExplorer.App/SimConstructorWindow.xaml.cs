@@ -113,14 +113,31 @@ public sealed partial class SimConstructorWindow : Window
 
     private void SkintonePickerGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (e.AddedItems.Count > 0)
+        // SelectionChanged can fire from the SelectedSkintone binding before the Flyout is
+        // realized (Flyouts live in a deferred popup tree). Guard against both that and
+        // the case where the Flyout is closed already.
+        if (SkintonePickerFlyout is null || e.AddedItems.Count == 0)
+        {
+            return;
+        }
+        try
         {
             SkintonePickerFlyout.Hide();
+        }
+        catch
+        {
         }
     }
 
     private void SectionRadio_Checked(object sender, RoutedEventArgs e)
     {
+        // RadioButton.Checked with IsChecked="True" in XAML can fire during InitializeComponent
+        // before the rest of the visual tree (KnobSectionTitle, KnobSectionStub — declared later
+        // in the markup) is constructed. Guard against the early-fire NRE.
+        if (KnobSectionTitle is null || KnobSectionStub is null)
+        {
+            return;
+        }
         if (sender is RadioButton radio && radio.Tag is string sectionTag)
         {
             KnobSectionTitle.Text = sectionTag;
