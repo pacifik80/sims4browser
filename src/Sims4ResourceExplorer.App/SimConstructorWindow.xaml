@@ -185,6 +185,106 @@
                         </StackPanel>
                     </Border>
 
+                    <Expander Header="Skin textures" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="Each layer: optional picker + 0..1 power. 0 hides the layer, 1 = full strength."
+                                       Opacity="0.6" FontSize="11" TextWrapping="WrapWholeWords" />
+
+                            <!-- Slider-only layers (defaults driven by skintone) -->
+                            <StackPanel Spacing="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Detail (neutral)" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding DetailNeutralAlpha, Mode=OneWay}" Opacity="0.7" />
+                                </Grid>
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding DetailNeutralAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Detail overlay" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding DetailOverlayAlpha, Mode=OneWay}" Opacity="0.7" />
+                                </Grid>
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding DetailOverlayAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Hue shift (Pass 3)" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Pass3HueAlpha, Mode=OneWay}" Opacity="0.7" />
+                                </Grid>
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding Pass3HueAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Tone face overlay" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ToneFaceOverlayAlpha, Mode=OneWay}" Opacity="0.7" />
+                                </Grid>
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding ToneFaceOverlayAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+
+                            <!-- Face CAS layers — picker + slider per slot -->
+                            <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,4" />
+                            <TextBlock Text="Face CAS overlays" FontWeight="SemiBold" Opacity="0.85" />
+
+                            <StackPanel Spacing="4">
+                                <ComboBox Header="EyeColor" HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding AvailableEyeColors}"
+                                          SelectedItem="{Binding SelectedEyeColor, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayName" />
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding EyeColorAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <ComboBox Header="Brows" HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding AvailableBrows}"
+                                          SelectedItem="{Binding SelectedBrows, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayName" />
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding BrowsAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <ComboBox Header="Lipstick" HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding AvailableLipsticks}"
+                                          SelectedItem="{Binding SelectedLipstick, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayName" />
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding LipstickAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <ComboBox Header="Eyeshadow" HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding AvailableEyeshadows}"
+                                          SelectedItem="{Binding SelectedEyeshadow, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayName" />
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding EyeshadowAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <ComboBox Header="Eyeliner" HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding AvailableEyeliners}"
+                                          SelectedItem="{Binding SelectedEyeliner, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayName" />
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding EyelinerAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <ComboBox Header="Blush" HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding AvailableBlushes}"
+                                          SelectedItem="{Binding SelectedBlush, Mode=TwoWay}"
+                                          DisplayMemberPath="DisplayName" />
+                                <Slider Minimum="0" Maximum="1" StepFrequency="0.05" Value="{Binding BlushAlpha, Mode=TwoWay}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Expander>
+
                     <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
                             CornerRadius="8"

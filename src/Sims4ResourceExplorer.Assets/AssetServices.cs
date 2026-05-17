@@ -88,6 +88,16 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         return TryResolveSimSkintoneRenderSummaryAsync(parsedSimInfo.ToSummary(), parsedSimInfo, preferredPackagePath: null, cancellationToken);
     }
 
+    public async Task<byte[]?> ResolveCasPartDiffusePngAsync(ulong casPartInstance, CancellationToken cancellationToken)
+    {
+        if (casPartInstance == 0ul)
+        {
+            return null;
+        }
+        var (png, _) = await TryFetchFaceCasOverlayPngAsync(casPartInstance, preferredPackagePath: null, cancellationToken).ConfigureAwait(false);
+        return png;
+    }
+
     public Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(
         string ageLabel,
         string genderLabel,

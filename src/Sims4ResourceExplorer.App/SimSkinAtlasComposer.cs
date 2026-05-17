@@ -54,8 +54,17 @@ public static class SimSkinAtlasComposer
         float pass2Opacity,
         ushort skintoneHue,
         ushort skintoneSaturation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        // Build 0301 — per-layer alpha multipliers driven by the constructor's Skin
+        // textures panel. Defaults are 1f so existing callers behave unchanged.
+        float detailNeutralAlpha = 1f,
+        float pass3HueAlpha = 1f,
+        float faceOverlayAlpha = 1f,
+        IReadOnlyList<float>? faceCasOverlayAlphas = null)
     {
+        var clampedDetailNeutralAlpha = System.Math.Clamp(detailNeutralAlpha, 0f, 1f);
+        var clampedPass3HueAlpha = System.Math.Clamp(pass3HueAlpha, 0f, 1f);
+        var clampedFaceOverlayAlpha = System.Math.Clamp(faceOverlayAlpha, 0f, 1f);
         if (baseSkinPng is not { Length: > 0 })
         {
             return null;
@@ -117,6 +126,7 @@ public static class SimSkinAtlasComposer
             // mirror the main path; switching variants would be a separate documented choice.
             var rgbOver = HslMidpointToRgb(skintoneHue);
             var overFactor = (float)(skintoneSaturation / 100); // literal int division
+            overFactor *= clampedPass3HueAlpha;
             var pass3Active = skintoneSaturation > 0 && overFactor > 0f;
             for (var i = 0; i < skinPixels.Length; i += 4)
             {
@@ -126,7 +136,11 @@ public static class SimSkinAtlasComposer
                     var detail = detailsPixels[i + c];
                     var detF = detail / 255f;
                     var colF = color / 255f;
-                    var pass1 = ((1f - 2f * detF) * colF * colF + 2f * detF * colF) * 255f;
+                    // detailNeutralAlpha biases the soft-light strength: at 0 the details
+                    // become a neutral mid-gray (0.5) so Pass 1 is a no-op, at 1 the full
+                    // detail value is used.
+                    var biasedDetF = (detF * clampedDetailNeutralAlpha) + (0.5f * (1f - clampedDetailNeutralAlpha));
+                    var pass1 = ((1f - 2f * biasedDetF) * colF * colF + 2f * biasedDetF * colF) * 255f;
                     pass1 = Math.Min(pass1 * 1.2f, 255f);
                     float pass2Result;
                     if (pass1 > 128f)
@@ -154,35 +168,66 @@ public static class SimSkinAtlasComposer
         }
 
         // 3. Draw the tone face overlay on top of the composited skin. Straight-alpha blend.
-        if (faceOverlayPng is { Length: > 0 })
+        if (faceOverlayPng is { Length: > 0 } && clampedFaceOverlayAlpha > 0f)
         {
             var faceOverlay = await DecodeBgra8StraightAsync(faceOverlayPng, cancellationToken, width, height).ConfigureAwait(false);
             if (faceOverlay is not null)
             {
+                if (clampedFaceOverlayAlpha < 1f)
+                {
+                    ScaleAlphaInPlace(faceOverlay.Value.Pixels, clampedFaceOverlayAlpha);
+                }
                 BlendStraightAlphaOver(skinPixels, faceOverlay.Value.Pixels);
             }
         }
 
-        // 4. Draw face CAS overlay textures (EyeColor, Brows) resolved from the Sim's equipped
-        //    CAS parts. Blended in body-type order on top of the tone face overlay.
+        // 4. Draw face CAS overlay textures (EyeColor, Brows, makeup) resolved from the
+        //    Sim's equipped CAS parts plus any user-picked overrides from the
+        //    constructor's Skin textures panel. Blended in input order; each layer's
+        //    alpha is pre-multiplied by the parallel-list entry from
+        //    <paramref name="faceCasOverlayAlphas"/> (defaults to 1.0 per slot).
         if (faceCasOverlayPngs is not null)
         {
-            foreach (var casOverlayPng in faceCasOverlayPngs)
+            for (var slotIndex = 0; slotIndex < faceCasOverlayPngs.Count; slotIndex++)
             {
+                var casOverlayPng = faceCasOverlayPngs[slotIndex];
                 if (casOverlayPng is not { Length: > 0 })
                 {
                     continue;
                 }
-
+                var slotAlpha = faceCasOverlayAlphas is { } alphas && slotIndex < alphas.Count
+                    ? System.Math.Clamp(alphas[slotIndex], 0f, 1f)
+                    : 1f;
+                if (slotAlpha <= 0f)
+                {
+                    continue;
+                }
                 var casOverlay = await DecodeBgra8StraightAsync(casOverlayPng, cancellationToken, width, height).ConfigureAwait(false);
                 if (casOverlay is not null)
                 {
+                    if (slotAlpha < 1f)
+                    {
+                        ScaleAlphaInPlace(casOverlay.Value.Pixels, slotAlpha);
+                    }
                     BlendStraightAlphaOver(skinPixels, casOverlay.Value.Pixels);
                 }
             }
         }
 
         return await EncodeBgra8AsPngAsync(width, height, skinPixels, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Pre-multiplies every BGRA pixel's alpha by <paramref name="alpha"/> (clamped 0..1).
+    /// Used to scale a layer's contribution before the source-over blend.
+    /// </summary>
+    private static void ScaleAlphaInPlace(byte[] bgra, float alpha)
+    {
+        var clamped = System.Math.Clamp(alpha, 0f, 1f);
+        for (var i = 3; i < bgra.Length; i += 4)
+        {
+            bgra[i] = (byte)(bgra[i] * clamped);
+        }
     }
 
     /// <summary>

@@ -22,6 +22,20 @@ public interface ISyntheticSimService
 
     Task<IReadOnlyList<SkintoneOption>> EnumerateSkintonesAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Enumerates all CAS parts in the index at the given body_type. Caller is
+    /// responsible for prepending the "None" sentinel when used as a picker source.
+    /// </summary>
+    Task<IReadOnlyList<Sims4ResourceExplorer.Core.ResourceMetadata>> EnumerateCasPartsByBodyTypeAsync(
+        int bodyType,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves the diffuse PNG bytes for a CAS part by instance — used to lift
+    /// a user-picked face overlay layer into the skin atlas composer.
+    /// </summary>
+    Task<byte[]?> ResolveCasPartDiffusePngAsync(ulong casPartInstance, CancellationToken cancellationToken);
+
     IReadOnlyList<string> AvailableHumanAges { get; }
     IReadOnlyList<string> AvailableHumanGenders { get; }
 }
@@ -144,6 +158,14 @@ public sealed class SyntheticSimService : ISyntheticSimService
         ulong skintoneInstance,
         CancellationToken cancellationToken) =>
         graphBuilder.ResolveHumanSkintoneAsync(ageLabel, genderLabel, skintoneInstance, cancellationToken);
+
+    public Task<IReadOnlyList<Sims4ResourceExplorer.Core.ResourceMetadata>> EnumerateCasPartsByBodyTypeAsync(
+        int bodyType,
+        CancellationToken cancellationToken) =>
+        indexStore.GetCasPartsByBodyTypeAsync(bodyType, cancellationToken);
+
+    public Task<byte[]?> ResolveCasPartDiffusePngAsync(ulong casPartInstance, CancellationToken cancellationToken) =>
+        graphBuilder.ResolveCasPartDiffusePngAsync(casPartInstance, cancellationToken);
 
     public SimConstructorSeed CreateHumanSeed(string ageLabel, string genderLabel, ulong skintoneInstance = 0ul)
     {

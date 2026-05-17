@@ -2222,6 +2222,7 @@ public interface IAssetGraphBuilder
     Task<AssetGraph> BuildPreviewGraphAsync(AssetSummary summary, IReadOnlyList<ResourceMetadata> packageResources, CancellationToken cancellationToken);
     Task<AssetGraph> BuildSyntheticHumanSimGraphAsync(string ageLabel, string genderLabel, ulong skintoneInstance, CancellationToken cancellationToken);
     Task<SimSkintoneRenderSummary?> ResolveHumanSkintoneAsync(string ageLabel, string genderLabel, ulong skintoneInstance, CancellationToken cancellationToken);
+    Task<byte[]?> ResolveCasPartDiffusePngAsync(ulong casPartInstance, CancellationToken cancellationToken);
 }
 
 public interface IPreviewService
@@ -2303,6 +2304,7 @@ public interface IIndexStore
     Task<ResourceMetadata?> GetResourceByTgiAsync(string packagePath, string fullTgi, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTgiAsync(string fullTgi, CancellationToken cancellationToken);
     Task<IReadOnlyList<ResourceMetadata>> GetResourcesByTypeNameAsync(string typeName, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ResourceMetadata>> GetCasPartsByBodyTypeAsync(int bodyType, CancellationToken cancellationToken);
     Task<IReadOnlyList<AssetSummary>> GetIndexedDefaultBodyRecipeAssetsAsync(SimInfoSummary metadata, string slotCategory, CancellationToken cancellationToken);
     Task<BodyRecipeAvailabilitySnapshot> ProbeBodyRecipeAvailabilityAsync(SimInfoSummary metadata, CancellationToken cancellationToken);
     Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken);

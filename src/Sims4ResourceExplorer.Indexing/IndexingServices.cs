@@ -599,6 +599,15 @@ public sealed class SqliteIndexStore : IIndexStore
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<ResourceMetadata>> GetCasPartsByBodyTypeAsync(int bodyType, CancellationToken cancellationToken)
+    {
+        var results = await Task.WhenAll(GetServingDatabasePaths().Select(path => GetCasPartsByBodyTypeFromDatabaseAsync(path, bodyType, cancellationToken)));
+        return OrderByResource(
+                results.SelectMany(static items => items),
+                RawResourceSort.Tgi)
+            .ToArray();
+    }
+
     public async Task<IReadOnlyList<SimTemplateFactSummary>> GetSimTemplateFactsByArchetypeAsync(string archetypeKey, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(archetypeKey))
@@ -939,6 +948,26 @@ public sealed class SqliteIndexStore : IIndexStore
             ORDER BY instance_hex, package_path;
             """;
         command.Parameters.AddWithValue("$typeName", typeName);
+        return await ReadResourcesAsync(command, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<ResourceMetadata>> GetCasPartsByBodyTypeFromDatabaseAsync(string databasePath, int bodyType, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(databasePath, SqliteConnectionProfile.LiveServing, cancellationToken);
+        await using var command = connection.CreateCommand();
+        // cas_part_facts has body_type; join to resources on full_tgi + package_path to
+        // get the actual ResourceMetadata for each CAS part at the requested body type.
+        command.CommandText =
+            """
+            SELECT r.id, r.data_source_id, r.source_kind, r.package_path, r.type_hex, r.type_name, r.group_hex, r.instance_hex, r.full_tgi, r.name, r.description,
+                   r.catalog_signal_0020, r.catalog_signal_002c, r.catalog_signal_0030, r.catalog_signal_0034,
+                   r.compressed_size, r.uncompressed_size, r.is_compressed, r.preview_kind, r.is_previewable, r.is_export_capable, r.asset_linkage_summary, r.diagnostics, r.scene_root_tgi_hint
+            FROM cas_part_facts c
+            JOIN resources r ON r.full_tgi = c.root_tgi AND r.package_path = c.package_path AND r.type_name = 'CASPart'
+            WHERE c.body_type = $bodyType
+            ORDER BY r.instance_hex, r.package_path;
+            """;
+        command.Parameters.AddWithValue("$bodyType", bodyType);
         return await ReadResourcesAsync(command, cancellationToken);
     }
 

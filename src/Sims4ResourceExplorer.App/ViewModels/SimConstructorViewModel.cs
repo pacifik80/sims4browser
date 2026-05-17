@@ -40,7 +40,34 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private SkintoneOption? selectedSkintone;
     private bool isBuilding;
 
-    private readonly record struct SceneCacheKey(string Age, string Gender, ulong Skintone);
+    // Skin textures customization (build 0301). Picker lists are populated once per
+    // session via LoadFaceCasOptionsAsync; resolved-PNG cache keyed by CAS instance is
+    // in-memory only (per feedback_no_cross_session_disk_cache).
+    private IReadOnlyList<FaceCasOption> availableEyeColors = Array.Empty<FaceCasOption>();
+    private IReadOnlyList<FaceCasOption> availableBrows = Array.Empty<FaceCasOption>();
+    private IReadOnlyList<FaceCasOption> availableLipsticks = Array.Empty<FaceCasOption>();
+    private IReadOnlyList<FaceCasOption> availableEyeshadows = Array.Empty<FaceCasOption>();
+    private IReadOnlyList<FaceCasOption> availableEyeliners = Array.Empty<FaceCasOption>();
+    private IReadOnlyList<FaceCasOption> availableBlushes = Array.Empty<FaceCasOption>();
+    private FaceCasOption? selectedEyeColor;
+    private FaceCasOption? selectedBrows;
+    private FaceCasOption? selectedLipstick;
+    private FaceCasOption? selectedEyeshadow;
+    private FaceCasOption? selectedEyeliner;
+    private FaceCasOption? selectedBlush;
+    private float detailNeutralAlpha = 1f;
+    private float detailOverlayAlpha = 1f;
+    private float pass3HueAlpha = 1f;
+    private float toneFaceOverlayAlpha = 1f;
+    private float eyeColorAlpha = 1f;
+    private float browsAlpha = 1f;
+    private float lipstickAlpha = 1f;
+    private float eyeshadowAlpha = 1f;
+    private float eyelinerAlpha = 1f;
+    private float blushAlpha = 1f;
+    private readonly Dictionary<ulong, byte[]?> casPartPngCache = new();
+
+    private readonly record struct SceneCacheKey(string Age, string Gender, ulong Skintone, long LayersFingerprint);
 
     private sealed record CachedSceneEntry(
         CanonicalScene Scene,
@@ -57,6 +84,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         AvailableGenders = syntheticSimService.AvailableHumanGenders;
         currentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, DefaultHumanSkintoneInstance);
         _ = LoadSkintonesAsync();
+        _ = LoadFaceCasOptionsAsync();
         TriggerRebuild();
     }
 
@@ -180,6 +208,45 @@ public sealed partial class SimConstructorViewModel : ObservableObject
 
     public string OutfitPartCountText => $"Body-driving outfit: {CurrentSeed.OutfitPartCount} part(s)";
 
+    public IReadOnlyList<FaceCasOption> AvailableEyeColors  { get => availableEyeColors;  private set => SetProperty(ref availableEyeColors, value); }
+    public IReadOnlyList<FaceCasOption> AvailableBrows      { get => availableBrows;      private set => SetProperty(ref availableBrows, value); }
+    public IReadOnlyList<FaceCasOption> AvailableLipsticks  { get => availableLipsticks;  private set => SetProperty(ref availableLipsticks, value); }
+    public IReadOnlyList<FaceCasOption> AvailableEyeshadows { get => availableEyeshadows; private set => SetProperty(ref availableEyeshadows, value); }
+    public IReadOnlyList<FaceCasOption> AvailableEyeliners  { get => availableEyeliners;  private set => SetProperty(ref availableEyeliners, value); }
+    public IReadOnlyList<FaceCasOption> AvailableBlushes    { get => availableBlushes;    private set => SetProperty(ref availableBlushes, value); }
+
+    public FaceCasOption? SelectedEyeColor  { get => selectedEyeColor;  set { if (SetProperty(ref selectedEyeColor, value))  RebuildSkinLayers(); } }
+    public FaceCasOption? SelectedBrows     { get => selectedBrows;     set { if (SetProperty(ref selectedBrows, value))     RebuildSkinLayers(); } }
+    public FaceCasOption? SelectedLipstick  { get => selectedLipstick;  set { if (SetProperty(ref selectedLipstick, value))  RebuildSkinLayers(); } }
+    public FaceCasOption? SelectedEyeshadow { get => selectedEyeshadow; set { if (SetProperty(ref selectedEyeshadow, value)) RebuildSkinLayers(); } }
+    public FaceCasOption? SelectedEyeliner  { get => selectedEyeliner;  set { if (SetProperty(ref selectedEyeliner, value))  RebuildSkinLayers(); } }
+    public FaceCasOption? SelectedBlush     { get => selectedBlush;     set { if (SetProperty(ref selectedBlush, value))     RebuildSkinLayers(); } }
+
+    public float DetailNeutralAlpha   { get => detailNeutralAlpha;   set { if (SetProperty(ref detailNeutralAlpha, value))   RebuildSkinLayers(); } }
+    public float DetailOverlayAlpha   { get => detailOverlayAlpha;   set { if (SetProperty(ref detailOverlayAlpha, value))   RebuildSkinLayers(); } }
+    public float Pass3HueAlpha        { get => pass3HueAlpha;        set { if (SetProperty(ref pass3HueAlpha, value))        RebuildSkinLayers(); } }
+    public float ToneFaceOverlayAlpha { get => toneFaceOverlayAlpha; set { if (SetProperty(ref toneFaceOverlayAlpha, value)) RebuildSkinLayers(); } }
+    public float EyeColorAlpha        { get => eyeColorAlpha;        set { if (SetProperty(ref eyeColorAlpha, value))        RebuildSkinLayers(); } }
+    public float BrowsAlpha           { get => browsAlpha;           set { if (SetProperty(ref browsAlpha, value))           RebuildSkinLayers(); } }
+    public float LipstickAlpha        { get => lipstickAlpha;        set { if (SetProperty(ref lipstickAlpha, value))        RebuildSkinLayers(); } }
+    public float EyeshadowAlpha       { get => eyeshadowAlpha;       set { if (SetProperty(ref eyeshadowAlpha, value))       RebuildSkinLayers(); } }
+    public float EyelinerAlpha        { get => eyelinerAlpha;        set { if (SetProperty(ref eyelinerAlpha, value))        RebuildSkinLayers(); } }
+    public float BlushAlpha           { get => blushAlpha;           set { if (SetProperty(ref blushAlpha, value))           RebuildSkinLayers(); } }
+
+    public SkinLayerSettings CurrentSkinLayers => new()
+    {
+        DetailNeutralAlpha = detailNeutralAlpha,
+        DetailOverlayAlpha = detailOverlayAlpha,
+        Pass3HueAlpha = pass3HueAlpha,
+        ToneFaceOverlayAlpha = toneFaceOverlayAlpha,
+        EyeColor = new FaceCasSlotConfig(selectedEyeColor?.IsNone == false ? selectedEyeColor.CasPartInstance : null, eyeColorAlpha),
+        Brows = new FaceCasSlotConfig(selectedBrows?.IsNone == false ? selectedBrows.CasPartInstance : null, browsAlpha),
+        Lipstick = new FaceCasSlotConfig(selectedLipstick?.IsNone == false ? selectedLipstick.CasPartInstance : null, lipstickAlpha),
+        Eyeshadow = new FaceCasSlotConfig(selectedEyeshadow?.IsNone == false ? selectedEyeshadow.CasPartInstance : null, eyeshadowAlpha),
+        Eyeliner = new FaceCasSlotConfig(selectedEyeliner?.IsNone == false ? selectedEyeliner.CasPartInstance : null, eyelinerAlpha),
+        Blush = new FaceCasSlotConfig(selectedBlush?.IsNone == false ? selectedBlush.CasPartInstance : null, blushAlpha),
+    };
+
     private void Rebuild()
     {
         var skintone = selectedSkintone?.Instance ?? DefaultHumanSkintoneInstance;
@@ -196,7 +263,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private void RebuildForSkintoneChange(SkintoneOption newSkintone)
     {
         CurrentSeed = syntheticSimService.CreateHumanSeed(selectedAge, selectedGender, newSkintone.Instance);
-        var key = new SceneCacheKey(selectedAge, selectedGender, newSkintone.Instance);
+        var key = new SceneCacheKey(selectedAge, selectedGender, newSkintone.Instance, CurrentSkinLayers.Fingerprint());
 
         if (sceneCache.TryGetValue(key, out var cached))
         {
@@ -263,16 +330,23 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 return;
             }
 
+            var (overlayPngs, overlayAlphas) = await BuildFaceCasOverlayInputsAsync(skintone.FaceCasOverlayPngBytes, token).ConfigureAwait(true);
+            if (token.IsCancellationRequested) return;
+            var settings = CurrentSkinLayers;
             var atlas = await SimSkinAtlasComposer.BuildAsync(
                 skintone.BaseTexturePngBytes,
                 skintone.DetailNeutralPngBytes,
                 skintone.DetailOverlayPngBytes,
                 skintone.FaceOverlayPngBytes,
-                skintone.FaceCasOverlayPngBytes,
-                pass2Opacity: skintone.OverlayOpacity / 100f,
+                overlayPngs,
+                pass2Opacity: (skintone.OverlayOpacity / 100f) * settings.DetailOverlayAlpha,
                 skintoneHue: skintone.SkintoneHue,
                 skintoneSaturation: skintone.SkintoneSaturation,
-                cancellationToken: token).ConfigureAwait(true);
+                cancellationToken: token,
+                detailNeutralAlpha: settings.DetailNeutralAlpha,
+                pass3HueAlpha: settings.Pass3HueAlpha,
+                faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
+                faceCasOverlayAlphas: overlayAlphas).ConfigureAwait(true);
             if (token.IsCancellationRequested)
             {
                 return;
@@ -297,7 +371,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 SceneStatus: statusText);
             sceneCache[key] = newEntry;
 
-            var currentKey = new SceneCacheKey(currentSeed.AgeLabel, currentSeed.GenderLabel, currentSeed.SkintoneInstance);
+            var currentKey = new SceneCacheKey(currentSeed.AgeLabel, currentSeed.GenderLabel, currentSeed.SkintoneInstance, CurrentSkinLayers.Fingerprint());
             if (currentKey.Equals(key))
             {
                 AssetGraphStatus = baseEntry.AssetGraphStatus;
@@ -326,6 +400,128 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         }
     }
 
+    private async Task LoadFaceCasOptionsAsync()
+    {
+        try
+        {
+            // Body types per docs/workflows/face-cas-bodytype-audit.md:
+            //   4 EyeColor, 14 Brows, 29 Lipstick, 30 Eyeshadow, 31 Eyeliner, 32 Blush.
+            var tasks = new[] {
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(4, CancellationToken.None),
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(14, CancellationToken.None),
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(29, CancellationToken.None),
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(30, CancellationToken.None),
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(31, CancellationToken.None),
+                syntheticSimService.EnumerateCasPartsByBodyTypeAsync(32, CancellationToken.None),
+            };
+            var results = await Task.WhenAll(tasks).ConfigureAwait(true);
+            AvailableEyeColors  = Build0(results[0], 4);
+            AvailableBrows      = Build0(results[1], 14);
+            AvailableLipsticks  = Build0(results[2], 29);
+            AvailableEyeshadows = Build0(results[3], 30);
+            AvailableEyeliners  = Build0(results[4], 31);
+            AvailableBlushes    = Build0(results[5], 32);
+            // Default each picker to the "None" sentinel so the user can see the picker
+            // populated without it triggering a build.
+            selectedEyeColor = AvailableEyeColors.FirstOrDefault();
+            selectedBrows = AvailableBrows.FirstOrDefault();
+            selectedLipstick = AvailableLipsticks.FirstOrDefault();
+            selectedEyeshadow = AvailableEyeshadows.FirstOrDefault();
+            selectedEyeliner = AvailableEyeliners.FirstOrDefault();
+            selectedBlush = AvailableBlushes.FirstOrDefault();
+            OnPropertyChanged(nameof(SelectedEyeColor));
+            OnPropertyChanged(nameof(SelectedBrows));
+            OnPropertyChanged(nameof(SelectedLipstick));
+            OnPropertyChanged(nameof(SelectedEyeshadow));
+            OnPropertyChanged(nameof(SelectedEyeliner));
+            OnPropertyChanged(nameof(SelectedBlush));
+
+        }
+        catch
+        {
+            // Pickers stay empty.
+        }
+    }
+
+    private static IReadOnlyList<FaceCasOption> Build0(IReadOnlyList<Sims4ResourceExplorer.Core.ResourceMetadata> resources, int bodyType)
+    {
+        var grouped = resources
+            .GroupBy(r => r.Key.FullInstance)
+            .Select(g => g.First())
+            .Select(r => new FaceCasOption(
+                r.Key.FullInstance,
+                string.IsNullOrWhiteSpace(r.Name) ? $"0x{r.Key.FullInstance:X16}" : r.Name!,
+                r.PackagePath,
+                bodyType))
+            .OrderBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase);
+        return new[] { FaceCasOption.NoneSentinel(bodyType) }.Concat(grouped).ToArray();
+    }
+
+    private async Task<(IReadOnlyList<byte[]>?, IReadOnlyList<float>?)> BuildFaceCasOverlayInputsAsync(
+        IReadOnlyList<byte[]>? systemResolvedOverlays,
+        CancellationToken cancellationToken)
+    {
+        var pngs = new List<byte[]>();
+        var alphas = new List<float>();
+        if (systemResolvedOverlays is not null)
+        {
+            // System-resolved overlays (from the SimInfo's own equipped CAS parts) keep
+            // their full-strength contribution; the constructor's picker layers are on top.
+            foreach (var png in systemResolvedOverlays)
+            {
+                if (png is { Length: > 0 })
+                {
+                    pngs.Add(png);
+                    alphas.Add(1f);
+                }
+            }
+        }
+
+        var slots = new (FaceCasSlotConfig Slot, float Alpha)[]
+        {
+            (CurrentSkinLayers.EyeColor,  eyeColorAlpha),
+            (CurrentSkinLayers.Brows,     browsAlpha),
+            (CurrentSkinLayers.Lipstick,  lipstickAlpha),
+            (CurrentSkinLayers.Eyeshadow, eyeshadowAlpha),
+            (CurrentSkinLayers.Eyeliner,  eyelinerAlpha),
+            (CurrentSkinLayers.Blush,     blushAlpha),
+        };
+        foreach (var (slot, alpha) in slots)
+        {
+            if (slot.IsNone() || slot.CasPartInstance is not { } instance || instance == 0ul)
+            {
+                continue;
+            }
+            byte[]? png;
+            if (!casPartPngCache.TryGetValue(instance, out png))
+            {
+                png = await syntheticSimService.ResolveCasPartDiffusePngAsync(instance, cancellationToken).ConfigureAwait(true);
+                casPartPngCache[instance] = png;
+            }
+            if (png is { Length: > 0 })
+            {
+                pngs.Add(png);
+                alphas.Add(alpha);
+            }
+        }
+
+        return pngs.Count == 0 ? (null, null) : (pngs, alphas);
+    }
+
+    private void RebuildSkinLayers()
+    {
+        // Skin-layer changes don't affect geometry, so we route through the existing
+        // skintone-change path (which composes a fresh atlas and rebinds materials on
+        // the cached base scene). Wraps SelectedSkintone semantics: a fast-path skin
+        // re-compose when a base scene exists, full rebuild otherwise.
+        if (selectedSkintone is null)
+        {
+            TriggerRebuild();
+            return;
+        }
+        RebuildForSkintoneChange(selectedSkintone);
+    }
+
     private async Task LoadSkintonesAsync()
     {
         try
@@ -346,7 +542,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private void TriggerRebuild()
     {
         var seed = currentSeed;
-        var key = new SceneCacheKey(seed.AgeLabel, seed.GenderLabel, seed.SkintoneInstance);
+        var key = new SceneCacheKey(seed.AgeLabel, seed.GenderLabel, seed.SkintoneInstance, CurrentSkinLayers.Fingerprint());
 
         // Cache hit: instant apply, no build, leave any in-flight build alone so its
         // result still lands in the cache.
@@ -439,16 +635,23 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             if (sim.SkintoneRender is { } skintone)
             {
                 SceneStatus = "Composing skin atlas…";
+                var (overlayPngs, overlayAlphas) = await BuildFaceCasOverlayInputsAsync(skintone.FaceCasOverlayPngBytes, token).ConfigureAwait(true);
+                if (token.IsCancellationRequested) return;
+                var settings = CurrentSkinLayers;
                 var atlas = await SimSkinAtlasComposer.BuildAsync(
                     skintone.BaseTexturePngBytes,
                     skintone.DetailNeutralPngBytes,
                     skintone.DetailOverlayPngBytes,
                     skintone.FaceOverlayPngBytes,
-                    skintone.FaceCasOverlayPngBytes,
-                    pass2Opacity: skintone.OverlayOpacity / 100f,
+                    overlayPngs,
+                    pass2Opacity: (skintone.OverlayOpacity / 100f) * settings.DetailOverlayAlpha,
                     skintoneHue: skintone.SkintoneHue,
                     skintoneSaturation: skintone.SkintoneSaturation,
-                    cancellationToken: token).ConfigureAwait(true);
+                    cancellationToken: token,
+                    detailNeutralAlpha: settings.DetailNeutralAlpha,
+                    pass3HueAlpha: settings.Pass3HueAlpha,
+                    faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
+                    faceCasOverlayAlphas: overlayAlphas).ConfigureAwait(true);
                 if (token.IsCancellationRequested)
                 {
                     return;
@@ -483,7 +686,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 SceneStatus: sceneStatusText);
 
             // Only apply to the viewport if this build still matches the current pick.
-            var currentKey = new SceneCacheKey(currentSeed.AgeLabel, currentSeed.GenderLabel, currentSeed.SkintoneInstance);
+            var currentKey = new SceneCacheKey(currentSeed.AgeLabel, currentSeed.GenderLabel, currentSeed.SkintoneInstance, CurrentSkinLayers.Fingerprint());
             if (currentKey.Equals(key))
             {
                 AssetGraphDiagnostics = diagnosticsText;
