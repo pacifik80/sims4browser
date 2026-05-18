@@ -144,30 +144,55 @@ public static class SimSkinAtlasComposer
             var overFactor = (float)(skintoneSaturation / 100); // literal int division
             overFactor *= clampedPass3HueAlpha;
             var pass3Active = skintoneSaturation > 0 && overFactor > 0f;
+
+            // Build 0305 — hue-preserving Pass 1.
+            // The original TS4SimRipper math was per-channel `pass1 = ((1-2·d)·c² + 2·d·c)·1.2`.
+            // Squaring each channel separately amplifies the dominant channel (skin tones are
+            // red-dominant), so darker detail values push the result toward saturated brown.
+            // Without a face-overlay PNG to mask it, that brown shows up as visible blotches
+            // at face-feature UVs (nose ridge, brow strip, lipline, etc.).
+            //
+            // Replacement: compute the SAME soft-light curve but on LUMINANCE only, then
+            // scale RGB uniformly to match the new luminance. Hue is preserved exactly.
+            // Pass 2 (overlay-blend) and Pass 3 (hue shift) stay per-channel — they are
+            // gated by `pass2Opacity` and `Saturation/100` respectively, both ~0 for most
+            // default skintones, so they rarely contribute to the artifact.
             for (var i = 0; i < skinPixels.Length; i += 4)
             {
+                var bF = skinPixels[i] / 255f;
+                var gF = skinPixels[i + 1] / 255f;
+                var rF = skinPixels[i + 2] / 255f;
+                var dbF = detailsPixels[i] / 255f;
+                var dgF = detailsPixels[i + 1] / 255f;
+                var drF = detailsPixels[i + 2] / 255f;
+
+                // Rec. 601 luminance — perceptually close enough for skin tones; cheap.
+                var detLum = 0.299f * drF + 0.587f * dgF + 0.114f * dbF;
+                var biasedDetLum = (detLum * clampedDetailNeutralAlpha) + (0.5f * (1f - clampedDetailNeutralAlpha));
+                var baseLum = 0.299f * rF + 0.587f * gF + 0.114f * bF;
+
+                // Pass 1 soft-light, applied to luminance only.
+                var pass1Lum = (1f - 2f * biasedDetLum) * baseLum * baseLum + 2f * biasedDetLum * baseLum;
+                pass1Lum = Math.Min(pass1Lum * 1.2f, 1f);
+                var scale = baseLum > 1e-4f ? pass1Lum / baseLum : 0f;
+                var p1B = Math.Min(bF * scale, 1f);
+                var p1G = Math.Min(gF * scale, 1f);
+                var p1R = Math.Min(rF * scale, 1f);
+
                 for (var c = 0; c < 3; c++)
                 {
-                    var color = skinPixels[i + c];
+                    var pass1Channel = (c == 0 ? p1B : c == 1 ? p1G : p1R) * 255f;
                     var detail = detailsPixels[i + c];
-                    var detF = detail / 255f;
-                    var colF = color / 255f;
-                    // detailNeutralAlpha biases the soft-light strength: at 0 the details
-                    // become a neutral mid-gray (0.5) so Pass 1 is a no-op, at 1 the full
-                    // detail value is used.
-                    var biasedDetF = (detF * clampedDetailNeutralAlpha) + (0.5f * (1f - clampedDetailNeutralAlpha));
-                    var pass1 = ((1f - 2f * biasedDetF) * colF * colF + 2f * biasedDetF * colF) * 255f;
-                    pass1 = Math.Min(pass1 * 1.2f, 255f);
                     float pass2Result;
-                    if (pass1 > 128f)
+                    if (pass1Channel > 128f)
                     {
-                        pass2Result = 255f - ((255f - 2f * (detail - 128f)) * (255f - pass1) / 256f);
+                        pass2Result = 255f - ((255f - 2f * (detail - 128f)) * (255f - pass1Channel) / 256f);
                     }
                     else
                     {
-                        pass2Result = (2f * detail * pass1) / 256f;
+                        pass2Result = (2f * detail * pass1Channel) / 256f;
                     }
-                    var blended = (pass2Result * pass2) + (pass1 * (1f - pass2));
+                    var blended = (pass2Result * pass2) + (pass1Channel * (1f - pass2));
                     if (pass3Active)
                     {
                         // BGRA pixel layout, RGB rgbOver: B(c=0) -> rgbOver[2], G(c=1) -> rgbOver[1], R(c=2) -> rgbOver[0].
