@@ -421,13 +421,31 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 return;
             }
 
-            var rebound = atlas is { Length: > 0 }
-                ? SimSkintoneMaterialBinder.RebindWithAtlas(baseEntry.Scene, atlas)
+            var headFacePng = TryExtractHeadFacePng(baseEntry.Scene);
+            var headAtlas = headFacePng is { Length: > 0 }
+                ? await SimSkinAtlasComposer.BuildHeadAtlasAsync(
+                    headFacePng,
+                    skintone.SkintoneHue,
+                    skintone.SkintoneSaturation,
+                    skintone.FaceOverlayPngBytes,
+                    overlayPngs,
+                    overlayAlphas,
+                    faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
+                    pass3HueAlpha: settings.Pass3HueAlpha,
+                    cancellationToken: token).ConfigureAwait(true)
+                : null;
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var rebound = (atlas is { Length: > 0 } || headAtlas is { Length: > 0 })
+                ? SimSkintoneMaterialBinder.RebindWithAtlases(baseEntry.Scene, atlas, headAtlas)
                 : baseEntry.Scene;
 
             var diagnostics = atlas is { Length: > 0 }
-                ? $"{baseEntry.Diagnostics}\nSkin atlas (fast path): re-composed {atlas.Length:N0} bytes for skintone 0x{newSkintone.Instance:X16}."
-                : $"{baseEntry.Diagnostics}\nSkin atlas (fast path): composition failed for skintone 0x{newSkintone.Instance:X16}; materials retain the previous binding.";
+                ? $"{baseEntry.Diagnostics}\nSkin atlas (fast path): body={atlas.Length:N0} bytes, head={(headAtlas?.Length ?? 0):N0} bytes for skintone 0x{newSkintone.Instance:X16}."
+                : $"{baseEntry.Diagnostics}\nSkin atlas (fast path): body composition failed for skintone 0x{newSkintone.Instance:X16}; materials retain the previous binding.";
             var b = rebound.Bounds;
             var statusText = System.FormattableString.Invariant(
                 $"Scene ready (fast path) — meshes={rebound.Meshes.Count}, materials={rebound.Materials.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
@@ -512,6 +530,40 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         {
             // Pickers stay empty.
         }
+    }
+
+    /// <summary>
+    /// Extracts the head CASPart's pre-rendered face PNG (the source for <see cref="SimSkinAtlasComposer.BuildHeadAtlasAsync"/>).
+    /// The face texture is bound twice on head shell materials: once as the diffuse/BaseColor
+    /// (which the binder overwrites with the composed head atlas on subsequent rebinds) and
+    /// once as the "region_map" slot (which the binder never touches). Reading from the
+    /// region_map slot keeps the helper idempotent across rebinds — calling it on a scene
+    /// whose BaseColor has already been replaced with `head_atlas.png` still yields the
+    /// original face bytes for the next composition.
+    /// </summary>
+    private static byte[]? TryExtractHeadFacePng(CanonicalScene scene)
+    {
+        foreach (var material in scene.Materials)
+        {
+            if (string.IsNullOrEmpty(material.Approximation) ||
+                !material.Approximation.Contains("Head shell", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            var regionMap = material.Textures.FirstOrDefault(t =>
+                string.Equals(t.Slot, "region_map", StringComparison.OrdinalIgnoreCase));
+            if (regionMap?.PngBytes is { Length: > 0 } regionBytes)
+            {
+                return regionBytes;
+            }
+            var baseColor = material.Textures.FirstOrDefault(t => t.Semantic == CanonicalTextureSemantic.BaseColor);
+            if (baseColor?.PngBytes is { Length: > 0 } baseBytes &&
+                !string.Equals(baseColor.FileName, "head_atlas.png", StringComparison.OrdinalIgnoreCase))
+            {
+                return baseBytes;
+            }
+        }
+        return null;
     }
 
     private static IReadOnlyList<FaceCasOption> Build0(IReadOnlyList<Sims4ResourceExplorer.Core.ResourceMetadata> resources, int bodyType)
@@ -727,10 +779,28 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 {
                     return;
                 }
-                if (atlas is { Length: > 0 })
+
+                var headFacePng = TryExtractHeadFacePng(scene);
+                var headAtlas = headFacePng is { Length: > 0 }
+                    ? await SimSkinAtlasComposer.BuildHeadAtlasAsync(
+                        headFacePng,
+                        skintone.SkintoneHue,
+                        skintone.SkintoneSaturation,
+                        skintone.FaceOverlayPngBytes,
+                        overlayPngs,
+                        overlayAlphas,
+                        faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
+                        pass3HueAlpha: settings.Pass3HueAlpha,
+                        cancellationToken: token).ConfigureAwait(true)
+                    : null;
+                if (token.IsCancellationRequested)
                 {
-                    scene = SimSkintoneMaterialBinder.RebindWithAtlas(scene, atlas);
-                    combinedDiagnostics.Add($"Skin atlas: composed {atlas.Length:N0} bytes and rebound on every skintone-routed material.");
+                    return;
+                }
+                if (atlas is { Length: > 0 } || headAtlas is { Length: > 0 })
+                {
+                    scene = SimSkintoneMaterialBinder.RebindWithAtlases(scene, atlas, headAtlas);
+                    combinedDiagnostics.Add($"Skin atlas: body={atlas?.Length ?? 0:N0} bytes, head={headAtlas?.Length ?? 0:N0} bytes; rebound on every skintone-routed material.");
                 }
                 else
                 {

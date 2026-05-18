@@ -259,6 +259,111 @@ public static class SimSkinAtlasComposer
     }
 
     /// <summary>
+    /// Builds a HEAD-shell atlas: the head CASPart's pre-rendered face texture (eyes/nose/lips
+    /// baked in) is the base; Pass 3 HSL shift retints toward the skintone hue (matches the
+    /// body atlas's Pass 3 step using the same `HslMidpointToRgb` math); face overlay and face
+    /// CAS overlays composite on top. Body Pass 1/Pass 2 (soft-light × detail layers) are
+    /// skipped because the head face PNG is already a fully-shaded face — re-shading it would
+    /// duplicate the existing definition.
+    ///
+    /// Why a separate atlas: the body SkinBlender atlas is composed from the skintone's plain
+    /// base texture (cyan for an alien tone) and would render the face flat-cyan with no eyes
+    /// or features if bound to the head shell. The head needs its own composite.
+    /// </summary>
+    public static async Task<byte[]?> BuildHeadAtlasAsync(
+        byte[] headFacePng,
+        ushort skintoneHue,
+        ushort skintoneSaturation,
+        byte[]? faceOverlayPng,
+        IReadOnlyList<byte[]>? faceCasOverlayPngs,
+        IReadOnlyList<float>? faceCasOverlayAlphas,
+        float faceOverlayAlpha,
+        float pass3HueAlpha,
+        CancellationToken cancellationToken)
+    {
+        if (headFacePng is not { Length: > 0 })
+        {
+            return null;
+        }
+        var decoded = await DecodeBgra8StraightAsync(headFacePng, cancellationToken).ConfigureAwait(false);
+        if (decoded is null)
+        {
+            return null;
+        }
+
+        var width = decoded.Value.Width;
+        var height = decoded.Value.Height;
+        var pixels = decoded.Value.Pixels;
+
+        var clampedPass3Alpha = System.Math.Clamp(pass3HueAlpha, 0f, 1f);
+        // Integer division mirrors SkinBlender — Saturation in [0, 99] → no Pass 3 (default
+        // human skintones), Saturation in [100, 199] → full hue overlay (aliens etc.).
+        var overFactor = (float)(skintoneSaturation / 100) * clampedPass3Alpha;
+        if (skintoneSaturation > 0 && overFactor > 0f)
+        {
+            var rgbOver = HslMidpointToRgb(skintoneHue);
+            for (var i = 0; i < pixels.Length; i += 4)
+            {
+                for (var c = 0; c < 3; c++)
+                {
+                    float blended = pixels[i + c];
+                    // BGRA layout: B=0, G=1, R=2; rgbOver is { R, G, B } so index is 2-c.
+                    var overChannel = rgbOver[2 - c];
+                    var pass3 = (blended / 255f) * (blended + ((2f * overChannel) / 255f) * (255f - blended));
+                    blended = (pass3 * overFactor) + (blended * (1f - overFactor));
+                    if (blended < 0f) blended = 0f;
+                    if (blended > 255f) blended = 255f;
+                    pixels[i + c] = (byte)blended;
+                }
+            }
+        }
+
+        var clampedFaceOverlayAlpha = System.Math.Clamp(faceOverlayAlpha, 0f, 1f);
+        if (faceOverlayPng is { Length: > 0 } && clampedFaceOverlayAlpha > 0f)
+        {
+            var faceOverlay = await DecodeBgra8StraightAsync(faceOverlayPng, cancellationToken, width, height).ConfigureAwait(false);
+            if (faceOverlay is not null)
+            {
+                if (clampedFaceOverlayAlpha < 1f)
+                {
+                    ScaleAlphaInPlace(faceOverlay.Value.Pixels, clampedFaceOverlayAlpha);
+                }
+                BlendStraightAlphaOver(pixels, faceOverlay.Value.Pixels);
+            }
+        }
+
+        if (faceCasOverlayPngs is not null)
+        {
+            for (var slotIndex = 0; slotIndex < faceCasOverlayPngs.Count; slotIndex++)
+            {
+                var casOverlayPng = faceCasOverlayPngs[slotIndex];
+                if (casOverlayPng is not { Length: > 0 })
+                {
+                    continue;
+                }
+                var slotAlpha = faceCasOverlayAlphas is { } alphas && slotIndex < alphas.Count
+                    ? System.Math.Clamp(alphas[slotIndex], 0f, 1f)
+                    : 1f;
+                if (slotAlpha <= 0f)
+                {
+                    continue;
+                }
+                var casOverlay = await DecodeBgra8StraightAsync(casOverlayPng, cancellationToken, width, height).ConfigureAwait(false);
+                if (casOverlay is not null)
+                {
+                    if (slotAlpha < 1f)
+                    {
+                        ScaleAlphaInPlace(casOverlay.Value.Pixels, slotAlpha);
+                    }
+                    BlendStraightAlphaOver(pixels, casOverlay.Value.Pixels);
+                }
+            }
+        }
+
+        return await EncodeBgra8AsPngAsync(width, height, pixels, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Pre-multiplies every BGRA pixel's alpha by <paramref name="alpha"/> (clamped 0..1).
     /// Used to scale a layer's contribution before the source-over blend.
     /// </summary>

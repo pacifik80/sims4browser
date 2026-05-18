@@ -4,30 +4,42 @@ namespace Sims4ResourceExplorer.App.Services;
 
 /// <summary>
 /// Rewrites skintone-routed materials in a <see cref="CanonicalScene"/> to bind to the
-/// composited skin atlas PNG. Pure function; no UI thread or graphics dependency. The
-/// atlas itself is composed by <see cref="SimSkinAtlasComposer"/>.
+/// appropriate composited atlas PNG. Pure function; no UI thread or graphics dependency.
+/// Body shell materials sample from the body atlas (SkinBlender chain over the skintone's
+/// base texture); head shell materials sample from a separate head atlas (the head CASPart's
+/// pre-rendered face PNG with Pass 3 HSL shift + face overlays composed on top).
 ///
 /// Used after <c>ISimAssetGraphRenderer.BuildSimSceneAsync</c> produces a scene whose
-/// body materials carry the "Sim skintone route" approximation tag but have no actual
-/// texture bytes — this rebinder replaces their BaseColor slot with the atlas and clears
-/// the swatch tint so the texture is used directly.
+/// skintone-routed materials carry the "Sim skintone route" approximation tag — this rebinder
+/// replaces their BaseColor slot with the matching atlas and clears the swatch tint so the
+/// texture is used directly.
 /// </summary>
 public static class SimSkintoneMaterialBinder
 {
-    public static CanonicalScene RebindWithAtlas(CanonicalScene scene, byte[] atlasPng)
+    public static CanonicalScene RebindWithAtlas(CanonicalScene scene, byte[] atlasPng) =>
+        RebindWithAtlases(scene, bodyAtlas: atlasPng, headAtlas: null);
+
+    public static CanonicalScene RebindWithAtlases(CanonicalScene scene, byte[]? bodyAtlas, byte[]? headAtlas)
     {
-        if (atlasPng is not { Length: > 0 } || scene.Materials.Count == 0)
+        if (scene.Materials.Count == 0)
+        {
+            return scene;
+        }
+        if (bodyAtlas is not { Length: > 0 } && headAtlas is not { Length: > 0 })
         {
             return scene;
         }
 
         var rewritten = scene.Materials
-            .Select(material => RewriteOne(material, atlasPng))
+            .Select(material => RewriteOne(material, bodyAtlas, headAtlas))
             .ToList();
         return scene with { Materials = rewritten };
     }
 
-    public static CanonicalMaterial RewriteOne(CanonicalMaterial material, byte[] atlasPng)
+    public static CanonicalMaterial RewriteOne(CanonicalMaterial material, byte[] atlasPng) =>
+        RewriteOne(material, bodyAtlas: atlasPng, headAtlas: null);
+
+    public static CanonicalMaterial RewriteOne(CanonicalMaterial material, byte[]? bodyAtlas, byte[]? headAtlas)
     {
         if (string.IsNullOrEmpty(material.Approximation) ||
             !material.Approximation.Contains("Sim skintone route", StringComparison.OrdinalIgnoreCase))
@@ -35,18 +47,17 @@ public static class SimSkintoneMaterialBinder
             return material;
         }
 
-        // Head shell materials carry a complete pre-rendered face diffuse on their original
-        // CASPart texture (eyes/nose/lips already baked in by EA's CAS shader pre-pass — visible
-        // in the dump as the 'region_map' slot file `3E68F8B6F44DA2AA`, which is also bound to
-        // the diffuse slot pre-rewrite). The SkinBlender atlas is a *body-skin* composite of the
-        // skintone base plus detail/overlay layers and does not include face features. Binding
-        // the atlas to the head replaced that face with blotchy hue-amplified body skin. Leave
-        // the head material untouched so its original face diffuse + ViewportTintColor route
-        // through the PBR skin path (AlbedoMap × skintone) the same way EA's runtime tints it.
-        if (material.Approximation.Contains("Head shell", StringComparison.OrdinalIgnoreCase))
+        var isHead = material.Approximation.Contains("Head shell", StringComparison.OrdinalIgnoreCase);
+        var atlas = isHead ? headAtlas : bodyAtlas;
+        if (atlas is not { Length: > 0 })
         {
+            // No atlas for this shell — keep the original CASPart diffuse. Head with no head
+            // atlas still shows the pre-rendered face (default skintone). Body with no body
+            // atlas falls back to whatever diffuse the assembly attached.
             return material;
         }
+
+        var fileName = isHead ? "head_atlas.png" : "skin_atlas.png";
 
         var textures = material.Textures;
         var baseIndex = -1;
@@ -66,14 +77,14 @@ public static class SimSkintoneMaterialBinder
         var atlasTexture = baseIndex >= 0
             ? textures[baseIndex] with
             {
-                FileName = "skin_atlas.png",
-                PngBytes = atlasPng,
+                FileName = fileName,
+                PngBytes = atlas,
                 Semantic = CanonicalTextureSemantic.BaseColor
             }
             : new CanonicalTexture(
                 Slot: "BaseColor",
-                FileName: "skin_atlas.png",
-                PngBytes: atlasPng,
+                FileName: fileName,
+                PngBytes: atlas,
                 Semantic: CanonicalTextureSemantic.BaseColor);
 
         var rewrittenTextures = textures.ToList();
