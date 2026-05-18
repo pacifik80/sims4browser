@@ -113,6 +113,22 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         {
             var mat = scene.Materials[mi];
             sb.AppendLine($"[material {mi}] approximation='{mat.Approximation}' shader='{mat.ShaderName ?? "(unknown)"}' source={mat.SourceKind}");
+            // Sanity check: BaseColor on a skintone-routed material should be the composed
+            // atlas (>200 KB). If it's much smaller, we likely fell back to a placeholder /
+            // mask and the body is rendering near-blank. Surfaces the slot-name-vs-content
+            // semantic confusion explicitly in the manifest so future investigations don't
+            // hit the same wall twice.
+            var skintoneRouted = !string.IsNullOrEmpty(mat.Approximation) &&
+                                 mat.Approximation.Contains("Sim skintone route", StringComparison.OrdinalIgnoreCase);
+            if (skintoneRouted)
+            {
+                var bc = mat.Textures.FirstOrDefault(t => t.Semantic == CanonicalTextureSemantic.BaseColor);
+                var bcLen = bc?.PngBytes?.Length ?? 0;
+                if (bcLen < 100 * 1024)
+                {
+                    sb.AppendLine($"   !! WARNING: BaseColor only {bcLen:N0} bytes — atlas/diffuse likely missing or a mask was promoted by mistake.");
+                }
+            }
             for (var ti = 0; ti < mat.Textures.Count; ti++)
             {
                 var tex = mat.Textures[ti];
@@ -401,30 +417,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             var (overlayPngs, overlayAlphas) = await BuildFaceCasOverlayInputsAsync(skintone.FaceCasOverlayPngBytes, token).ConfigureAwait(true);
             if (token.IsCancellationRequested) return;
             var settings = CurrentSkinLayers;
-            var atlas = await SimSkinAtlasComposer.BuildAsync(
-                skintone.BaseTexturePngBytes,
-                skintone.DetailNeutralPngBytes,
-                skintone.DetailOverlayPngBytes,
-                skintone.FaceOverlayPngBytes,
-                overlayPngs,
-                pass2Opacity: (skintone.OverlayOpacity / 100f) * settings.DetailOverlayAlpha,
-                skintoneHue: skintone.SkintoneHue,
-                skintoneSaturation: skintone.SkintoneSaturation,
-                cancellationToken: token,
-                detailNeutralAlpha: settings.DetailNeutralAlpha,
-                pass3HueAlpha: settings.Pass3HueAlpha,
-                faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
-                faceCasOverlayAlphas: overlayAlphas,
-                baseSkinAlpha: settings.BaseSkinAlpha).ConfigureAwait(true);
-            if (token.IsCancellationRequested)
-            {
-                return;
-            }
-
-            var headFacePng = TryExtractHeadFacePng(baseEntry.Scene);
-            var headAtlas = headFacePng is { Length: > 0 }
-                ? await SimSkinAtlasComposer.BuildHeadAtlasAsync(
-                    headFacePng,
+            var fullBodyDiffuse = TryExtractFullBodyDiffuse(baseEntry.Scene);
+            var atlas = fullBodyDiffuse is { Length: > 0 }
+                ? await SimSkinAtlasComposer.BuildAtlasFromPreRenderedBaseAsync(
+                    fullBodyDiffuse,
                     skintone.SkintoneHue,
                     skintone.SkintoneSaturation,
                     skintone.FaceOverlayPngBytes,
@@ -433,19 +429,34 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                     faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
                     pass3HueAlpha: settings.Pass3HueAlpha,
                     cancellationToken: token).ConfigureAwait(true)
-                : null;
+                : await SimSkinAtlasComposer.BuildAsync(
+                    skintone.BaseTexturePngBytes,
+                    skintone.DetailNeutralPngBytes,
+                    skintone.DetailOverlayPngBytes,
+                    skintone.FaceOverlayPngBytes,
+                    overlayPngs,
+                    pass2Opacity: (skintone.OverlayOpacity / 100f) * settings.DetailOverlayAlpha,
+                    skintoneHue: skintone.SkintoneHue,
+                    skintoneSaturation: skintone.SkintoneSaturation,
+                    cancellationToken: token,
+                    detailNeutralAlpha: settings.DetailNeutralAlpha,
+                    pass3HueAlpha: settings.Pass3HueAlpha,
+                    faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
+                    faceCasOverlayAlphas: overlayAlphas,
+                    baseSkinAlpha: settings.BaseSkinAlpha).ConfigureAwait(true);
             if (token.IsCancellationRequested)
             {
                 return;
             }
 
-            var rebound = (atlas is { Length: > 0 } || headAtlas is { Length: > 0 })
-                ? SimSkintoneMaterialBinder.RebindWithAtlases(baseEntry.Scene, atlas, headAtlas)
+            var rebound = atlas is { Length: > 0 }
+                ? SimSkintoneMaterialBinder.RebindWithAtlas(baseEntry.Scene, atlas)
                 : baseEntry.Scene;
 
+            var atlasSource = fullBodyDiffuse is { Length: > 0 } ? "full-body diffuse" : "skintone-base SkinBlender";
             var diagnostics = atlas is { Length: > 0 }
-                ? $"{baseEntry.Diagnostics}\nSkin atlas (fast path): body={atlas.Length:N0} bytes, head={(headAtlas?.Length ?? 0):N0} bytes for skintone 0x{newSkintone.Instance:X16}."
-                : $"{baseEntry.Diagnostics}\nSkin atlas (fast path): body composition failed for skintone 0x{newSkintone.Instance:X16}; materials retain the previous binding.";
+                ? $"{baseEntry.Diagnostics}\nSkin atlas (fast path, {atlasSource}): {atlas.Length:N0} bytes for skintone 0x{newSkintone.Instance:X16}; bound to body + head shells."
+                : $"{baseEntry.Diagnostics}\nSkin atlas (fast path): composition failed for skintone 0x{newSkintone.Instance:X16}; materials retain the previous binding.";
             var b = rebound.Bounds;
             var statusText = System.FormattableString.Invariant(
                 $"Scene ready (fast path) — meshes={rebound.Meshes.Count}, materials={rebound.Materials.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
@@ -533,15 +544,23 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Extracts the head CASPart's pre-rendered face PNG (the source for <see cref="SimSkinAtlasComposer.BuildHeadAtlasAsync"/>).
-    /// The face texture is bound twice on head shell materials: once as the diffuse/BaseColor
-    /// (which the binder overwrites with the composed head atlas on subsequent rebinds) and
-    /// once as the "region_map" slot (which the binder never touches). Reading from the
-    /// region_map slot keeps the helper idempotent across rebinds — calling it on a scene
-    /// whose BaseColor has already been replaced with `head_atlas.png` still yields the
-    /// original face bytes for the next composition.
+    /// Extracts the Sim's full-body diffuse PNG — EA's single texture covering face, hands,
+    /// feet, torso (with bikini/underwear coverage), and legs via the mesh's UV layout. By
+    /// TS4 design this texture lives on the head CASPart and is UV-sampled by every body
+    /// mesh, not just the head; treating it as a face-only PNG (what the previous name
+    /// `TryExtractHeadFacePng` implied) lost the bikini + body anatomy for body shell
+    /// materials and forced the composer to fall back to the skintone's plain palette base.
+    ///
+    /// The texture is bound on the head shell material in two slots: the diffuse slot
+    /// (BaseColor, which the binder overwrites with the composed atlas) and the `region_map`
+    /// slot (which the binder never touches). Reading from `region_map` makes the helper
+    /// idempotent across rebinds. The 200 KB size threshold rejects the genuine region-mask
+    /// case — body shell CASParts also have a `region_map` slot but theirs are ~12 KB tile
+    /// masks, not real diffuse textures.
     /// </summary>
-    private static byte[]? TryExtractHeadFacePng(CanonicalScene scene)
+    private const int FullBodyDiffuseMinSizeBytes = 200 * 1024;
+
+    private static byte[]? TryExtractFullBodyDiffuse(CanonicalScene scene)
     {
         foreach (var material in scene.Materials)
         {
@@ -552,12 +571,15 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             }
             var regionMap = material.Textures.FirstOrDefault(t =>
                 string.Equals(t.Slot, "region_map", StringComparison.OrdinalIgnoreCase));
-            if (regionMap?.PngBytes is { Length: > 0 } regionBytes)
+            if (regionMap?.PngBytes is { Length: > 0 } regionBytes &&
+                regionBytes.Length >= FullBodyDiffuseMinSizeBytes)
             {
                 return regionBytes;
             }
             var baseColor = material.Textures.FirstOrDefault(t => t.Semantic == CanonicalTextureSemantic.BaseColor);
             if (baseColor?.PngBytes is { Length: > 0 } baseBytes &&
+                baseBytes.Length >= FullBodyDiffuseMinSizeBytes &&
+                !string.Equals(baseColor.FileName, "skin_atlas.png", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(baseColor.FileName, "head_atlas.png", StringComparison.OrdinalIgnoreCase))
             {
                 return baseBytes;
@@ -761,29 +783,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 var (overlayPngs, overlayAlphas) = await BuildFaceCasOverlayInputsAsync(skintone.FaceCasOverlayPngBytes, token).ConfigureAwait(true);
                 if (token.IsCancellationRequested) return;
                 var settings = CurrentSkinLayers;
-                var atlas = await SimSkinAtlasComposer.BuildAsync(
-                    skintone.BaseTexturePngBytes,
-                    skintone.DetailNeutralPngBytes,
-                    skintone.DetailOverlayPngBytes,
-                    skintone.FaceOverlayPngBytes,
-                    overlayPngs,
-                    pass2Opacity: (skintone.OverlayOpacity / 100f) * settings.DetailOverlayAlpha,
-                    skintoneHue: skintone.SkintoneHue,
-                    skintoneSaturation: skintone.SkintoneSaturation,
-                    cancellationToken: token,
-                    detailNeutralAlpha: settings.DetailNeutralAlpha,
-                    pass3HueAlpha: settings.Pass3HueAlpha,
-                    faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
-                    faceCasOverlayAlphas: overlayAlphas).ConfigureAwait(true);
-                if (token.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                var headFacePng = TryExtractHeadFacePng(scene);
-                var headAtlas = headFacePng is { Length: > 0 }
-                    ? await SimSkinAtlasComposer.BuildHeadAtlasAsync(
-                        headFacePng,
+                var fullBodyDiffuse = TryExtractFullBodyDiffuse(scene);
+                var atlas = fullBodyDiffuse is { Length: > 0 }
+                    ? await SimSkinAtlasComposer.BuildAtlasFromPreRenderedBaseAsync(
+                        fullBodyDiffuse,
                         skintone.SkintoneHue,
                         skintone.SkintoneSaturation,
                         skintone.FaceOverlayPngBytes,
@@ -792,19 +795,33 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                         faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
                         pass3HueAlpha: settings.Pass3HueAlpha,
                         cancellationToken: token).ConfigureAwait(true)
-                    : null;
+                    : await SimSkinAtlasComposer.BuildAsync(
+                        skintone.BaseTexturePngBytes,
+                        skintone.DetailNeutralPngBytes,
+                        skintone.DetailOverlayPngBytes,
+                        skintone.FaceOverlayPngBytes,
+                        overlayPngs,
+                        pass2Opacity: (skintone.OverlayOpacity / 100f) * settings.DetailOverlayAlpha,
+                        skintoneHue: skintone.SkintoneHue,
+                        skintoneSaturation: skintone.SkintoneSaturation,
+                        cancellationToken: token,
+                        detailNeutralAlpha: settings.DetailNeutralAlpha,
+                        pass3HueAlpha: settings.Pass3HueAlpha,
+                        faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
+                        faceCasOverlayAlphas: overlayAlphas).ConfigureAwait(true);
                 if (token.IsCancellationRequested)
                 {
                     return;
                 }
-                if (atlas is { Length: > 0 } || headAtlas is { Length: > 0 })
+                if (atlas is { Length: > 0 })
                 {
-                    scene = SimSkintoneMaterialBinder.RebindWithAtlases(scene, atlas, headAtlas);
-                    combinedDiagnostics.Add($"Skin atlas: body={atlas?.Length ?? 0:N0} bytes, head={headAtlas?.Length ?? 0:N0} bytes; rebound on every skintone-routed material.");
+                    scene = SimSkintoneMaterialBinder.RebindWithAtlas(scene, atlas);
+                    var atlasSource = fullBodyDiffuse is { Length: > 0 } ? "full-body diffuse (head CASPart)" : "skintone-base SkinBlender chain";
+                    combinedDiagnostics.Add($"Skin atlas ({atlasSource}): {atlas.Length:N0} bytes; bound to body + head shells.");
                 }
                 else
                 {
-                    combinedDiagnostics.Add("Skin atlas: composition failed (base skin texture missing or decode failed); skintone-routed materials may render without diffuse.");
+                    combinedDiagnostics.Add("Skin atlas: composition failed (full-body diffuse not found and skintone base missing or decode failed); skintone-routed materials may render without diffuse.");
                 }
             }
             else

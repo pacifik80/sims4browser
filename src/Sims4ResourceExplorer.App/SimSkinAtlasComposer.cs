@@ -259,19 +259,21 @@ public static class SimSkinAtlasComposer
     }
 
     /// <summary>
-    /// Builds a HEAD-shell atlas: the head CASPart's pre-rendered face texture (eyes/nose/lips
-    /// baked in) is the base; Pass 3 HSL shift retints toward the skintone hue (matches the
-    /// body atlas's Pass 3 step using the same `HslMidpointToRgb` math); face overlay and face
-    /// CAS overlays composite on top. Body Pass 1/Pass 2 (soft-light × detail layers) are
-    /// skipped because the head face PNG is already a fully-shaded face — re-shading it would
-    /// duplicate the existing definition.
+    /// Composes the atlas when the supplied <paramref name="preRenderedBasePng"/> is EA's
+    /// full-body diffuse for this Sim (the texture that ships on the head CASPart and covers
+    /// face, hands, feet, torso with bikini/underwear, and legs via the mesh's UV layout).
+    /// Body shell materials AND the head shell material both UV-sample from this single
+    /// texture in the EA runtime, so a single atlas serves all four meshes.
     ///
-    /// Why a separate atlas: the body SkinBlender atlas is composed from the skintone's plain
-    /// base texture (cyan for an alien tone) and would render the face flat-cyan with no eyes
-    /// or features if bound to the head shell. The head needs its own composite.
+    /// Pass 1 / Pass 2 (soft-light × detail layers) are skipped — the pre-rendered base
+    /// already carries all the anatomical shading and the bikini overlay; re-applying the
+    /// detail/overlay chain would double-paint shadows that EA's compositor already baked.
+    /// Pass 3 (HSL shift) still runs so non-default skintones (saturation >= 100, e.g. alien
+    /// tones) retint the texture toward their hue. Face overlay + face CAS overlays (makeup,
+    /// brow, eye color) composite on top — they only touch face UV regions.
     /// </summary>
-    public static async Task<byte[]?> BuildHeadAtlasAsync(
-        byte[] headFacePng,
+    public static async Task<byte[]?> BuildAtlasFromPreRenderedBaseAsync(
+        byte[] preRenderedBasePng,
         ushort skintoneHue,
         ushort skintoneSaturation,
         byte[]? faceOverlayPng,
@@ -281,11 +283,11 @@ public static class SimSkinAtlasComposer
         float pass3HueAlpha,
         CancellationToken cancellationToken)
     {
-        if (headFacePng is not { Length: > 0 })
+        if (preRenderedBasePng is not { Length: > 0 })
         {
             return null;
         }
-        var decoded = await DecodeBgra8StraightAsync(headFacePng, cancellationToken).ConfigureAwait(false);
+        var decoded = await DecodeBgra8StraightAsync(preRenderedBasePng, cancellationToken).ConfigureAwait(false);
         if (decoded is null)
         {
             return null;
