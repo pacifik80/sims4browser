@@ -48,16 +48,29 @@ public static class SimSkintoneMaterialBinder
         }
 
         var isHead = material.Approximation.Contains("Head shell", StringComparison.OrdinalIgnoreCase);
-        var atlas = isHead ? headAtlas : bodyAtlas;
+        // When a head-specific atlas is supplied, head materials use it. Otherwise head
+        // materials fall back to the body atlas — same texture covers both shells via UV
+        // (per build 0308: the unified atlas is built from the head CASPart's full-body
+        // diffuse). Using the same filename `skin_atlas.png` for both is critical: the
+        // viewport renderer detects the PBR skin shader path via that filename, and head
+        // + body must take the same shader path or they render with different intensities.
+        byte[]? atlas;
+        string fileName;
+        if (isHead)
+        {
+            atlas = headAtlas ?? bodyAtlas;
+            fileName = headAtlas is { Length: > 0 } ? "head_atlas.png" : "skin_atlas.png";
+        }
+        else
+        {
+            atlas = bodyAtlas;
+            fileName = "skin_atlas.png";
+        }
         if (atlas is not { Length: > 0 })
         {
-            // No atlas for this shell — keep the original CASPart diffuse. Head with no head
-            // atlas still shows the pre-rendered face (default skintone). Body with no body
-            // atlas falls back to whatever diffuse the assembly attached.
+            // No atlas applicable to this shell — keep the original CASPart diffuse.
             return material;
         }
-
-        var fileName = isHead ? "head_atlas.png" : "skin_atlas.png";
 
         var textures = material.Textures;
         var baseIndex = -1;
