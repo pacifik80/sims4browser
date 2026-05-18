@@ -35,6 +35,19 @@ public static class SimSkintoneMaterialBinder
             return material;
         }
 
+        // Head shell materials carry a complete pre-rendered face diffuse on their original
+        // CASPart texture (eyes/nose/lips already baked in by EA's CAS shader pre-pass — visible
+        // in the dump as the 'region_map' slot file `3E68F8B6F44DA2AA`, which is also bound to
+        // the diffuse slot pre-rewrite). The SkinBlender atlas is a *body-skin* composite of the
+        // skintone base plus detail/overlay layers and does not include face features. Binding
+        // the atlas to the head replaced that face with blotchy hue-amplified body skin. Leave
+        // the head material untouched so its original face diffuse + ViewportTintColor route
+        // through the PBR skin path (AlbedoMap × skintone) the same way EA's runtime tints it.
+        if (material.Approximation.Contains("Head shell", StringComparison.OrdinalIgnoreCase))
+        {
+            return material;
+        }
+
         var textures = material.Textures;
         var baseIndex = -1;
         for (var i = 0; i < textures.Count; i++)
