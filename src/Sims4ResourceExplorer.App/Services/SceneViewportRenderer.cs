@@ -66,21 +66,28 @@ public sealed class SceneViewportRenderer
                 viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.Black });
                 break;
             default:
-                viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.ColorHelper.FromArgb(255, 156, 166, 180) });
+                // Build 0310: scaled total light contribution from ~2.5× down to ~1.0× so
+                // bright pre-rendered textures (e.g. EA's full-body diffuse) render at their
+                // intended tone instead of clamping to white. PBR Lambertian response for a
+                // forward-facing pixel is ~albedo × (Σ directional / π + ambient); previously
+                // that totaled ~1.6× for any albedo, washing out peachy skin. New ambient
+                // ~0.30 + 3 dirs summing to ~0.55/π ≈ 0.18 + ~0.30 ≈ ~0.78× — leaves headroom
+                // for the PBR specular lobe so highlights aren't blown either.
+                viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.ColorHelper.FromArgb(255, 78, 84, 92) });
                 viewport.Items.Add(new DirectionalLight3D
                 {
                     Direction = Vector3.Normalize(new Vector3(-0.36f, -0.92f, -0.22f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 255, 248, 238)
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 165, 160, 154)
                 });
                 viewport.Items.Add(new DirectionalLight3D
                 {
                     Direction = Vector3.Normalize(new Vector3(0.78f, -0.28f, 0.42f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 222, 230, 238)
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 130, 135, 140)
                 });
                 viewport.Items.Add(new DirectionalLight3D
                 {
                     Direction = Vector3.Normalize(new Vector3(0.12f, 0.58f, -0.9f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 150, 158, 170)
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 88, 92, 100)
                 });
                 viewport.Items.Add(shadowMap);
                 break;
