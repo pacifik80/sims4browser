@@ -89,6 +89,71 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         TriggerRebuild();
     }
 
+    public async Task DumpCurrentSceneAsync(string outDir)
+    {
+        // Diagnostic dump: saves the bound atlas PNG for every skintone-routed material
+        // plus a JSON manifest with mesh metadata (positions extent, UV range, index count,
+        // material binding) for every mesh in the current scene. Used to triangulate where
+        // visual artifacts come from when the atlas itself looks clean but the rendered
+        // model shows artifacts (e.g. face geometry sampling a wrong atlas region).
+        System.IO.Directory.CreateDirectory(outDir);
+        var scene = currentScene;
+        if (scene is null)
+        {
+            await System.IO.File.WriteAllTextAsync(System.IO.Path.Combine(outDir, "no-scene.txt"), "CurrentScene is null at dump time.").ConfigureAwait(false);
+            return;
+        }
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# Constructor scene dump");
+        sb.AppendLine($"age={selectedAge} gender={selectedGender} skintone=0x{currentSeed.SkintoneInstance:X16}");
+        sb.AppendLine($"meshes={scene.Meshes.Count} materials={scene.Materials.Count} bones={scene.Bones.Count}");
+        sb.AppendLine($"bounds min=({scene.Bounds.MinX:F3},{scene.Bounds.MinY:F3},{scene.Bounds.MinZ:F3}) max=({scene.Bounds.MaxX:F3},{scene.Bounds.MaxY:F3},{scene.Bounds.MaxZ:F3})");
+        sb.AppendLine();
+        for (var mi = 0; mi < scene.Materials.Count; mi++)
+        {
+            var mat = scene.Materials[mi];
+            sb.AppendLine($"[material {mi}] approximation='{mat.Approximation}' shader='{mat.ShaderName ?? "(unknown)"}' source={mat.SourceKind}");
+            for (var ti = 0; ti < mat.Textures.Count; ti++)
+            {
+                var tex = mat.Textures[ti];
+                var byteLen = tex.PngBytes?.Length ?? 0;
+                sb.AppendLine($"   tex {ti}: slot={tex.Slot} semantic={tex.Semantic} {byteLen,9:N0} bytes file={tex.FileName ?? "(none)"}");
+                if (tex.PngBytes is { Length: > 0 })
+                {
+                    var safe = string.Concat((tex.FileName ?? $"slot{ti}").Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.' ? c : '_'));
+                    if (!safe.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) safe += ".png";
+                    var outPath = System.IO.Path.Combine(outDir, $"mat{mi:D2}_tex{ti:D2}_{tex.Semantic}_{safe}");
+                    await System.IO.File.WriteAllBytesAsync(outPath, tex.PngBytes).ConfigureAwait(false);
+                }
+            }
+        }
+        sb.AppendLine();
+        for (var mi = 0; mi < scene.Meshes.Count; mi++)
+        {
+            var mesh = scene.Meshes[mi];
+            var vertCount = mesh.Positions.Count / 3;
+            var triCount = mesh.Indices.Count / 3;
+            float minU = float.PositiveInfinity, maxU = float.NegativeInfinity;
+            float minV = float.PositiveInfinity, maxV = float.NegativeInfinity;
+            var uvs = mesh.Uv0s is { Count: > 0 } ? mesh.Uv0s : mesh.Uvs;
+            for (var i = 0; i + 1 < uvs.Count; i += 2)
+            {
+                var u = uvs[i]; var v = uvs[i + 1];
+                if (u < minU) minU = u; if (u > maxU) maxU = u;
+                if (v < minV) minV = v; if (v > maxV) maxV = v;
+            }
+            float minY = float.PositiveInfinity, maxY = float.NegativeInfinity;
+            for (var i = 1; i < mesh.Positions.Count; i += 3)
+            {
+                var y = mesh.Positions[i];
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+            }
+            sb.AppendLine($"[mesh {mi}] matIdx={mesh.MaterialIndex} verts={vertCount} tris={triCount} preferredUv={mesh.PreferredUvChannel} hasUv0={mesh.Uv0s?.Count > 0} hasUv1={mesh.Uv1s?.Count > 0} uvBounds=({minU:F3},{minV:F3})→({maxU:F3},{maxV:F3}) yRange=({minY:F3},{maxY:F3})");
+        }
+        await System.IO.File.WriteAllTextAsync(System.IO.Path.Combine(outDir, "manifest.txt"), sb.ToString()).ConfigureAwait(true);
+        SceneStatus = $"Dumped to {outDir}";
+    }
+
     public IReadOnlyList<string> AvailableAges { get; }
     public IReadOnlyList<string> AvailableGenders { get; }
     public IReadOnlyList<SceneRenderMode> AvailableRenderModes { get; } =

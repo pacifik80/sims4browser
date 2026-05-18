@@ -341,6 +341,10 @@
                         </ScrollViewer>
                     </Expander>
 
+                    <Button Click="DumpScene_Click"
+                            HorizontalAlignment="Stretch"
+                            Content="Dump current scene to disk" />
+
                     <Expander Header="Diagnostics" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                         <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
                             <TextBlock Text="{Binding AssetGraphDiagnostics}"

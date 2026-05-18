@@ -116,6 +116,19 @@ public sealed partial class SimConstructorWindow : Window
         }
     }
 
+    private async void DumpScene_Click(object sender, RoutedEventArgs e)
+    {
+        var outDir = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "Sims4ResourceExplorer", "ConstructorDump");
+        try
+        {
+            await ViewModel.DumpCurrentSceneAsync(outDir);
+        }
+        catch (System.Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Dump error: {ex}");
+        }
+    }
+
     private void SkintonePickerGrid_ItemClick(object sender, ItemClickEventArgs e)
     {
         // Close the flyout only on real user clicks — SelectionChanged also fires when the

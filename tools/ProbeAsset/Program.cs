@@ -1859,6 +1859,154 @@ if (args.Length > 0 && string.Equals(args[0], "--probe-synthetic-scene", StringC
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--dump-skin-atlas", StringComparison.OrdinalIgnoreCase))
+{
+    // Dumps the composed skin atlas PNG to disk so we can see exactly what the
+    // SimSkintoneMaterialBinder hands the renderer. Two passes:
+    //   default — every per-layer alpha = 1 (normal composition)
+    //   neutral — every per-layer alpha = 0 (should be flat mid-gray substrate)
+    //
+    // Usage: --dump-skin-atlas [age] [gender] [skintoneHex16] [outDir]
+    var dsaAge    = args.Length > 1 ? args[1] : "Adult";
+    var dsaGender = args.Length > 2 ? args[2] : "Female";
+    var dsaSkin   = 0x5545ul;
+    if (args.Length > 3 &&
+        !ulong.TryParse(args[3], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out dsaSkin))
+    {
+        Console.Error.WriteLine($"Could not parse skintone hex: {args[3]}");
+        return 2;
+    }
+    var dsaOut = args.Length > 4 ? args[4] : @"tmp\skin-atlas";
+    Directory.CreateDirectory(dsaOut);
+
+    var dsaCacheDir = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var dsaDb = Path.Combine(dsaCacheDir, "index.sqlite");
+    if (!File.Exists(dsaDb)) { Console.Error.WriteLine($"Index not found: {dsaDb}"); return 3; }
+    var dsaCache = new ProbeCacheService(Path.GetFullPath(dsaCacheDir + "/.."));
+    dsaCache.EnsureCreated();
+    var dsaStore = new SqliteIndexStore(dsaCache);
+    await dsaStore.InitializeAsync(CancellationToken.None);
+    var dsaCat = new LlamaResourceCatalogService();
+    var dsaBld = new ExplicitAssetGraphBuilder(dsaCat, dsaStore);
+
+    Console.WriteLine($"Resolving skintone 0x{dsaSkin:X16} for {dsaAge}/{dsaGender}...");
+    var skintone = await dsaBld.ResolveHumanSkintoneAsync(dsaAge, dsaGender, dsaSkin, CancellationToken.None);
+    if (skintone is null) { Console.WriteLine("No skintone resolved; bail."); return 4; }
+    Console.WriteLine($"  base={skintone.BaseTexturePngBytes?.Length ?? 0:N0} bytes detailN={skintone.DetailNeutralPngBytes?.Length ?? 0:N0} detailO={skintone.DetailOverlayPngBytes?.Length ?? 0:N0} face={skintone.FaceOverlayPngBytes?.Length ?? 0:N0} casOverlays={skintone.FaceCasOverlayPngBytes?.Count ?? 0}");
+
+    if (skintone.BaseTexturePngBytes is { Length: > 0 })
+    {
+        await File.WriteAllBytesAsync(Path.Combine(dsaOut, "0_base.png"), skintone.BaseTexturePngBytes);
+    }
+    if (skintone.DetailNeutralPngBytes is { Length: > 0 })
+    {
+        await File.WriteAllBytesAsync(Path.Combine(dsaOut, "1_detail_neutral.png"), skintone.DetailNeutralPngBytes);
+    }
+    if (skintone.DetailOverlayPngBytes is { Length: > 0 })
+    {
+        await File.WriteAllBytesAsync(Path.Combine(dsaOut, "2_detail_overlay.png"), skintone.DetailOverlayPngBytes);
+    }
+    if (skintone.FaceOverlayPngBytes is { Length: > 0 })
+    {
+        await File.WriteAllBytesAsync(Path.Combine(dsaOut, "3_face_overlay.png"), skintone.FaceOverlayPngBytes);
+    }
+    if (skintone.FaceCasOverlayPngBytes is { } casList)
+    {
+        for (var i = 0; i < casList.Count; i++)
+        {
+            await File.WriteAllBytesAsync(Path.Combine(dsaOut, $"4_face_cas_{i}.png"), casList[i]);
+        }
+    }
+
+    Console.WriteLine($"Wrote skintone input PNGs to {Path.GetFullPath(dsaOut)}");
+    Console.WriteLine("(Composed atlas can't be dumped from ProbeAsset — SimSkinAtlasComposer lives in the WinUI App project.)");
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--dump-head-materials", StringComparison.OrdinalIgnoreCase))
+{
+    // Synthesises the Sim, builds the asset graph + scene via ISimAssetGraphRenderer, and
+    // dumps every CanonicalMaterial that lives on the head mesh batch (yfHead / cuHead /
+    // similar) to disk as PNG+metadata. Used to identify which non-skintone-routed head
+    // sub-material is contributing the brown blotches the user reported in build 0301-0303.
+    //
+    // Usage: --dump-head-materials [age] [gender] [skintoneInstanceHex16] [outDir]
+    var dhmAge    = args.Length > 1 ? args[1] : "Adult";
+    var dhmGender = args.Length > 2 ? args[2] : "Female";
+    var dhmSkin   = 0x5545ul;
+    if (args.Length > 3 &&
+        !ulong.TryParse(args[3], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out dhmSkin))
+    {
+        Console.Error.WriteLine($"Could not parse skintone hex: {args[3]}");
+        return 2;
+    }
+    var dhmOut = args.Length > 4 ? args[4] : @"tmp\head-materials";
+    Directory.CreateDirectory(dhmOut);
+
+    var dhmCacheDir = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var dhmDb = Path.Combine(dhmCacheDir, "index.sqlite");
+    if (!File.Exists(dhmDb)) { Console.Error.WriteLine($"Index not found: {dhmDb}"); return 3; }
+    var dhmCache = new ProbeCacheService(Path.GetFullPath(dhmCacheDir + "/.."));
+    dhmCache.EnsureCreated();
+    var dhmStore = new SqliteIndexStore(dhmCache);
+    await dhmStore.InitializeAsync(CancellationToken.None);
+    var dhmCat = new LlamaResourceCatalogService();
+    var dhmBld = new ExplicitAssetGraphBuilder(dhmCat, dhmStore);
+    var dhmScene = new Sims4ResourceExplorer.Preview.BuildBuySceneBuildService(dhmCat, dhmStore);
+    var dhmBondRes = new Sims4ResourceExplorer.Assets.BondMorphResolver(dhmStore, dhmCat);
+    var dhmDmapRes = new Sims4ResourceExplorer.Assets.DeformerMapResolver(dhmStore, dhmCat);
+    var dhmBgeoRes = new Sims4ResourceExplorer.Assets.BlendGeometryResolver(dhmStore, dhmCat);
+    var dhmRigLoad = new Sims4ResourceExplorer.Preview.SimRender.SimRigLoader(dhmCat, dhmStore);
+    var dhmRenderer = new Sims4ResourceExplorer.Preview.SimRender.SimAssetGraphRenderer(
+        dhmStore, dhmBld, dhmScene, dhmBondRes, dhmDmapRes, dhmBgeoRes, dhmRigLoad);
+
+    Console.WriteLine($"Synth: age={dhmAge} gender={dhmGender} skintone=0x{dhmSkin:X16}");
+    var dhmGraph = await dhmBld.BuildSyntheticHumanSimGraphAsync(dhmAge, dhmGender, dhmSkin, CancellationToken.None);
+    if (dhmGraph.SimGraph is null) { Console.WriteLine("No SimGraph; bail."); return 4; }
+    var dhmResult = await dhmRenderer.BuildSimSceneAsync(dhmGraph, CancellationToken.None);
+    if (dhmResult.Scene is null) { Console.WriteLine("No scene; bail."); return 5; }
+    var scene = dhmResult.Scene;
+    Console.WriteLine($"Scene: meshes={scene.Meshes.Count}, materials={scene.Materials.Count}, bones={scene.Bones.Count}");
+    Console.WriteLine();
+
+    for (var matIdx = 0; matIdx < scene.Materials.Count; matIdx++)
+    {
+        var mat = scene.Materials[matIdx];
+        Console.WriteLine($"[mat {matIdx}] approximation='{mat.Approximation}' shader='{mat.ShaderName ?? "(unknown)"}' source={mat.SourceKind} viewportTint={mat.ViewportTintColor?.ToString() ?? "null"}");
+        for (var texIdx = 0; texIdx < mat.Textures.Count; texIdx++)
+        {
+            var tex = mat.Textures[texIdx];
+            var safeName = string.IsNullOrEmpty(tex.FileName)
+                ? $"slot{tex.Slot ?? "unknown"}"
+                : string.Concat(tex.FileName.Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.' ? c : '_'));
+            var outPath = Path.Combine(dhmOut, $"mat{matIdx:D2}_tex{texIdx:D2}_{tex.Semantic}_{tex.Slot ?? "noslot"}_{safeName}");
+            if (!outPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                outPath += ".png";
+            }
+            if (tex.PngBytes is { Length: > 0 })
+            {
+                await File.WriteAllBytesAsync(outPath, tex.PngBytes);
+                Console.WriteLine($"   tex {texIdx}: slot={tex.Slot,-12} semantic={tex.Semantic,-12} {tex.PngBytes.Length,9:N0} bytes  file={tex.FileName ?? "(none)"}");
+            }
+            else
+            {
+                Console.WriteLine($"   tex {texIdx}: slot={tex.Slot,-12} semantic={tex.Semantic,-12} <no bytes>");
+            }
+        }
+    }
+    Console.WriteLine();
+    Console.WriteLine($"Per-mesh material mapping:");
+    for (var meshIdx = 0; meshIdx < scene.Meshes.Count; meshIdx++)
+    {
+        var mesh = scene.Meshes[meshIdx];
+        Console.WriteLine($"  mesh {meshIdx}: matIdx={mesh.MaterialIndex} verts={mesh.Positions.Count / 3}");
+    }
+    Console.WriteLine();
+    Console.WriteLine($"Wrote material PNGs to {Path.GetFullPath(dhmOut)}");
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--simulate-body-candidates", StringComparison.OrdinalIgnoreCase))
 {
     // Replicates the EXACT production SQL from GetIndexedDefaultBodyRecipeAssetsFromDatabaseAsync
