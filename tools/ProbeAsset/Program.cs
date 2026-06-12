@@ -1853,6 +1853,22 @@ if (args.Length > 0 && string.Equals(args[0], "--probe-synthetic-scene", StringC
         Console.WriteLine($"    {layer.Resource.Key.FullTgi}  meshes={mc}  status={layer.Status}");
     }
     Console.WriteLine();
+    // Texture provenance: which package copy each material texture resolved from. This is
+    // the verification surface for the game package override order (Delta over Full).
+    Console.WriteLine("Materials / texture provenance:");
+    for (var pscMi = 0; pscMi < pscS.Materials.Count; pscMi++)
+    {
+        var pscMat = pscS.Materials[pscMi];
+        Console.WriteLine($"  [mat {pscMi}] '{pscMat.Name}' shader='{pscMat.ShaderName ?? "(unknown)"}'");
+        foreach (var pscTex in pscMat.Textures)
+        {
+            var pscPkg = string.IsNullOrWhiteSpace(pscTex.SourcePackagePath) ? "(no package)" : Path.GetFileName(pscTex.SourcePackagePath);
+            var pscTgi = pscTex.SourceKey?.FullTgi ?? "(no key)";
+            var pscLen = pscTex.PngBytes is { Length: > 0 } ? $"{pscTex.PngBytes.Length:N0} B" : "no bytes";
+            Console.WriteLine($"      slot={pscTex.Slot,-16} sem={pscTex.Semantic,-9} {pscTgi}  {pscLen}  from {pscPkg}");
+        }
+    }
+    Console.WriteLine();
     Console.WriteLine($"Diagnostics ({pscResult.Diagnostics.Count}):");
     foreach (var d in pscResult.Diagnostics.Take(40)) Console.WriteLine($"  {d}");
     if (pscResult.Diagnostics.Count > 40) Console.WriteLine($"  ... {pscResult.Diagnostics.Count - 40} more.");

@@ -1235,6 +1235,12 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 .ThenByDescending(static candidate => candidate.Metadata.BodyModifierCount + candidate.Metadata.SculptCount)
                 .ThenByDescending(static candidate => candidate.Metadata.FaceModifierCount)
                 .ThenByDescending(static candidate => candidate.Metadata.SkintoneInstance != 0 || candidate.Metadata.SkintoneShift.HasValue)
+                // Seed-description richness breaks deep-parse ties: newer SimInfo versions
+                // (v38+) currently deep-parse with empty outfit data, so the indexed summary
+                // is the better renderability signal before falling back to package order.
+                .ThenByDescending(static candidate => candidate.Option.OutfitPartCount)
+                .ThenByDescending(static candidate => candidate.Option.OutfitEntryCount)
+                .ThenByDescending(static candidate => candidate.Option.OutfitCategoryCount)
                 .ThenBy(static candidate => GetSimTemplatePackagePreference(candidate.Resource.PackagePath))
                 .ThenByDescending(static candidate => candidate.Option.IsRepresentative)
                 .ThenBy(static candidate => candidate.Option.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -1256,6 +1262,11 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             .ThenByDescending(static candidate => candidate.Metadata.BodyModifierCount + candidate.Metadata.SculptCount)
             .ThenByDescending(static candidate => candidate.Metadata.FaceModifierCount)
             .ThenByDescending(static candidate => candidate.Metadata.SkintoneInstance != 0 || candidate.Metadata.SkintoneShift.HasValue)
+            // Seed-description richness breaks deep-parse ties (see note in the
+            // authoritative branch above) before package order decides.
+            .ThenByDescending(static candidate => candidate.Option.OutfitPartCount)
+            .ThenByDescending(static candidate => candidate.Option.OutfitEntryCount)
+            .ThenByDescending(static candidate => candidate.Option.OutfitCategoryCount)
             .ThenBy(static candidate => GetSimTemplatePackagePreference(candidate.Resource.PackagePath))
             .ThenByDescending(static candidate => candidate.Option.IsRepresentative)
             .ThenBy(static candidate => candidate.Option.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -1312,41 +1323,14 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         }
     }
 
-    private static int GetSimTemplatePackagePreference(string packagePath)
-    {
-        var normalized = packagePath.Replace('/', '\\');
-        if (normalized.Contains("\\Delta\\", StringComparison.OrdinalIgnoreCase))
-        {
-            return 300;
-        }
-
-        if (normalized.Contains("SimulationDeltaBuild", StringComparison.OrdinalIgnoreCase))
-        {
-            return 250;
-        }
-
-        if (normalized.Contains("ClientDeltaBuild", StringComparison.OrdinalIgnoreCase))
-        {
-            return 240;
-        }
-
-        if (normalized.Contains("SimulationPreload", StringComparison.OrdinalIgnoreCase))
-        {
-            return 120;
-        }
-
-        if (normalized.Contains("SimulationFullBuild", StringComparison.OrdinalIgnoreCase))
-        {
-            return 10;
-        }
-
-        if (normalized.Contains("ClientFullBuild", StringComparison.OrdinalIgnoreCase))
-        {
-            return 20;
-        }
-
-        return 100;
-    }
+    // Ascending-preference adapter over the game's package override order: the
+    // game-effective layer (Delta over Full, Mods over game) sorts FIRST. The previous
+    // hand-tuned ladder preferred FullBuild copies, which silently selected pre-patch
+    // legacy resources (e.g. v6 skintones in ClientFullBuild0 instead of the modern v12
+    // copies the game actually uses from ClientDeltaBuild0). See
+    // Ts4PackageOverridePrecedence for the evidence trail.
+    private static int GetSimTemplatePackagePreference(string packagePath) =>
+        -Ts4PackageOverridePrecedence.GetRank(packagePath);
 
     private static string BuildSimTemplateRedirectNote(SimTemplateOptionSummary preferredTemplate, SimAssetGraph simGraph)
     {
@@ -1370,9 +1354,13 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
 
     private static IOrderedEnumerable<SimTemplateOptionSummary> OrderTemplatePackageVariants(
         IEnumerable<SimTemplateOptionSummary> options) =>
+        // Renderability first, game override order second: Delta copies of SimInfo templates
+        // currently parse with empty outfit data (v38 parser gap), so a body-driving copy —
+        // wherever it lives — must outrank an empty patch copy. Among equally rich variants
+        // the game-effective layer (Delta over Full) wins. When v38 outfit parsing closes
+        // the gap, Delta copies become equally rich and take over naturally.
         options
-            .OrderBy(static option => GetSimTemplatePackagePreference(option.PackagePath))
-            .ThenByDescending(static option => option.AuthoritativeBodyDrivingOutfitCount ?? 0)
+            .OrderByDescending(static option => option.AuthoritativeBodyDrivingOutfitCount ?? 0)
             .ThenByDescending(static option => option.AuthoritativeBodyDrivingOutfitPartCount ?? 0)
             .ThenByDescending(static option => option.OutfitPartCount)
             .ThenByDescending(static option => option.OutfitEntryCount)
@@ -1380,6 +1368,7 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             .ThenByDescending(static option => option.BodyModifierCount + option.SculptCount)
             .ThenByDescending(static option => option.FaceModifierCount)
             .ThenByDescending(static option => option.HasSkintone)
+            .ThenBy(static option => GetSimTemplatePackagePreference(option.PackagePath))
             .ThenByDescending(static option => option.IsRepresentative)
             .ThenBy(static option => option.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static option => option.PackagePath, StringComparer.OrdinalIgnoreCase);
@@ -1683,25 +1672,37 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 .GetResourceBytesAsync(skintoneResource.PackagePath, skintoneResource.Key, raw: false, cancellationToken)
                 .ConfigureAwait(false);
             var skintone = Ts4StructuredResourceMetadataExtractor.ParseSkintone(skintoneBytes);
-            var baseTextureResource = await TryResolveSkintoneBaseTextureResourceAsync(
+            var baseTextureCandidates = await ResolveSkintoneBaseTextureCandidatesAsync(
                 skintone.BaseTextureInstance,
                 preferredPackagePath,
                 cancellationToken).ConfigureAwait(false);
             var tintColor = TryBuildSkintoneViewportTintColor(skintone);
+            // Walk candidates in game override order until one decodes. Some patch layers
+            // ship truncated/format-shifted siblings at the same instance (e.g. a corrupt
+            // RLE2 next to the good LRLE in ClientDeltaBuild8), so a single-pick + single
+            // decode attempt silently loses the texture.
+            ResourceMetadata? baseTextureResource = null;
             byte[]? baseTexturePngBytes = null;
-            if (baseTextureResource is not null)
+            foreach (var candidate in baseTextureCandidates)
             {
                 try
                 {
-                    baseTexturePngBytes = await resourceCatalogService
-                        .GetTexturePngAsync(baseTextureResource.PackagePath, baseTextureResource.Key, cancellationToken)
+                    var candidateBytes = await resourceCatalogService
+                        .GetTexturePngAsync(candidate.PackagePath, candidate.Key, cancellationToken)
                         .ConfigureAwait(false);
+                    if (candidateBytes is { Length: > 0 })
+                    {
+                        baseTextureResource = candidate;
+                        baseTexturePngBytes = candidateBytes;
+                        break;
+                    }
                 }
                 catch (Exception)
                 {
-                    baseTexturePngBytes = null;
+                    // Try the next candidate in override order.
                 }
             }
+            baseTextureResource ??= baseTextureCandidates.FirstOrDefault();
 
             // Resolve the SkinBlender hardcoded detail textures and the matching face overlay
             // for the Sim's age × gender. These feed the skin-atlas compositor in the App layer.
@@ -1937,24 +1938,27 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         }
     }
 
-    private async Task<ResourceMetadata?> TryResolveSkintoneBaseTextureResourceAsync(
+    private async Task<IReadOnlyList<ResourceMetadata>> ResolveSkintoneBaseTextureCandidatesAsync(
         ulong baseTextureInstance,
         string? preferredPackagePath,
         CancellationToken cancellationToken)
     {
         if (indexStore is null || baseTextureInstance == 0)
         {
-            return null;
+            return [];
         }
 
         var matches = await indexStore
             .GetResourcesByFullInstanceAsync(baseTextureInstance, cancellationToken)
             .ConfigureAwait(false);
-        return SelectPreferredSimResourceMatch(
-            matches.Where(resource =>
+        return matches
+            .Where(resource =>
                 resource.Key.FullInstance == baseTextureInstance &&
-                IsTextureType(resource.Key.TypeName)),
-            preferredPackagePath);
+                IsTextureType(resource.Key.TypeName))
+            .OrderBy(resource => GetBodyAssemblyPackagePreference(resource.PackagePath, preferredPackagePath))
+            .ThenBy(static resource => resource.Key.TypeName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static resource => resource.PackagePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static ResourceMetadata? SelectPreferredSimResourceMatch(
@@ -2089,14 +2093,16 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             return (null, "index returned 0 resources at this instance");
         }
         // The same instance can be exposed under multiple image-class types (e.g. LRLEImage
-        // 0x2BC04EDF and RLE2Image 0x3453CF95 in TS4 client packages). The SQL ORDER BY
-        // type_name surfaces them alphabetically, which can put a type the catalog can't
-        // decode (LRLE) ahead of one it can (RLE2). SkinBlender's FetchGameTexture walks
-        // candidates until one decodes; mirror that here — no decoder skipping is hardcoded.
-        var imageCandidates = resources
-            .Where(static resource =>
-                IsImageResourceTypeName(resource.Key.TypeName) ||
-                resource.Key.Type == 0x00B2D882u)
+        // 0x2BC04EDF and RLE2Image 0x3453CF95 in TS4 client packages) AND under multiple
+        // package layers (FullBuild vs patch DeltaBuild — with different content). Walk the
+        // candidates in game override order, patch copies first, until one decodes;
+        // SkinBlender's FetchGameTexture walks the same way.
+        var imageCandidates = Ts4PackageOverridePrecedence.OrderByGameOverride(
+                resources.Where(static resource =>
+                    IsImageResourceTypeName(resource.Key.TypeName) ||
+                    resource.Key.Type == 0x00B2D882u),
+                static resource => resource.PackagePath)
+            .ThenBy(static resource => resource.Key.TypeName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (imageCandidates.Length == 0)
         {
@@ -3723,13 +3729,14 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
 
     private static int GetBodyAssemblyPackagePreference(string packagePath, string? preferredPackagePath)
     {
-        if (!string.IsNullOrWhiteSpace(preferredPackagePath) &&
-            string.Equals(packagePath, preferredPackagePath, StringComparison.OrdinalIgnoreCase))
-        {
-            return -1000;
-        }
-
-        return GetSimTemplatePackagePreference(packagePath);
+        // Game override rank dominates; the caller's preferred package only breaks ties
+        // WITHIN the same override layer. The previous contract let the preferred package
+        // beat everything, which pinned resolution to stale FullBuild copies whenever the
+        // referencing resource itself lived in a FullBuild package.
+        var rankMajor = GetSimTemplatePackagePreference(packagePath) * 2;
+        var isPreferred = !string.IsNullOrWhiteSpace(preferredPackagePath) &&
+                          string.Equals(packagePath, preferredPackagePath, StringComparison.OrdinalIgnoreCase);
+        return rankMajor + (isPreferred ? -1 : 0);
     }
 
     private static string BuildCandidateSearchText(AssetSummary asset, SimBodyAssemblyCandidateFacts? facts)
@@ -6037,22 +6044,33 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
         ResourceKeyRecord originalKey,
         CancellationToken cancellationToken)
     {
-        // Try the root's package first, matching just by Group+Instance.
         var localMatch = packageResources.FirstOrDefault(resource =>
             resource.Key.Group == originalKey.Group &&
             resource.Key.FullInstance == originalKey.FullInstance &&
             IsTextureType(resource.Key.TypeName));
-        if (localMatch is not null) return localMatch;
 
-        if (indexStore is null) return null;
+        // Same override rule as ResolveCasGraphResourceAsync: a local hit inside a
+        // FullBuild package must not shadow the patch (Delta) copy of the same instance.
+        // This was the exact path that fed the patch-killed legacy full-body diffuse into
+        // the skin pipeline (build 0306-0310 atlas base).
+        if (indexStore is null) return localMatch;
 
-        // Cross-package: look up everything at this instance and pick the closest texture type.
         var allAtInstance = await indexStore.GetResourcesByFullInstanceAsync(originalKey.FullInstance, cancellationToken).ConfigureAwait(false);
-        return allAtInstance
-            .Where(r => r.Key.Group == originalKey.Group && IsTextureType(r.Key.TypeName))
+        var candidates = allAtInstance
+            .Where(r => r.Key.Group == originalKey.Group && IsTextureType(r.Key.TypeName));
+        if (localMatch is not null &&
+            !allAtInstance.Any(resource => string.Equals(resource.PackagePath, localMatch.PackagePath, StringComparison.OrdinalIgnoreCase) &&
+                                           resource.Key.FullTgi == localMatch.Key.FullTgi))
+        {
+            candidates = candidates.Append(localMatch);
+        }
+
+        return candidates
             .OrderBy(r => ScoreCasCrossPackageCandidate(r, root.DataSourceId))
+            .ThenBy(static r => r.Key.TypeName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static r => r.PackagePath, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+            .FirstOrDefault()
+            ?? localMatch;
     }
 
     private async Task<CasRegionMapResolution> ResolveCasRegionMapSummariesAsync(
@@ -6268,21 +6286,29 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             resource.Key.Type == key.Type &&
             resource.Key.Group == key.Group &&
             resource.Key.FullInstance == key.FullInstance);
-        if (local is not null)
+
+        // The package-local copy is NOT authoritative: the game resolves resource keys
+        // across all packages by load order, so a patch package can override a copy that
+        // lives next to the referencing CASPart. When the index is available, merge the
+        // local hit with the indexed copies and let the game override order decide.
+        if (indexStore is null)
         {
             return local;
         }
 
-        if (indexStore is null)
+        var matches = await GetResourcesByTgiCachedAsync(key.FullTgi, cancellationToken).ConfigureAwait(false);
+        var candidates = matches.AsEnumerable();
+        if (local is not null &&
+            !matches.Any(resource => string.Equals(resource.PackagePath, local.PackagePath, StringComparison.OrdinalIgnoreCase)))
         {
-            return null;
+            candidates = candidates.Append(local);
         }
 
-        var matches = await GetResourcesByTgiCachedAsync(key.FullTgi, cancellationToken).ConfigureAwait(false);
-        return matches
+        return candidates
             .OrderBy(resource => ScoreCasCrossPackageCandidate(resource, root.DataSourceId))
             .ThenBy(static resource => resource.PackagePath, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+            .FirstOrDefault()
+            ?? local;
     }
 
     private async Task<IReadOnlyList<ResourceMetadata>> GetPackageInstanceResourcesAsync(
@@ -6339,33 +6365,15 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
 
     private static int ScoreCasCrossPackageCandidate(ResourceMetadata resource, Guid preferredSourceId)
     {
-        var score = 0;
+        // Ascending score; lower wins. Game override rank dominates (Delta over Full — the
+        // previous version of this scorer PENALIZED Delta packages, which resolved CAS
+        // texture references to stale pre-patch FullBuild copies, e.g. the patch-killed
+        // legacy full-body diffuse 0x3E68F8B6F44DA2AA). Same-data-source preference only
+        // breaks ties within the same override layer.
+        var score = -Ts4PackageOverridePrecedence.GetRank(resource.PackagePath) * 10;
         if (resource.DataSourceId != preferredSourceId)
         {
-            score += 100;
-        }
-
-        var normalizedPath = resource.PackagePath.Replace('/', '\\');
-        if (normalizedPath.Contains("\\Delta\\", StringComparison.OrdinalIgnoreCase))
-        {
-            score += 50;
-        }
-
-        if (normalizedPath.Contains("SimulationDeltaBuild", StringComparison.OrdinalIgnoreCase))
-        {
-            score += 30;
-        }
-        else if (normalizedPath.Contains("ClientDeltaBuild", StringComparison.OrdinalIgnoreCase))
-        {
-            score += 20;
-        }
-        else if (normalizedPath.Contains("SimulationPreload", StringComparison.OrdinalIgnoreCase))
-        {
-            score += 10;
-        }
-        else if (normalizedPath.Contains("SimulationFullBuild", StringComparison.OrdinalIgnoreCase))
-        {
-            score += 5;
+            score += 1;
         }
 
         return score;

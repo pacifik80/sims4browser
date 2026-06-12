@@ -177,6 +177,41 @@ public sealed class ExplorerTests : IDisposable
     }
 
     [Fact]
+    public void Ts4PackageOverridePrecedence_RanksGameLayersInLoadOrder()
+    {
+        var mods = Ts4PackageOverridePrecedence.GetRank(@"C:\Users\x\Documents\Electronic Arts\The Sims 4\Mods\CC\custom_skin.package");
+        var deltaDir = Ts4PackageOverridePrecedence.GetRank(@"C:\GAMES\The Sims 4\Delta\patch3.package");
+        var deltaBuild = Ts4PackageOverridePrecedence.GetRank(@"C:\GAMES\The Sims 4\Data\Client\ClientDeltaBuild8.package");
+        var preload = Ts4PackageOverridePrecedence.GetRank(@"C:\GAMES\The Sims 4\Data\Simulation\SimulationPreload.package");
+        var fullBuild = Ts4PackageOverridePrecedence.GetRank(@"C:\GAMES\The Sims 4\Data\Client\ClientFullBuild8.package");
+
+        Assert.True(mods > deltaDir, "user content must override game content");
+        Assert.True(deltaDir > deltaBuild, "root Delta directory overrides in-Data delta packages");
+        Assert.True(deltaBuild > preload, "delta patches override preload content");
+        Assert.True(preload > fullBuild, "preload loads after full builds");
+    }
+
+    [Fact]
+    public void Ts4PackageOverridePrecedence_OrdersPatchCopyFirst()
+    {
+        // Real-world pair from the 2026-06 probe session: the same texture instance ships
+        // with stale content in ClientFullBuild8 and the game-effective (patched) copy in
+        // ClientDeltaBuild8.
+        var paths = new[]
+        {
+            @"C:\GAMES\The Sims 4\Data\Client\ClientFullBuild8.package",
+            @"C:\GAMES\The Sims 4\Data\Client\ClientDeltaBuild8.package"
+        };
+
+        var ordered = Ts4PackageOverridePrecedence
+            .OrderByGameOverride(paths, static path => path)
+            .ToArray();
+
+        Assert.Contains("DeltaBuild", ordered[0], StringComparison.Ordinal);
+        Assert.Contains("FullBuild", ordered[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StructuredResourceMetadataExtractor_ParsesSkintoneV10WithoutSliderBlock()
     {
         var parsed = Ts4StructuredResourceMetadataExtractor.ParseSkintone(CreateSyntheticSkintoneV10Bytes());
