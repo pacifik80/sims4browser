@@ -7972,6 +7972,190 @@ if (args.Length > 0 && string.Equals(args[0], "--dump-texture", StringComparison
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--audit-instance", StringComparison.OrdinalIgnoreCase))
+{
+    // Lists EVERY package copy of the given instance(s) — any resource type — then decodes
+    // each copy to PNG (when the texture decoder accepts it) and prints per-copy pixel
+    // channel statistics. Exists because TS4 ships the same instance in several packages
+    // (ClientFullBuild* vs ClientDeltaBuild* patch overrides) with DIFFERENT content, so any
+    // pipeline conclusion drawn from "a" copy is unsafe until all copies are enumerated.
+    // The game applies Delta over Full; the trailing summary orders copies by that rule.
+    //
+    // Usage: --audit-instance <hexInstance[,hexInstance,...]> [gameRoot] [outDir]
+    var aiHexList = args.Length > 1 ? args[1] : null;
+    var aiRoot    = args.Length > 2 ? args[2] : @"C:\GAMES\The Sims 4";
+    var aiOutDir  = args.Length > 3 ? args[3] : Path.Combine(Environment.CurrentDirectory, "tmp", "instance-audit");
+    if (aiHexList is null) { Console.Error.WriteLine("Usage: --audit-instance <hexInstance[,...]> [gameRoot] [outDir]"); return 2; }
+    if (!Directory.Exists(aiRoot)) { Console.Error.WriteLine($"Game root not found: {aiRoot}"); return 1; }
+    Directory.CreateDirectory(aiOutDir);
+
+    var aiInstances = aiHexList.Split(',')
+        .Select(static h => h.Trim().Replace("0x", "").Replace("0X", ""))
+        .Where(static h => h.Length > 0)
+        .Select(static h => ulong.TryParse(h, System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL)
+        .Where(static v => v != 0UL)
+        .ToHashSet();
+    Console.WriteLine($"audit-instance: {aiInstances.Count} instance(s), root={aiRoot}");
+
+    var aiCatalog = new LlamaResourceCatalogService();
+    var aiSource = new DataSourceDefinition(Guid.NewGuid(), "AuditInstance", aiRoot, SourceKind.Game);
+    var aiCopies = new List<(ulong Inst, string Pkg, ResourceKeyRecord Key)>();
+    foreach (var pkg in Directory.EnumerateFiles(aiRoot, "*.package", SearchOption.AllDirectories)
+                                  .OrderBy(static p => p, StringComparer.OrdinalIgnoreCase))
+    {
+        try
+        {
+            var aiScan = await aiCatalog.ScanPackageAsync(aiSource, pkg, progress: null, CancellationToken.None);
+            foreach (var r in aiScan.Resources)
+            {
+                if (aiInstances.Contains(r.Key.FullInstance))
+                {
+                    aiCopies.Add((r.Key.FullInstance, pkg, r.Key));
+                }
+            }
+        }
+        catch { }
+    }
+
+    static (string Stats, int W, int H) AiPngStats(byte[] png)
+    {
+        using var ms = new MemoryStream(png);
+        using var bmp = new System.Drawing.Bitmap(ms);
+        var w = bmp.Width; var h = bmp.Height;
+        var rect = new System.Drawing.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var bytes = new byte[w * h * 4];
+        try { System.Runtime.InteropServices.Marshal.Copy(data.Scan0, bytes, 0, bytes.Length); }
+        finally { bmp.UnlockBits(data); }
+        Span<long> sums = stackalloc long[4];
+        Span<byte> mins = stackalloc byte[4]; mins.Fill(255);
+        Span<byte> maxs = stackalloc byte[4];
+        for (var i = 0; i < bytes.Length; i += 4)
+        {
+            for (var c = 0; c < 4; c++)
+            {
+                var v = bytes[i + c];
+                sums[c] += v;
+                if (v < mins[c]) mins[c] = v;
+                if (v > maxs[c]) maxs[c] = v;
+            }
+        }
+        var n = (double)(w * h);
+        var stats = $"B {sums[0] / n:N1}[{mins[0]}-{maxs[0]}] G {sums[1] / n:N1}[{mins[1]}-{maxs[1]}] R {sums[2] / n:N1}[{mins[2]}-{maxs[2]}] A {sums[3] / n:N1}[{mins[3]}-{maxs[3]}]";
+        return (stats, w, h);
+    }
+
+    foreach (var inst in aiInstances)
+    {
+        var copies = aiCopies.Where(c => c.Inst == inst).ToList();
+        Console.WriteLine($"\n0x{inst:X16}: {copies.Count} package cop(ies)");
+        // Game override order: ClientFullBuild* load first, ClientDeltaBuild* override.
+        // Sort so the LAST line is the copy the game would actually use.
+        var ordered = copies
+            .OrderBy(static c => Path.GetFileName(c.Pkg).StartsWith("ClientDeltaBuild", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(static c => Path.GetFileName(c.Pkg), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var copyIndex = 0;
+        foreach (var (i2, pkg, key) in ordered)
+        {
+            string detail;
+            try
+            {
+                var raw = await aiCatalog.GetResourceBytesAsync(pkg, key, raw: true, CancellationToken.None, null);
+                var png = await aiCatalog.GetTexturePngAsync(pkg, key, CancellationToken.None);
+                if (png is { Length: > 0 })
+                {
+                    var (stats, w, h) = AiPngStats(png);
+                    var fileName = $"0x{inst:X16}_{copyIndex:00}_{Path.GetFileNameWithoutExtension(pkg)}.png";
+                    await File.WriteAllBytesAsync(Path.Combine(aiOutDir, fileName), png, CancellationToken.None);
+                    detail = $"raw {raw.Length:N0} B → png {png.Length:N0} B [{w}×{h}]  {stats}  → {fileName}";
+                }
+                else
+                {
+                    detail = $"raw {raw.Length:N0} B → texture decode returned null";
+                }
+            }
+            catch (Exception ex)
+            {
+                detail = $"decode failed: {ex.Message}";
+            }
+            Console.WriteLine($"  [{copyIndex:00}] {key.FullTgi} type={key.TypeName,-12} {Path.GetFileName(pkg),-28} {detail}");
+            copyIndex++;
+        }
+    }
+    Console.WriteLine($"\nDone. PNGs in {aiOutDir}. Last copy per instance = game-effective (Delta over Full).");
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--list-skintones", StringComparison.OrdinalIgnoreCase))
+{
+    // Scans all packages for Skintone (TONE) resources, parses each copy with the repo
+    // parser, and prints instance / version / base-texture instance / hue / saturation /
+    // overlay opacity / first swatch color, plus a parse-coverage summary by TONE version
+    // (the repo parser currently accepts only v6 and v12 — failures here are the version
+    // coverage gap, not data corruption). Also writes a CSV for downstream tone picking.
+    //
+    // Usage: --list-skintones [gameRoot] [csvPath]
+    var lsRoot = args.Length > 1 ? args[1] : @"C:\GAMES\The Sims 4";
+    var lsCsv  = args.Length > 2 ? args[2] : Path.Combine(Environment.CurrentDirectory, "tmp", "skintones.csv");
+    if (!Directory.Exists(lsRoot)) { Console.Error.WriteLine($"Game root not found: {lsRoot}"); return 1; }
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(lsCsv))!);
+
+    var lsCatalog = new LlamaResourceCatalogService();
+    var lsSource = new DataSourceDefinition(Guid.NewGuid(), "ListSkintones", lsRoot, SourceKind.Game);
+    var lsRows = new List<string> { "instance,version,package,baseTexture,overlayCount,hue,saturation,overlayOpacity,swatch0,skinSets,sliderLow,sliderHigh,trailingBytes,error" };
+    var lsByVersion = new Dictionary<uint, int>();
+    var lsErrorsByVersion = new Dictionary<uint, int>();
+    var lsSeen = new HashSet<(ulong, string)>();
+    var lsParsed = 0; var lsFailed = 0;
+    foreach (var pkg in Directory.EnumerateFiles(lsRoot, "*.package", SearchOption.AllDirectories)
+                                  .OrderBy(static p => p, StringComparer.OrdinalIgnoreCase))
+    {
+        try
+        {
+            var lsScan = await lsCatalog.ScanPackageAsync(lsSource, pkg, progress: null, CancellationToken.None);
+            foreach (var r in lsScan.Resources)
+            {
+                if (!string.Equals(r.Key.TypeName, "Skintone", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!lsSeen.Add((r.Key.FullInstance, pkg))) continue;
+                byte[] bytes;
+                try { bytes = await lsCatalog.GetResourceBytesAsync(pkg, r.Key, raw: false, CancellationToken.None, null); }
+                catch { continue; }
+                if (bytes.Length < 4) continue;
+                var version = BitConverter.ToUInt32(bytes, 0);
+                lsByVersion[version] = lsByVersion.GetValueOrDefault(version) + 1;
+                try
+                {
+                    var tone = Ts4StructuredResourceMetadataExtractor.ParseSkintone(bytes);
+                    var hue = (ushort)(tone.Colorize >> 16);
+                    var sat = (ushort)(tone.Colorize & 0xFFFF);
+                    var swatch0 = tone.SwatchColors.Count > 0 ? $"0x{tone.SwatchColors[0]:X8}" : "";
+                    var sliderLow = tone.SliderLow?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+                    var sliderHigh = tone.SliderHigh?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+                    lsRows.Add($"0x{r.Key.FullInstance:X16},{version},{Path.GetFileName(pkg)},0x{tone.BaseTextureInstance:X16},{tone.OverlayTextures.Count},{hue},{sat},{tone.OverlayOpacity},{swatch0},{tone.SkinSets?.Count ?? 0},{sliderLow},{sliderHigh},{tone.TrailingByteCount},");
+                    lsParsed++;
+                }
+                catch (Exception ex)
+                {
+                    lsRows.Add($"0x{r.Key.FullInstance:X16},{version},{Path.GetFileName(pkg)},,,,,,,\"{ex.Message.Replace('"', '\'')}\"");
+                    lsErrorsByVersion[version] = lsErrorsByVersion.GetValueOrDefault(version) + 1;
+                    lsFailed++;
+                }
+            }
+        }
+        catch { }
+    }
+
+    await File.WriteAllLinesAsync(lsCsv, lsRows, CancellationToken.None);
+    Console.WriteLine($"list-skintones: {lsParsed} parsed, {lsFailed} failed → {lsCsv}");
+    Console.WriteLine("  TONE version coverage (copies seen / parse failures):");
+    foreach (var (version, count) in lsByVersion.OrderBy(static kv => kv.Key))
+    {
+        Console.WriteLine($"    v{version,-3} {count,5} cop(ies)   {lsErrorsByVersion.GetValueOrDefault(version)} failure(s)");
+    }
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--dump-face-overlays", StringComparison.OrdinalIgnoreCase))
 {
     // Dumps EVERY face-adjacent CAS part diffuse texture for one Sim to disk,

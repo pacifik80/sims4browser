@@ -147,6 +147,48 @@ public sealed class ExplorerTests : IDisposable
         Assert.Equal(3, parsed.SwatchColors.Count);
         Assert.Equal(0xFFBBAA99u, parsed.SwatchColors[0]);
         Assert.Equal(0x00FF8040u, parsed.Colorize);
+        // v<10 synthesizes skin set 0 from the flat legacy fields (SimRipper upgrade behavior).
+        Assert.NotNull(parsed.SkinSets);
+        Assert.Single(parsed.SkinSets!);
+        Assert.Equal(0x1020304050607080ul, parsed.SkinSets![0].TextureInstance);
+    }
+
+    [Fact]
+    public void StructuredResourceMetadataExtractor_ParsesSkintoneV12WithSkinSetsAndSliders()
+    {
+        var parsed = Ts4StructuredResourceMetadataExtractor.ParseSkintone(CreateSyntheticSkintoneV12Bytes());
+
+        Assert.Equal(12u, parsed.Version);
+        Assert.NotNull(parsed.SkinSets);
+        Assert.Equal(2, parsed.SkinSets!.Count);
+        Assert.Equal(0xAAAAAAAA11111111ul, parsed.BaseTextureInstance);
+        Assert.Equal(0xBBBBBBBB22222222ul, parsed.SkinSets[0].OverlayInstance);
+        Assert.Equal(0.75f, parsed.SkinSets[0].OverlayMultiplier);
+        Assert.Equal(0xCCCCCCCC33333333ul, parsed.SkinSets[1].TextureInstance);
+        Assert.Single(parsed.OverlayTextures);
+        Assert.Equal(0x2004u, parsed.OverlayTextures[0].TypeValue);
+        Assert.Equal(15u, parsed.OverlayOpacity);
+        Assert.Equal(0xDDDDDDDD44444444ul, parsed.TuningInstance);
+        Assert.Equal((ushort)2, parsed.SkinPanel);
+        Assert.Equal(-0.05f, parsed.SliderLow);
+        Assert.Equal(0.05f, parsed.SliderHigh);
+        Assert.Equal(0.005f, parsed.SliderIncrement);
+        Assert.Equal(8, parsed.TrailingByteCount);
+    }
+
+    [Fact]
+    public void StructuredResourceMetadataExtractor_ParsesSkintoneV10WithoutSliderBlock()
+    {
+        var parsed = Ts4StructuredResourceMetadataExtractor.ParseSkintone(CreateSyntheticSkintoneV10Bytes());
+
+        Assert.Equal(10u, parsed.Version);
+        Assert.NotNull(parsed.SkinSets);
+        Assert.Single(parsed.SkinSets!);
+        Assert.Equal(0xAAAAAAAA11111111ul, parsed.BaseTextureInstance);
+        Assert.Equal(0xDDDDDDDD44444444ul, parsed.TuningInstance);
+        Assert.Null(parsed.SliderLow);
+        Assert.Null(parsed.SliderHigh);
+        Assert.Equal(0, parsed.TrailingByteCount);
     }
 
     [Fact]
@@ -11026,6 +11068,77 @@ public sealed class ExplorerTests : IDisposable
         writer.Write(0xFF445566u);
         writer.Write(2.5f);
         writer.Write(0.65f);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticSkintoneV12Bytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        writer.Write(12u);
+        // Skin-set list: count + { texture:u64, overlay:u64, mult:f32, makeup:f32, makeup2:f32 }.
+        writer.Write((byte)2);
+        writer.Write(0xAAAAAAAA11111111ul);
+        writer.Write(0xBBBBBBBB22222222ul);
+        writer.Write(0.75f);
+        writer.Write(0.5f);
+        writer.Write(0.5f);
+        writer.Write(0xCCCCCCCC33333333ul);
+        writer.Write(0ul);
+        writer.Write(1f);
+        writer.Write(0.5f);
+        writer.Write(0.5f);
+        // Overlay table.
+        writer.Write(1u);
+        writer.Write(0x2004u);
+        writer.Write(0x9999999988888888ul);
+        // saturation + hue + opacity.
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(15u);
+        // Tags (v>=7: u16 category + u32 value).
+        writer.Write(1u);
+        writer.Write((ushort)7);
+        writer.Write(42u);
+        // Swatches + sortOrder.
+        writer.Write((byte)1);
+        writer.Write(0xFFFFDFBAu);
+        writer.Write(15f);
+        // tuningInstance (v>=8), skinPanel + sliders (v>=11).
+        writer.Write(0xDDDDDDDD44444444ul);
+        writer.Write((ushort)2);
+        writer.Write(-0.05f);
+        writer.Write(0.05f);
+        writer.Write(0.005f);
+        // Unidentified v12 trailing bytes — parser must count, not choke.
+        writer.Write(0xDEADBEEFu);
+        writer.Write(0xDEADBEEFu);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSyntheticSkintoneV10Bytes()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        writer.Write(10u);
+        writer.Write((byte)1);
+        writer.Write(0xAAAAAAAA11111111ul);
+        writer.Write(0ul);
+        writer.Write(1f);
+        writer.Write(0.5f);
+        writer.Write(0.5f);
+        writer.Write(0u);              // no overlays
+        writer.Write((ushort)0);       // saturation
+        writer.Write((ushort)0);       // hue
+        writer.Write(0u);              // opacity
+        writer.Write(0u);              // no tags
+        writer.Write((byte)0);         // no swatches
+        writer.Write(1f);              // sortOrder
+        writer.Write(0xDDDDDDDD44444444ul); // tuningInstance (v>=8); v10 has no slider block
         writer.Flush();
         return stream.ToArray();
     }

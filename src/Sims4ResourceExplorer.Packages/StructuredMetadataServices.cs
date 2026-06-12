@@ -24,6 +24,19 @@ public sealed record Ts4SkintoneOverlay(
     uint TypeValue,
     ulong TextureInstance);
 
+/// <summary>
+/// One TONE skin-set entry (v10+ layout). Index 0 is the base/default state; indexes 1..2 are
+/// the tan / burn state variants per TS4SimRipper <c>TONE.SkinSetDesc</c> (TONE.cs:326-369):
+/// <c>{ textureInstance:u64, overlayInstance:u64, overlayMultiplier:f32, makeupOpacity:f32,
+/// makeupOpacity2:f32 }</c>.
+/// </summary>
+public sealed record Ts4SkintoneSkinSet(
+    ulong TextureInstance,
+    ulong OverlayInstance,
+    float OverlayMultiplier,
+    float MakeupOpacity,
+    float MakeupOpacity2);
+
 public sealed record Ts4Skintone(
     uint Version,
     ulong BaseTextureInstance,
@@ -34,7 +47,17 @@ public sealed record Ts4Skintone(
     float MakeupOpacity,
     IReadOnlyList<uint> SwatchColors,
     float DisplayIndex,
-    float? MakeupOpacity2);
+    float? MakeupOpacity2,
+    // v10+ structured fields (TS4SimRipper TONE.cs layout). For v<10 a single synthesized
+    // skin set mirrors SimRipper's upgrade behavior. Sliders are the CAS skintone-shift
+    // range that SimInfo.SkintoneShift is applied against (v11+ only).
+    IReadOnlyList<Ts4SkintoneSkinSet>? SkinSets = null,
+    ulong TuningInstance = 0,
+    ushort SkinPanel = 0,
+    float? SliderLow = null,
+    float? SliderHigh = null,
+    float? SliderIncrement = null,
+    int TrailingByteCount = 0);
 
 public static class Ts4StructuredResourceMetadataExtractor
 {
@@ -116,36 +139,37 @@ public static class Ts4StructuredResourceMetadataExtractor
         using var stream = new MemoryStream(bytes, writable: false);
         using var reader = new BinaryReader(stream);
 
+        // Layout source: TS4SimRipper TONE.cs `TONE(BinaryReader)` (docs/references/external/
+        // TS4SimRipper/src/TONE.cs:214-276), which reads versions 6, 7, 8, 10, 11. Game
+        // libraries observed in 2026 ship v6, v10, and v12; v12 follows the v11 layout with a
+        // (currently unidentified) trailing block we surface as TrailingByteCount.
         var version = reader.ReadUInt32();
-        if (version != 6 && version != 12)
+        if (version is not (6 or 7 or 8 or 10 or 11 or 12))
         {
             throw new InvalidDataException($"Unsupported Skintone version {version}.");
         }
 
-        // v12 prepends a sub-texture block: a single byte count + N × 28-byte entries.
-        // Each entry is { instance:UInt64, reserved:UInt64, weights:Float[3] }. The first
-        // entry's instance equals what v6 stores in `baseTextureInstance` for the same
-        // skintone, so we treat subTextures[0].instance as the base. See
-        // docs/workflows/v12-skintone-format.md (Plan 3.3).
-        ulong textureInstance;
-        if (version == 12)
+        // v10+ replaces the single base-texture instance with a skin-set list:
+        // { textureInstance:u64, overlayInstance:u64, overlayMultiplier:f32, makeupOpacity:f32,
+        // makeupOpacity2:f32 } × count. Set 0 is the base state; sets 1..2 are tan/burn.
+        var skinSets = new List<Ts4SkintoneSkinSet>(3);
+        ulong legacyTextureInstance = 0;
+        if (version >= 10)
         {
-            var subTextureCount = reader.ReadByte();
-            ulong firstSubTextureInstance = 0;
-            for (var index = 0; index < subTextureCount; index++)
+            var skinSetCount = reader.ReadByte();
+            for (var index = 0; index < skinSetCount; index++)
             {
-                var subInstance = reader.ReadUInt64();
-                _ = reader.ReadUInt64();    // reserved (typically 0)
-                _ = reader.ReadSingle();    // weight 1
-                _ = reader.ReadSingle();    // weight 2
-                _ = reader.ReadSingle();    // weight 3
-                if (index == 0) firstSubTextureInstance = subInstance;
+                skinSets.Add(new Ts4SkintoneSkinSet(
+                    reader.ReadUInt64(),
+                    reader.ReadUInt64(),
+                    reader.ReadSingle(),
+                    reader.ReadSingle(),
+                    reader.ReadSingle()));
             }
-            textureInstance = firstSubTextureInstance;
         }
         else
         {
-            textureInstance = reader.ReadUInt64();
+            legacyTextureInstance = reader.ReadUInt64();
         }
 
         var overlayTextureCount = reader.ReadUInt32();
@@ -168,7 +192,7 @@ public static class Ts4StructuredResourceMetadataExtractor
         var tagCount = reader.ReadUInt32();
         // Per TS4SimRipper CASP.PartTag: total tag size is 2 bytes (UInt16 flagCategory) plus
         // 2 bytes (UInt16 flagValue) for version < 7, OR plus 4 bytes (UInt32 flagValue) for
-        // version >= 7. Skintone version 6 uses the 4-byte total; v12 uses the 6-byte total.
+        // version >= 7.
         var tagValueSize = version >= 7 ? 4 : 2;
         for (var index = 0; index < tagCount; index++)
         {
@@ -176,9 +200,9 @@ public static class Ts4StructuredResourceMetadataExtractor
             for (var b = 0; b < tagValueSize; b++) _ = reader.ReadByte();
         }
 
-        // v6 has a `makeupOpacity:Float` field here; v12 omits it entirely (the byte
-        // immediately after the tag block is `swatchColorCount:Byte`).
-        var makeupOpacity = version == 6 ? reader.ReadSingle() : 0f;
+        // v<10 carries a top-level `makeupOpacity:Float` here; v10+ moved it into the
+        // skin-set entries (SimRipper exposes skinSets[0].MakeupOpacity as the value).
+        var legacyMakeupOpacity = version < 10 ? reader.ReadSingle() : 0f;
         var swatchColorCount = reader.ReadByte();
         var swatchColors = new uint[swatchColorCount];
         for (var index = 0; index < swatchColorCount; index++)
@@ -186,19 +210,53 @@ public static class Ts4StructuredResourceMetadataExtractor
             swatchColors[index] = reader.ReadUInt32();
         }
 
-        var displayIndex = reader.ReadSingle();
-        // v6 may have an optional trailing `makeupOpacity2:Float`. v12 has a different
-        // trailing block (extraHash:UInt32 + UInt16 + 6 floats — semantics TBD per Plan 3.3).
-        // We don't surface those v12 trailing fields yet; the renderer doesn't need them.
-        float? makeupOpacity2 = null;
-        if (version == 6 && stream.Position + 4 <= stream.Length)
+        var displayIndex = reader.ReadSingle();   // SimRipper field name: sortOrder
+        float? legacyMakeupOpacity2 = null;
+        if (version < 10 && stream.Position + 4 <= stream.Length)
         {
-            makeupOpacity2 = reader.ReadSingle();
+            legacyMakeupOpacity2 = reader.ReadSingle();
         }
+
+        var tuningInstance = 0ul;
+        if (version >= 8 && stream.Position + 8 <= stream.Length)
+        {
+            tuningInstance = reader.ReadUInt64();
+        }
+
+        // v11+ trailing block: skinPanel:u16 + sliderLow:f32 + sliderHigh:f32 +
+        // sliderIncrement:f32 — the CAS skintone-shift slider range that the SimInfo
+        // SkintoneShift value is applied within (SkinBlender's `shift` input).
+        ushort skinPanel = 0;
+        float? sliderLow = null, sliderHigh = null, sliderIncrement = null;
+        if (version >= 11 && stream.Position + 14 <= stream.Length)
+        {
+            skinPanel = reader.ReadUInt16();
+            sliderLow = reader.ReadSingle();
+            sliderHigh = reader.ReadSingle();
+            sliderIncrement = reader.ReadSingle();
+        }
+
+        var trailingByteCount = checked((int)(stream.Length - stream.Position));
+
+        if (version < 10)
+        {
+            // Mirror SimRipper's legacy upgrade: synthesize skin set 0 from the flat fields.
+            skinSets.Add(new Ts4SkintoneSkinSet(
+                legacyTextureInstance,
+                0ul,
+                1f,
+                legacyMakeupOpacity,
+                legacyMakeupOpacity2 ?? legacyMakeupOpacity));
+        }
+
+        var baseTextureInstance = skinSets.Count > 0 ? skinSets[0].TextureInstance : legacyTextureInstance;
+        var makeupOpacity = version < 10
+            ? legacyMakeupOpacity
+            : (skinSets.Count > 0 ? skinSets[0].MakeupOpacity : 0f);
 
         return new Ts4Skintone(
             version,
-            textureInstance,
+            baseTextureInstance,
             overlays,
             colorize,
             overlayOpacity,
@@ -206,7 +264,14 @@ public static class Ts4StructuredResourceMetadataExtractor
             makeupOpacity,
             swatchColors,
             displayIndex,
-            makeupOpacity2);
+            legacyMakeupOpacity2,
+            skinSets,
+            tuningInstance,
+            skinPanel,
+            sliderLow,
+            sliderHigh,
+            sliderIncrement,
+            trailingByteCount);
     }
 
     public static StructuredResourceMetadata Describe(string typeName, byte[] bytes)
@@ -398,6 +463,31 @@ public static class Ts4StructuredResourceMetadataExtractor
         if (skintone.MakeupOpacity2.HasValue)
         {
             parts.Add($"makeupOpacity2={skintone.MakeupOpacity2.Value.ToString("0.###", CultureInfo.InvariantCulture)}");
+        }
+
+        if (skintone.SkinSets is { Count: > 0 } skinSets)
+        {
+            parts.Add($"skinSets={skinSets.Count}");
+            for (var index = 0; index < skinSets.Count; index++)
+            {
+                var set = skinSets[index];
+                parts.Add($"set{index}=tex 0x{set.TextureInstance:X16} overlay 0x{set.OverlayInstance:X16} mult {set.OverlayMultiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
+            }
+        }
+
+        if (skintone.TuningInstance != 0)
+        {
+            parts.Add($"tuning=0x{skintone.TuningInstance:X16}");
+        }
+
+        if (skintone.SliderLow.HasValue && skintone.SliderHigh.HasValue)
+        {
+            parts.Add($"shiftSlider=[{skintone.SliderLow.Value.ToString("0.###", CultureInfo.InvariantCulture)}, {skintone.SliderHigh.Value.ToString("0.###", CultureInfo.InvariantCulture)}] step {(skintone.SliderIncrement ?? 0).ToString("0.###", CultureInfo.InvariantCulture)} panel {skintone.SkinPanel}");
+        }
+
+        if (skintone.TrailingByteCount > 0)
+        {
+            parts.Add($"trailingBytes={skintone.TrailingByteCount}");
         }
 
         if (skintone.SwatchColors.Count > 0)

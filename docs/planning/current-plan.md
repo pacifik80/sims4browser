@@ -19,165 +19,47 @@ If the active work is the external-first TS4 material, texture, shader, and UV r
 
 - [Research Restart Guide](../workflows/material-pipeline/research-restart-guide.md)
 
-This restart contract overrides the common failure mode for that task:
+## Active Task: Skin-pipeline ground-truth correction (2026-06-12)
 
-- external sources, creator tooling, and local snapshots of external tools are the truth layer
-- local corpus and precompiled summaries are candidate-target hints only
-- current repo code is implementation boundary and failure evidence only, not TS4 truth
-- each run should advance the next bounded packet, then update the queue, matrix, and plan
-- each run should close with the compact tree-style status report defined in the restart guide
-
-## Active Task
-
-Status: `Build 0289+. Sim Character Constructor — new dedicated authoring Window. v1 scope locked: humans only, all ages × genders, synthesised SimInfo from age/gender defaults, idle animation IS v1 must-have (minimal — single clip per age/gender, no blend tree). Replaces the deferred-items execution plan A-J (all shipped except B per-physique blending and 1.2 face-overlay 3-pass — both still deferred and unrelated to this track). Animal pipeline progressed independently through builds 0247-0289 (per-species pet rigs, age-aware scene cache, child bind correction, pelt tint).`
+Status: `Build 0310 baseline. Audit found the 0306-0310 "unified atlas from head-CASP region_map texture" path (Model B) rests on an unverified texture identity AND makes human skintone swaps a visual no-op (Pass 3 gated by saturation>=100; binder nulls ViewportTintColor). User-visible defects at 0310: blurry false-toned lit renders, toddler dark face "mask", child disjointed feet (geometry track, separate). User decisions: TS4SimRipper-parity = automated validation oracle; final target = in-game CAS quality; custom shaders / stronger renderer acceptable; priority = make skintones actually work.`
 
 ### Problem
 
-Today the app is read-only browse over an indexed package set. Users can inspect a Sim by clicking on its SimInfo in the resource tree, but they cannot author one: there's no way to pick "Adult Female" and see what a default Sim looks like, slide morphs, swap a hair, or try a different outfit. The Sim assembly + render pipeline (BuildSimGraph → SimSceneComposer → BondMorpher/DeformerMapMorpher/BlendGeometryMorpher → CAS material routing) is mature enough to drive an interactive constructor — what's missing is a Window, a synthesised-SimInfo path, knob-to-SimInfo wiring, and an animation loop.
+Two competing skin-atlas models coexist and both are unproven:
 
-### Scope locked (user answers, 2026-05-17)
+- **Model A** (`SimSkinAtlasComposer.BuildAsync`): tone.SkinSets[0] texture + hardcoded detail TGIs + Pass 1/2/3. Faithful to TS4SimRipper SkinBlender structurally, but missing physique blending, SkintoneShift application, tan/burn states; and its inputs were never validated (the 0305 "hue-preserving Pass 1" deviation may compensate an input bug).
+- **Model B** (`BuildAtlasFromPreRenderedBaseAsync`, current default): head-CASPart "region_map"-slot texture (instance `3E68F8B6F44DA2AA`) as fixed atlas base. Breaks human skintone selection by construction.
 
-- **View placement**: separate top-level WinUI Window. Must NOT trigger app shutdown when closed (the App.xaml.cs `OnMainWindowClosed` shutdown handler is currently scoped to MainWindow — confirm it stays scoped).
-- **Coverage**: humans only, **all ages × genders** (Infant, Toddler, Child, Teen, YA, Adult, Elder × Female, Male — 14 tuples). No animals in v1.
-- **Starting state**: synthesise a default Ts4SimInfo from age/gender + canonical baseline body/head + a default skintone. No fork-from-existing-SimInfo path in v1.
-- **Idle animation**: v1 must-have, minimal. Single hard-coded idle CLIP per (age, gender), no blend tree, linear keyframe interp.
+Plus: the same instance ships in multiple packages with DIFFERENT content (ClientDeltaBuild8 copy of `3E68F8B6F44DA2AA` decodes to an EMPTY 1024×2048; a ClientFullBuild copy carries the full-body diffuse). Resource resolution honors no Full→Delta override order, so any single-copy conclusion is unsafe.
 
 ### Chosen Approach
 
-Five phases. P0 ships the shell + synthesis on a single tuple, then sweeps the other 13. P1 adds skintone + morph knobs. P2 adds CAS part picking. P3 builds the animation pipeline from scratch (this is the largest sub-project — zero animation code exists today). P4 polish + persistence + docs.
+External-first, oracle-driven: (0) make TS4SimRipper's SkinBlender an executable parity oracle; (1) settle texture identities with all-copies probes; (2) fix the TONE v12 parser to the full TS4SimRipper layout; (3) converge on ONE atlas model with per-tone color + shift working, delete the other; (4) calibrate the viewport against in-game CAS reference screenshots once, document constants.
 
-P0 must serialise (other phases depend on the synthesis path and Window shell). P1 and P2 can run in parallel once P0 lands. P3 is independent infrastructure and can be developed alongside P1/P2 in a separate worker if write sets stay disjoint.
+### Actions
 
-### Architectural anchors (from landscape survey)
-
-- App shell: [App.xaml.cs:67-72](../../src/Sims4ResourceExplorer.App/App.xaml.cs#L67) — new Window registers Transient at line 59, retrieved via `App.GetRequiredService<T>()`. Shutdown handler at line 74 is bound only to the main `window` field; that scoping stays unchanged so a constructor-window close is independent.
-- Render entry: `MainViewModel.BuildSimGraphAsync` → `ExplicitAssetGraphBuilder` → `BuildBuySceneBuildService.BuildSceneAsync(SimAssetGraph)` → `SimSceneComposer.ComposeBodyAndHead`. A synthesised SimInfo can flow through this chain unchanged as long as `Ts4SimInfo` invariants hold.
-- Morph entry: `BondMorpher.ApplyBond`, `DeformerMapMorpher.MorphScene`, `BlendGeometryMorpher.MorphScene`. Inputs are flat lists of `(adjustment, weight)`. Resolvers (`BondMorphResolver`, `DeformerMapResolver`, `BlendGeometryResolver`) memoise by SimInfo `FullInstance` — synthetic SimInfos need a unique-per-state cache key (or a bypass) so slider movements re-resolve.
-- Skintone path: `SkintoneInstanceHex` on SimInfo drives `TryResolveSimSkintoneRenderSummaryAsync`. No enumeration query today — need a new `IIndexStore.EnumerateSkintones()`.
-- CAS enumeration: `cas_part_facts` SQL table is queryable by (body_type, species, age, gender). Pattern in `tools/ProbeAsset/Program.cs:412-420` (--probe-face-cas-types).
-- Animation: ZERO code today. Type IDs `0x6B20C4F3` (CLIP) and `0x6B20C4F2` (CLIB) are unregistered. Vertex skinning currently runs in the viewport shader — animation needs CPU-side bone-matrix evaluation → shader uniform update path.
-- Multi-window pattern: app currently opens no secondary windows. Constructor will be the first; pattern needs to be defined cleanly (DI Transient + factory hook on MainWindow menu).
-
-### Actions — Phase P0: Shell + synthesis (serial, single worker)
-
-- [x] **P0.1** `SimConstructorWindow` XAML + code-behind shipped. NavigationView left rail (Genetics / Outfits / Animation), center viewport stub, right knob panel. DI Transient registered in `App.xaml.cs`. Close-window safety: `App.OnMainWindowClosed` handler is scoped to the main `window` field only — constructor close does not trigger app shutdown by construction. Build clean (0 warnings, 0 errors). Files: [SimConstructorWindow.xaml](../../src/Sims4ResourceExplorer.App/SimConstructorWindow.xaml), [SimConstructorWindow.xaml.cs](../../src/Sims4ResourceExplorer.App/SimConstructorWindow.xaml.cs), [App.xaml.cs](../../src/Sims4ResourceExplorer.App/App.xaml.cs#L60).
-- [x] **P0.2** "Sim Constructor" button added to MainWindow's top toolbar. Handler `SimConstructor_Click` in [MainWindow.xaml.cs:127](../../src/Sims4ResourceExplorer.App/MainWindow.xaml.cs#L127) resolves the window via DI and activates it.
-- [x] **P0.3** [Ts4SimInfoBuilder](../../src/Sims4ResourceExplorer.Assets/Ts4SimInfoBuilder.cs) shipped. Public API: `BuildHuman(ageLabel, genderLabel, skintoneInstance=0) → Ts4SimInfo` (internal type; accessed via reflection in tests) and `SyntheticFullInstance(age, gender) → ulong` (deterministic FNV-1a 64 of `synthetic:human:{age}:{gender}` for resolver cache-key distinctness). Populates body-driving outfit (category 5 = Nude) with canonical Head/Top/Bottom/Shoes from `Ts4CanonicalBaselineBodyParts` per (age × gender). All modifier/sculpt/pelt/genetic lists empty; counts consistent with list sizes. SimInfo version pinned to 33 (modern: pronouns + skintone shift supported). Five new xUnit tests (Adult/Female outfit shape, all 7 ages mapped, skintone preserved, synthetic FullInstance determinism + distinctness, unknown-age yields empty outfit) — 5/5 pass.
-- [x] **P0.4a** Public `ISyntheticSimService` + `SimConstructorSeed` record shipped at [SyntheticSimService.cs](../../src/Sims4ResourceExplorer.Assets/SyntheticSimService.cs). Wraps the internal `Ts4SimInfoBuilder` so the App can construct a synthetic Sim without seeing the internal `Ts4SimInfo`. DI Singleton in `App.xaml.cs`. [SimConstructorViewModel](../../src/Sims4ResourceExplorer.App/ViewModels/SimConstructorViewModel.cs) (CommunityToolkit `ObservableObject`) injects the service, exposes age/gender pickers, rebuilds the seed on pick. SimConstructorWindow XAML wires age + gender ComboBoxes under Genetics → Base; centre panel displays `SeedDisplayName`, `OutfitPartCountText`, `SyntheticFullInstanceHex`, `SeedSummary`, `RenderStatusText`. DI Transient registration for the VM. Build clean (0 warnings, 0 errors). 394/394 tests pass.
-- [x] **P0.4b** Synthetic-seed → AssetGraph pipeline shipped (commit `bba9763` cleared the conflict, this packet follows). Approach (b) per the plan note: extended `IAssetGraphBuilder` with `BuildSyntheticHumanSimGraphAsync(age, gender, skintoneInstance)`. `BuildSimGraphAsync` (private) now accepts optional `Ts4SimInfo? preParsedSimInfo` — when provided, the resource-lookup + package-read + parse steps are skipped and the same downstream pipeline runs unchanged. Downstream resolvers (body candidates / CAS slots / skintone) get `preferredPackagePath = null` for the synthetic path so they search the index globally instead of preferring a non-existent file. `ISyntheticSimService.BuildHumanAssetGraphAsync(SimConstructorSeed)` delegates to the new builder method. **Verified end-to-end via** new ProbeAsset subcommand `--probe-synthetic-sim <age> <gender>`. Adult Female resolves yfHead/yfTop_Nude/yfBottom_Nude/yfShoes_Nude as ExactPartLink (all 4 layers, SplitBodyLayers mode). Child Male resolves cuHead/cuTop_Nude/cuBottom_Nude/cuShoes_Nude. 394/394 tests pass (after stubbing the new method on 3 fake `IAssetGraphBuilder` impls in `IndexingPipelineTests.cs`).
-- [x] **P0.4c.1** Async asset-graph rebuild + diagnostic panel shipped. `SimConstructorViewModel.RebuildAssetGraphAsync` cancels on re-pick and surfaces status / body candidates / diagnostics into the centre panel of the constructor window. Build clean; 394/394 tests pass.
-- [ ] **P0.4c.2** Actual pixel rendering — user chose **option B: refactor `ISimSceneRenderer` first** (2026-05-17). Split into 4 packets R1–R4. Multi-session work.
-
-### Refactor packets — Sim scene rendering extraction
-
-**Architectural shape (per dependency map, 2026-05-17):**
-
-The current render pipeline runs through three layers, only one of which is already clean:
-
-1. **AssetGraph → ScenePreviewContent[]** (per body candidate). Today implemented inline inside `MainViewModel.TryApplySimBodyProxyPreviewAsync` [MainViewModel.cs:1034-1427](../../src/Sims4ResourceExplorer.App/ViewModels/MainViewModel.cs#L1034). Reads `selectedAssetGraph`, walks body candidates, resolves CASParts via `IIndexStore`, builds `CasAssetGraph` per candidate, builds scenes via `ISceneBuildService`, wraps as `ScenePreviewContent`. Also resolves BOND/DMap/BGEO morphs via the three resolvers and applies them. **NOT a reusable service.**
-2. **ScenePreviewContent[] → CanonicalScene**. Already a clean static method: [SimSceneComposer.ComposeBodyAndHead](../../src/Sims4ResourceExplorer.Core/SimSceneComposer.cs#L9) in Core. No ViewModel coupling. **Reusable as-is.**
-3. **CanonicalScene → Viewport3DX**. Today: `MainWindow.RenderScene(CanonicalScene)` [MainWindow.xaml.cs:646-730](../../src/Sims4ResourceExplorer.App/MainWindow.xaml.cs#L646) + helpers (`CreateMaterial`, `CreateGeometry`, `ApplySelectedVariantToScene`, `TryBuildMultiPassPlan`, `AddOverlayPasses`, `ResetSceneCamera`, `BuildViewportTextureSelection`, ~500-600 LOC reusable). Reads `ViewModel.SelectedSceneRenderMode/Variant/TextureSlot/UvChannel`. **Needs extraction.**
-
-- [x] **R1 — `ISimAssetGraphRenderer` service shipped.** [SimAssetGraphRenderer](../../src/Sims4ResourceExplorer.Preview/SimRender/SimAssetGraphRenderer.cs) in Preview. Pure-function: walks `SimGraph.BodyCandidates`, picks first candidate per bucket, resolves AssetSummary via index (with package-id-lookup-first / TGI-query-fallback), builds CasAssetGraph through `IAssetGraphBuilder`, builds scene via `ISceneBuildService`, wraps as `ScenePreviewContent`, composes multi-layer bodies via `CanonicalSceneComposer.Compose`, resolves BOND/DMap/BGEO morphs through the three resolvers, loads the canonical rig via `SimRigLoader`, applies morphs via `SimBondSceneMorpher`/`DeformerMapMorpher`/`BlendGeometryMorpher`, and composes the final scene through `SimSceneComposer.ComposeBodyAndHead` with skintone + region map routing.
-
-  Head treated as a special case (BodyAssembly often marks Head Available rather than Active; renderer always tries to resolve the Head bucket if it exists). DI Singleton (App.xaml.cs registration updated to use the public constructor). Required adding `Sims4ResourceExplorer.Assets` project reference to `Sims4ResourceExplorer.Preview` so the morph resolvers are visible — no cycle (Assets doesn't reference Preview).
-
-  **Verified end-to-end** via new ProbeAsset subcommand `--probe-synthetic-scene <age> <gender>`. Adult Female produces a 4-mesh composited scene (yfHead + yfTop_Nude + yfBottom_Nude + yfShoes_Nude), 4 materials, 100 bones, bounds (-0.72, 0, -0.12) → (0.72, 1.87, 0.18) — roughly 1.87m tall, anatomically Sim-sized.
-
-- [x] **R2 — `SceneViewportRenderer` shipped** ([commit `3c4634a`](../../src/Sims4ResourceExplorer.App/Services/SceneViewportRenderer.cs)). Done in worktree by a delegated agent, cherry-picked onto main (manual conflict resolution required — incoming version accepted for the render-method block). `SceneRenderConfig` public record + public sealed `SceneViewportRenderer` class. All ~30 helper methods moved (RenderScene→Render, CreateMaterial+overload, CreateGeometry, SelectTextureCoordinates×2, BuildViewportTextureSelection, CreateViewportTextureModel, BuildUvTransform, ApplySelectedVariantToScene, TryBuildMultiPassPlan, AddOverlayPasses, BuildOverlayPassMaterial/Geometry, IsTransparentMaterial, PickWireframeColor, MeshWireframePalette, etc.). MainWindow's `RenderScene` is now a 6-line shim that builds a `SceneRenderConfig` and delegates. MainWindow.xaml.cs shrank from 2552 → 1093 lines (-1459). UV-preview helpers (`GenerateUvPreviewPanelsAsync`, `SelectUvPreviewTextures`, etc.) updated to call the renderer's internal-static texture-selection helpers. Build clean, 394/394 tests pass. **Visual parity NOT yet verified — needs user run before R4 cleanup.**
-- [x] **R3 — `SimConstructorWindow` viewport wired.** `SimConstructorViewModel` now injects `ISimAssetGraphRenderer`, exposes `CurrentScene` (CanonicalScene) + `SceneStatus`. After AssetGraph builds, the VM calls `BuildSimSceneAsync` and updates `CurrentScene`. `SimConstructorWindow.xaml.cs` mirrors MainWindow's viewport setup (Viewport3DX, PerspectiveCamera, ShadowMap3D, DefaultEffectsManager) and inserts the viewport into `PreviewSurface` (now a Grid). On `CurrentScene` PropertyChanged → constructs a default `SceneRenderConfig(LitTexture, null slot, Auto UV, no variant)` and calls `SceneViewportRenderer.Render`. XAML restructured: viewport fills the centre, status bar at top, diagnostic info moves into the right knob panel under Expanders (Body candidates, Diagnostics). BuildNumber bumped to 0290 — first user-facing visual verification build. Build clean, 394/394 tests pass.
-
-- [ ] **R4 — MainWindow cleanup**. Replace MainWindow's inline `RenderScene` calls with `SceneViewportRenderer.Render`. Replace `TryApplySimBodyProxyPreviewAsync`'s composition section with a call to `ISimAssetGraphRenderer`. MainViewModel keeps its state-setting logic (SelectedSimBodyPreviewLayers, diagnostics caching) but delegates the pure-function rendering. Acceptance: visual parity with the pre-refactor MainWindow Sim preview.
-
-**Risks / red lines:**
-- Must not break MainWindow's Sim render path. R2 + R4 each need visual verification builds.
-- The morph application in R1 must produce results equal to MainViewModel's current path (same BOND/DMap/BGEO output for the same SimInfo + rig).
-- `SceneRenderMode` + variant state is currently spread across MainWindow + MainViewModel; R2 must consolidate the contract so both windows see the same render-config API.
-- [ ] **P0.5** TS4-style three-pane layout: left tab-rail (Genetics / Outfits / Animation) via WinUI NavigationView; center viewport (reuse the Helix3D control already used by MainWindow); right knob panel that swaps content per tab. P0.5 just stubs the layout — knobs are filled in P1/P2/P3.
-- [ ] **P0.6** Smoke-sweep all 14 (age × gender) tuples. Each must render without crash. Bugs caught here usually mean `Ts4CanonicalBaselineBodyParts` is missing an instance for that tuple — fix by extending the catalog or routing the tuple to its nearest neighbour with a documented note.
-
-### Actions — Phase P1: Skintone + morphs (parallelisable after P0)
-
-- [ ] **P1.1** `IIndexStore.EnumerateSkintones()` query — filter by valid TONE versions (v6 + v12 known good), return (instance, displayName, swatchColor, age/gender flags). New ProbeAsset `--list-skintones` verifies the enumeration.
-- [ ] **P1.2** Skintone swatch grid in the Genetics tab. On selection → `Ts4SimInfoBuilder.WithSkintone(...)` → rebuild.
-- [ ] **P1.3** Body modifier sliders (BOND). Research packet: enumerate the SimModifier (SMOD) resources that target body regions for each (age, gender) and categorise them (height? muscle? weight? specific body parts?). Probe: `--list-body-modifiers <age> <gender>`. Then UI sliders bound to a `Dictionary<linkInstance, float>` fed back through SimInfo.BodyModifiers.
-- [ ] **P1.4** Face modifier sliders (DMap + BGEO). Same pattern as P1.3 but for SimInfo.FaceModifiers. Group by face region if metadata permits.
-- [ ] **P1.5** Resolver cache invalidation. Morph resolvers memoise per `FullInstance` — synthetic SimInfos either (a) get a fresh GUID per knob change, or (b) the resolvers accept a `bypass` flag for synthetic SimInfos. Pick (b) — cleaner, doesn't break real-SimInfo caching upstream. Add a `bool IsSynthetic` discriminator on the SimInfo summary.
-
-### Actions — Phase P2: CAS parts (parallelisable after P0)
-
-- [ ] **P2.1** `IIndexStore.EnumerateCasParts(species, age, gender, bodyType)` query. ProbeAsset `--list-cas-parts <species> <age> <gender> <bt>` verifies.
-- [ ] **P2.2** Outfits tab layout — sub-tabs per slot (Body / Head / Top / Bottom / Shoes / Hair / Accessories / Makeup). Thumbnail grid per slot.
-- [ ] **P2.3** Wire selections back into the synthesised SimInfo's body-driving outfit. `Ts4SimInfoBuilder.WithOutfitPart(bodyType, instance)` mutator.
-- [ ] **P2.4** Thumbnail rendering — CAS swatches/icons exist on disk; otherwise lazy-render a small preview into a thumb cache (in-memory only, per session — per memory rules, no cross-session disk cache of decoded data).
-- [ ] **P2.5** Makeup pickers (bt=29-35) interplay with face-overlay strict-only path. Verify the existing `IsFaceOverlayBodyType` widening (Build 0234) picks them up via the synthesised non-body-driving outfit slot.
-
-### Actions — Phase P3: Idle animation (serial, dedicated worker, after P0)
-
-**This is a green-field sub-project.** No animation code exists. Each step has a verification probe.
-
-- [ ] **P3.1** **Research CLIP/CLIB format.** Start with local `docs/references/codex-wiki/`. If insufficient, consult external (s4pi, TS4SimRipper sources locally at `docs/references/external/`, and last resort: live external). Document in `docs/references/codex-wiki/02-pipelines/animation-clip-format.md`.
-- [ ] **P3.2** **Pick idle clips.** ProbeAsset `--scan-clips-by-name <pattern>` to enumerate idle CLIPs per (age, gender). Likely name pattern is `a2o_idle_*` or similar; confirm via research. Pin one canonical idle per tuple to a static catalog `Ts4CanonicalIdleClipCatalog`.
-- [ ] **P3.3** `Ts4ClipResource.Parse` in `src/Sims4ResourceExplorer.Packages/`. Tests against the pinned canonical idles — all must parse 100%. Output: per-bone keyframe streams (time, T/R/S).
-- [ ] **P3.4** `SkeletalAnimationEvaluator` in `src/Sims4ResourceExplorer.Core/` or `Preview/`. API: `Evaluate(parsedClip, rig, time) → Dictionary<boneHash, Matrix4x4>`. Linear interp between keyframes. Unit tests with synthetic keyframes verify interp correctness.
-- [ ] **P3.5** **Per-frame bone matrix → shader.** Hardest infrastructure step. Today bind-pose bone matrices are baked at scene-build time; for animation we need to override them per frame in the viewport. Two options:
-  - (a) CPU-skinning: re-skin vertices each frame on CPU. Slow but no shader changes.
-  - (b) Bone-matrix buffer: shader reads bone matrices from a constant buffer; per frame we update the buffer with evaluator output. Faster, requires shader path update.
-  - Pick (b); the existing shader likely already has a bone matrix uniform path used for bind pose.
-- [ ] **P3.6** **Idle timer**: `IdleAnimationController` in the constructor view. Default disabled. After N seconds (default 8s) of no UI interaction, start playing the pinned idle for the current (age, gender). Any UI event resets the timer and pauses. Loop seamlessly when the clip end is reached.
-- [ ] **P3.7** **Acceptance**: Adult Female with default skintone idles smoothly with no popping at loop boundaries. Verified visually by user (this is the one P-phase that genuinely needs a build because the test target is "smooth motion in the viewport").
-
-### Actions — Phase P4: Polish
-
-- [ ] **P4.1** Session persistence — save the user's current constructor state (age/gender/skintone/morph weights/part picks) to a small JSON sidecar in `%LocalAppData%/Sims4ResourceExplorer/constructor-session.json`. NOT a cache of decoded data; this is purely user state.
-- [ ] **P4.2** Rebuild-scope optimisation. Skintone change ≠ rebuild geometry; morph change ≠ rebuild materials; part swap = full rebuild. Mark each knob with its rebuild scope and route through the scene-build service accordingly.
-- [ ] **P4.3** Workflow doc `docs/workflows/sim-character-constructor.md`. Covers entry point, knob layout, scope assumptions, known limits.
-- [ ] **P4.4** Update `docs/knowledge-map.md` with the constructor as a documented feature route.
-
-### Multi-agent split
-
-- **P0**: single Worker, serial. Manager (this thread) reviews each commit.
-- **P1 + P2**: two Workers in parallel. Write sets are disjoint (P1 touches SimInfoBuilder + skintone + morph wiring; P2 touches CAS enumeration + outfit pickers). Both depend on P0 landing first.
-- **P3**: single Worker, can start as soon as P3.1 research is in (parallel to P1+P2 work).
-- **Explorers** (read-only) precede each phase if research is needed (especially P3.1 and P1.3 body-modifier discovery).
-- **Verifier** runs separately on each packet — runs the test suite + the relevant ProbeAsset commands.
+- [x] **A0** Audit complete (this session): Model A/B split mapped, skintone-swap no-op confirmed in code, CASP field-order verified against TS4SimRipper CASP.cs (v44 slider block = 44 bytes, order matches; TgiOffset guard catches long-drift only).
+- [x] **A1** New probes shipped in ProbeAsset: `--audit-instance <hex[,..]>` (every package copy of an instance + decode + channel stats, Delta-over-Full ordering) and `--list-skintones` (all TONE copies, version coverage, base-texture instances, CSV).
+- [ ] **A2** Run `--audit-instance 3E68F8B6F44DA2AA` → determine game-effective content (Delta override?) and whether Model B's base is a stale pre-patch resource. (Running.)
+- [ ] **A3** Run `--list-skintones` → pick light/medium/dark human tones; `--audit-instance` their `BaseTextureInstance` textures → settle "full-anatomy per-tone texture vs flat palette". This decides Model A vs B. (Running.)
+- [ ] **A4** Fix TONE v12 parser to TS4SimRipper layout: SkinSetDesc = {textureInstance, overlayInstance, overlayMultiplier, makeupOpacity, makeupOpacity2} ×N (repo currently labels bytes 8–16 "reserved" and drops per-set fields); trailing block = tuningInstance + skinPanel:UInt16 + sliderLow/sliderHigh/sliderIncrement. Surface SkinSets list + slider range. Tests on real v6+v12 fixtures.
+- [ ] **A5** Oracle: port SkinBlender.DisplayableSkintone 1:1 (per-channel Pass 1, physique loop, shift via ShiftTexture, tan states, age/gender overlay lookup) as a reference compositor + ProbeAsset `--skin-parity <age> <gender> <toneHex>` writing repo.png / reference.png / diff stats. Existing `--compose-skin-atlas` (System.Drawing replica) is the starting skeleton.
+- [ ] **A6** Decision packet: pick the single atlas model from A2+A3+A5 evidence; implement per-tone base + SkintoneShift; delete the losing path; replace magic-string contracts ("Sim skintone route"/"Head shell" in Approximation, `skin_atlas.png` filename → shader path) with typed CanonicalMaterial flags.
+- [ ] **A7** Resource resolution: implement game package override order (ClientFullBuild* < ClientDeltaBuild*; game < DLC where applicable) in the texture/resource pickers used by CAS/skin paths.
+- [ ] **A8** Viewport calibration: in-game CAS reference screenshots (known tone), decide gamma policy, fit light rig once, document in a calibration doc. Custom HLSL / renderer change allowed if stock HelixToolkit PBR can't match.
+- [ ] **A9** Separate geometry track (after skin): child feet disjoint (suspect bind/rig correction missing for human children — analogous to animal "child bind correction" in commit 98d108a); toddler face-mask artifact should fall out of A6 (tone-mismatched overlay over fixed base) — re-verify after.
 
 ### Restart Hints
 
-- This task replaces the deferred-items execution plan (A-J) — those are all shipped except B (per-physique blending, deferred for separate research track) and 1.2 (face overlay 3-pass restore, deferred until visual verification of CAS makeup overlays).
-- Synthesised-SimInfo verification path: extend ProbeAsset with `--synthesise-sim <age> <gender>` that builds a synthetic SimInfo and dumps it the same way `--probe-sim-graph` dumps a parsed one. Use this for ALL P0/P1/P2 verification — do NOT ask user to launch app.
-- Idle animation (P3) is the one phase where the user must visually verify. Build a single dedicated user-facing verification build at end of P3.6, bump `<BuildNumber>`, give them the exact `.\run.ps1` command, and confirm the build id appears in the window title.
-- v1 = humans only. If pet support is added later, the `Ts4SimInfoBuilder` API needs a species param and the canonical-baseline catalog gains pet entries.
-- Morph resolver cache: synthetic SimInfos use `IsSynthetic = true` to bypass memoisation. Real SimInfos retain the existing cache.
-- Animation infrastructure (P3) is fully green-field. Budget it accordingly — likely 1-2 weeks alone.
-- DO NOT bump `<BuildNumber>` for non-visual verification. Use tests + ProbeAsset.
+- Audit memo with full evidence: chat session 2026-06-12; texture dumps in `c:\tmp\s4probe\`; app scene dump at `%LOCALAPPDATA%\Sims4ResourceExplorer\ConstructorDump\manifest.txt` (Adult Female, tone 0xAFC5, route note says 5545 — discrepancy unexplained, check).
+- Key code: [SimSkinAtlasComposer.cs](../../src/Sims4ResourceExplorer.App/SimSkinAtlasComposer.cs) (both models), [SimSkintoneMaterialBinder.cs](../../src/Sims4ResourceExplorer.App/Services/SimSkintoneMaterialBinder.cs), [SimConstructorViewModel.cs](../../src/Sims4ResourceExplorer.App/ViewModels/SimConstructorViewModel.cs) `TryExtractFullBodyDiffuse` (200KB threshold), [SceneViewportRenderer.cs](../../src/Sims4ResourceExplorer.App/Services/SceneViewportRenderer.cs) (lighting 0310, `skin_atlas.png` filename dispatch ~line 659), TONE parse in [StructuredMetadataServices.cs](../../src/Sims4ResourceExplorer.Packages/StructuredMetadataServices.cs#L112).
+- Reference truth: `docs/references/external/TS4SimRipper/src/SkinBlender.cs` (DisplayableSkintone 46–321), `TONE.cs` (SkinSetDesc, v10/v11 layout incl. sliders), `CASP.cs:595-660` (field order).
+- Do NOT trust a single package copy of any instance; use `--audit-instance`.
 
-### Open research questions (must close before phase start)
+## Umbrella Task: Sim Character Constructor (paused below the skin track)
 
-- **Before P1.3**: where do body-modifier weight ranges come from? Are they free-floating in `[-1, 1]` or `[0, 1]`? Does the game clamp? (Memory note: `BondMorphResolver` has a defensive `[-2, 2]` clamp.)
-- **Before P3.1**: is the CLIP format already parsed by any local reference repo (s4pi)? If yes, we can mirror their parser.
-- **Before P3.5**: does the existing viewport shader already accept a bone matrix array, or does animation require a shader update?
-
-### Out of scope for v1
-
-- Pets (cats / dogs / horses / little dogs / foxes). Animal pelt + per-species rig pipeline is still maturing per `project_sim_render_status.md`.
-- Save-game integration (read existing characters out of save files).
-- Persisting the constructed Sim back to a `.package` (write-side; the project is explicitly read-only on packages).
-- Blend trees, animation transitions, animated facial expressions, lip-sync.
-- Multi-outfit support (TS4 has 5 outfit categories — Everyday, Formal, Athletic, Sleep, Party — plus situational. v1 is one outfit.)
+P0 shipped through build 0310: constructor window + synthetic SimInfo (14 age×gender tuples) + live viewport (R1–R3) + skintone picker + skin-texture sliders + scene cache + dump diagnostics. R4 (MainWindow cleanup) still pending. P1.1/P1.2 (skintone enumeration/picker) shipped in 0293–0295; P1.3+ (morph sliders), P2 (CAS part picking), P3 (idle animation, green-field), P4 (polish) — pending, resume after the skin track lands. Details of the original phased plan: see git history of this file (pre-2026-06-12 version).
 
 ## Completed History (compact)
 
-Earlier packets (builds 0176–0229) delivered:
-
-- `RenderableMaterial` IR + `MaterialApplierRegistry` + `ColorMap7Applier` / `DecalMapApplier`
-- Multi-pass overlay rendering for `colorMap*` and `DecalMap` families
-- Texture slot deduplication for layered materials
-- UV channel manual override (Auto/UV0/UV1) in scene preview controls
-- Scene build perf: `54s → 1.78s` (index lookup fast path + AsyncLocal per-stage timing)
-- SimSkin rendering: base skin texture as diffuse (replacing CASPart diffuse), proper SkinBlender soft-light compositor on CPU, per-physique neutral detail, face overlay (strict-only matching)
-- Removal of HeadMouthColor mis-aligned overlay
-- Face overlay fallback removal (no more wrong-age overlay applied)
-- Build/Buy material authority matrix, shader family registry, live proof packets
-- Multi-agent operating model, documentation hub at `docs/knowledge-map.md`
-- ProbeAsset `--dump-face-overlays` and `--dump-texture` subcommands
+Earlier packets (builds 0176–0310) delivered: RenderableMaterial IR + appliers, multi-pass overlays, UV override controls, scene-build perf 54s→1.78s, SimSkin atlas chain (SkinBlender subset), face-overlay strict matching, Build/Buy + CAS material authority matrices, multi-agent operating model, animal sim pipeline (builds 0247–0289), Sim Constructor P0 + R1–R3 refactor, skintone picker + in-memory scene cache, atlas saga 0303–0310 (hue-preserving Pass 1, unified atlas, lighting rescale).
