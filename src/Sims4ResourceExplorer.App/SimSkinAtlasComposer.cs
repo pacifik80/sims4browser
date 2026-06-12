@@ -96,31 +96,40 @@ public static class SimSkinAtlasComposer
             }
         }
 
-        // 1. Build the details canvas. Start with the neutral details, then draw the overlay
-        //    row on top (when present, e.g. adult / elder). Both are resized to (width × height)
-        //    to match the skin's canonical sampling space.
+        // 1. Build the details canvas. EA's detail maps carry transparent CUT-OUTS at the
+        //    brow / nostril / lash regions (those features come from other CAS layers in the
+        //    game's compositor), and our LRLE/RLE2 decodes yield RGB(0,0,0) under that
+        //    alpha. Feeding those zeros into the soft-light pass crushes the channel and
+        //    paints the dark T-zone blotch (root cause of the build-0303 artifact; the 0305
+        //    hue-preserving Pass 1 only treated the symptom). The canvas therefore starts at
+        //    soft-light-neutral 0.5 grey and every detail layer is ALPHA-composited over it,
+        //    so transparent holes resolve to "no detail influence" instead of black.
         byte[]? detailsPixels = null;
-        if (detailNeutralPng is { Length: > 0 })
+        if (detailNeutralPng is { Length: > 0 } || detailOverlayPng is { Length: > 0 })
+        {
+            detailsPixels = new byte[width * height * 4];
+            for (var i = 0; i < detailsPixels.Length; i += 4)
+            {
+                detailsPixels[i] = 128;
+                detailsPixels[i + 1] = 128;
+                detailsPixels[i + 2] = 128;
+                detailsPixels[i + 3] = 255;
+            }
+        }
+        if (detailsPixels is not null && detailNeutralPng is { Length: > 0 })
         {
             var neutral = await DecodeBgra8StraightAsync(detailNeutralPng, cancellationToken, width, height).ConfigureAwait(false);
             if (neutral is not null)
             {
-                detailsPixels = neutral.Value.Pixels;
+                BlendStraightAlphaOver(detailsPixels, neutral.Value.Pixels);
             }
         }
-        if (detailOverlayPng is { Length: > 0 })
+        if (detailsPixels is not null && detailOverlayPng is { Length: > 0 })
         {
             var overlay = await DecodeBgra8StraightAsync(detailOverlayPng, cancellationToken, width, height).ConfigureAwait(false);
             if (overlay is not null)
             {
-                if (detailsPixels is null)
-                {
-                    detailsPixels = overlay.Value.Pixels;
-                }
-                else
-                {
-                    BlendStraightAlphaOver(detailsPixels, overlay.Value.Pixels);
-                }
+                BlendStraightAlphaOver(detailsPixels, overlay.Value.Pixels);
             }
         }
 

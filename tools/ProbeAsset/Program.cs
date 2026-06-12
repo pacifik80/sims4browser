@@ -608,14 +608,26 @@ if (args.Length > 0 && string.Equals(args[0], "--compose-skin-atlas", StringComp
     var w = skin.W; var h = skin.H;
     Console.WriteLine($"  canvas: {w}×{h}");
 
-    // 1. Build details = neutral OVER overlay
+    // 1. Build the details canvas: soft-light-neutral 0.5 grey base + ALPHA-composited
+    //    detail layers. EA detail maps have transparent cut-outs (brows/nostrils/lashes)
+    //    whose decoded RGB is zero; raw channel use paints the dark T-zone blotch. The
+    //    grey canvas makes the holes a soft-light no-op (matches SimSkinAtlasComposer).
     byte[]? details = null;
-    if (detNeutral is not null) details = LoadBgraResized(detNeutral, w, h).BGRA;
-    if (detOverlay is not null)
+    if (detNeutral is not null || detOverlay is not null)
     {
-        var ov = LoadBgraResized(detOverlay, w, h).BGRA;
-        if (details is null) details = ov;
-        else BlendStraightAlphaOver(details, ov);
+        details = new byte[w * h * 4];
+        for (var di = 0; di < details.Length; di += 4)
+        {
+            details[di] = 128; details[di + 1] = 128; details[di + 2] = 128; details[di + 3] = 255;
+        }
+    }
+    if (details is not null && detNeutral is not null)
+    {
+        BlendStraightAlphaOver(details, LoadBgraResized(detNeutral, w, h).BGRA);
+    }
+    if (details is not null && detOverlay is not null)
+    {
+        BlendStraightAlphaOver(details, LoadBgraResized(detOverlay, w, h).BGRA);
     }
 
     var skinPixels = skin.BGRA;
