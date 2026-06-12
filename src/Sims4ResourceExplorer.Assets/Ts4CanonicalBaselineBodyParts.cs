@@ -99,6 +99,45 @@ internal static class Ts4CanonicalBaselineBodyParts
         };
     }
 
+    // Default eye color: `yfMakeupEyeColor_Brown` (bt=35), Human, unisex, age-flagged
+    // Child→Elder in the base game (ClientFullBuild0). Without an EyeColor part the eye
+    // region of the composed skin atlas samples bare tone texture and the eyeballs render
+    // skin-colored — the game always equips an EyeColor part on every Sim.
+    public const ulong YuEyeColorBrown = 0x0000000000002AD7ul;
+
+    // Default brows (bt=34), Teen→Elder, per gender, base game (ClientFullBuild0). Brow
+    // diffuses are authored in full body-atlas UV space (probe-verified 1024×2048), so they
+    // composite through the same face-CAS overlay path as eye color.
+    public const ulong YfBrowsArchedMediumBrown = 0x0000000000002D14ul;
+    public const ulong YmBrowsArchedFullBlack = 0x0000000000005491ul;
+
+    /// <summary>
+    /// Returns the canonical default EyeColor (BodyType=35) instance for the Sim's
+    /// age × gender, or null when no age-appropriate default is catalogued yet.
+    /// Toddler/Infant use separate parts AND the face-overlay compositor currently
+    /// age-gates overlays to the Teen+ bucket (adult-face UV layout), so those tuples
+    /// stay null until per-age UV-region mapping lands.
+    /// </summary>
+    public static ulong? PickEyeColor(string? ageLabel, string? genderLabel) =>
+        AgeBucket(ageLabel) switch
+        {
+            AgeBucketKind.Adult or AgeBucketKind.Child => YuEyeColorBrown,
+            _ => null
+        };
+
+    /// <summary>
+    /// Returns the canonical default Brows (BodyType=34) instance for the Sim's
+    /// age × gender, or null for ages without a catalogued default. The EA brow parts are
+    /// gender-split for the Teen+ bucket; child/toddler defaults stay null until the
+    /// face-overlay age gate widens.
+    /// </summary>
+    public static ulong? PickBrows(string? ageLabel, string? genderLabel) =>
+        AgeBucket(ageLabel) switch
+        {
+            AgeBucketKind.Adult => IsFemale(genderLabel) ? YfBrowsArchedMediumBrown : YmBrowsArchedFullBlack,
+            _ => null
+        };
+
     /// <summary>Returns true when the gender label resolves to female; false for male, unisex, or unknown.</summary>
     private static bool IsFemale(string? genderLabel) =>
         !string.IsNullOrWhiteSpace(genderLabel) &&

@@ -10556,7 +10556,7 @@ public sealed class ExplorerTests : IDisposable
 
         Assert.Equal(1, (int)infoType.GetProperty("OutfitCategoryCount")!.GetValue(info)!);
         Assert.Equal(1, (int)infoType.GetProperty("OutfitEntryCount")!.GetValue(info)!);
-        Assert.Equal(4, (int)infoType.GetProperty("OutfitPartCount")!.GetValue(info)!);
+        Assert.Equal(6, (int)infoType.GetProperty("OutfitPartCount")!.GetValue(info)!);
 
         var outfitParts = (System.Collections.IEnumerable)infoType.GetProperty("OutfitParts")!.GetValue(info)!;
         var partInstances = new List<(uint BodyType, ulong PartInstance)>();
@@ -10572,6 +10572,8 @@ public sealed class ExplorerTests : IDisposable
         Assert.Contains((6u, 0x000000000000198Cul), partInstances); // yfTop_Nude
         Assert.Contains((7u, 0x0000000000001990ul), partInstances); // yfBottom_Nude
         Assert.Contains((8u, 0x000000000000198Ful), partInstances); // yfShoes_Nude
+        Assert.Contains((35u, 0x0000000000002AD7ul), partInstances); // yfMakeupEyeColor_Brown (default iris/sclera)
+        Assert.Contains((34u, 0x0000000000002D14ul), partInstances); // yfMakeupEyebrows_ArchedMedium_Brown (default brows)
     }
 
     [Fact]

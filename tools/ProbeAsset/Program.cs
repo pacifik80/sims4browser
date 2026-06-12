@@ -435,6 +435,73 @@ if (args.Length > 0 && string.Equals(args[0], "--probe-face-cas-types", StringCo
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--list-cas-parts", StringComparison.OrdinalIgnoreCase))
+{
+    // Lists indexed CAS parts by body type with optional name filter. Used to pick
+    // canonical default parts (e.g. EyeColor bt=35, Brows bt=34) for the synthetic Sim
+    // baseline. Usage: --list-cas-parts <bodyType> [nameLike] [limit]
+    var lcpBt = args.Length > 1 && int.TryParse(args[1], out var lcpBtVal) ? lcpBtVal : 35;
+    var lcpName = args.Length > 2 ? args[2] : null;
+    var lcpLimit = args.Length > 3 && int.TryParse(args[3], out var lcpLimVal) ? lcpLimVal : 40;
+    var lcpDb = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache\index.sqlite";
+    var lcpConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={lcpDb};Mode=ReadOnly");
+    lcpConn.Open();
+    using (var lcpCmd = lcpConn.CreateCommand())
+    {
+        lcpCmd.CommandText = """
+            SELECT internal_name, root_tgi, species_label, age_label, gender_label, sort_layer, package_path
+            FROM cas_part_facts
+            WHERE body_type = $bt
+              AND ($name IS NULL OR lower(internal_name) LIKE lower($name))
+            ORDER BY internal_name
+            LIMIT $limit
+            """;
+        lcpCmd.Parameters.AddWithValue("$bt", lcpBt);
+        lcpCmd.Parameters.AddWithValue("$name", (object?)(lcpName is null ? null : $"%{lcpName}%") ?? DBNull.Value);
+        lcpCmd.Parameters.AddWithValue("$limit", lcpLimit);
+        Console.WriteLine($"CAS parts bt={lcpBt} nameLike='{lcpName ?? "(any)"}' (limit {lcpLimit}):");
+        using var lcpReader = lcpCmd.ExecuteReader();
+        while (lcpReader.Read())
+        {
+            var name = lcpReader.IsDBNull(0) ? "(null)" : lcpReader.GetString(0);
+            var tgi = lcpReader.GetString(1);
+            var species = lcpReader.IsDBNull(2) ? "?" : lcpReader.GetString(2);
+            var age = lcpReader.GetString(3);
+            var gender = lcpReader.GetString(4);
+            var sort = lcpReader.GetInt32(5);
+            var pkg = Path.GetFileName(lcpReader.GetString(6));
+            Console.WriteLine($"  {name,-42} {tgi}  {species}|{age}|{gender}  sort={sort}  {pkg}");
+        }
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--dump-cas-diffuse", StringComparison.OrdinalIgnoreCase))
+{
+    // Resolves a CASPart by instance through the graph builder's face-overlay fetch path
+    // and saves its diffuse PNG. Used to verify overlay texture dimensions/placement
+    // (full-atlas-space vs face-region-sized). Usage: --dump-cas-diffuse <instanceHex> [out]
+    var dcdInstance = args.Length > 1 &&
+        ulong.TryParse(args[1].Replace("0x", ""), System.Globalization.NumberStyles.HexNumber, null, out var dcdVal)
+        ? dcdVal : 0ul;
+    var dcdOut = args.Length > 2 ? args[2] : Path.Combine("tmp", $"cas_diffuse_0x{dcdInstance:X16}.png");
+    if (dcdInstance == 0) { Console.Error.WriteLine("Usage: --dump-cas-diffuse <instanceHex> [outPath]"); return 2; }
+    var dcdCacheDir = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var dcdCache = new ProbeCacheService(Path.GetFullPath(dcdCacheDir + "/.."));
+    dcdCache.EnsureCreated();
+    var dcdStore = new SqliteIndexStore(dcdCache);
+    await dcdStore.InitializeAsync(CancellationToken.None);
+    var dcdBld = new ExplicitAssetGraphBuilder(new LlamaResourceCatalogService(), dcdStore);
+    var dcdPng = await dcdBld.ResolveCasPartDiffusePngAsync(dcdInstance, CancellationToken.None);
+    if (dcdPng is not { Length: > 0 }) { Console.WriteLine($"0x{dcdInstance:X16}: diffuse did not resolve."); return 3; }
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(dcdOut))!);
+    await File.WriteAllBytesAsync(dcdOut, dcdPng);
+    var dcdW = (dcdPng[16] << 24) | (dcdPng[17] << 16) | (dcdPng[18] << 8) | dcdPng[19];
+    var dcdH = (dcdPng[20] << 24) | (dcdPng[21] << 16) | (dcdPng[22] << 8) | dcdPng[23];
+    Console.WriteLine($"0x{dcdInstance:X16}: {dcdPng.Length:N0} bytes [{dcdW}×{dcdH}] → {dcdOut}");
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--probe-sim-outfit-parts", StringComparison.OrdinalIgnoreCase))
 {
     // For a representative Human YA Female SimInfo, dump every body part referenced in
@@ -1921,6 +1988,7 @@ if (args.Length > 0 && string.Equals(args[0], "--dump-skin-atlas", StringCompari
     var skintone = await dsaBld.ResolveHumanSkintoneAsync(dsaAge, dsaGender, dsaSkin, CancellationToken.None);
     if (skintone is null) { Console.WriteLine("No skintone resolved; bail."); return 4; }
     Console.WriteLine($"  base={skintone.BaseTexturePngBytes?.Length ?? 0:N0} bytes detailN={skintone.DetailNeutralPngBytes?.Length ?? 0:N0} detailO={skintone.DetailOverlayPngBytes?.Length ?? 0:N0} face={skintone.FaceOverlayPngBytes?.Length ?? 0:N0} casOverlays={skintone.FaceCasOverlayPngBytes?.Count ?? 0}");
+    Console.WriteLine($"  notes: {skintone.Notes}");
 
     if (skintone.BaseTexturePngBytes is { Length: > 0 })
     {

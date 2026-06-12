@@ -2160,15 +2160,16 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
     // Drawing them stretched across the whole atlas creates wrong-UV artifacts. Reverted
     // to bt=4/14/34/35 (EyeColor + Brows variants), all of which were visually verified.
     // Future work: respect each makeup texture's intended atlas sub-rect.
-    // Plan B (build 0246): face CAS overlays disabled entirely. Even bt=4/14/34/35 textures
-    // are sized for the face REGION of the skin atlas (typically ~256×256), not the full
-    // atlas (1024×2048). The compositor at SimSkinAtlasComposer.cs:177 stretches every
-    // overlay to the full atlas dimensions, which paints the textures in wrong places (the
-    // brown blotches the user reported on the Adult Female face). Until per-overlay UV-region
-    // mapping is implemented (read each overlay's MATD or RegionMap to find its intended
-    // sub-rect), suppress them all. Eye iris and mouth interior come from EyeColor mesh
-    // (bt=4) and the in-mouth mesh; brows can be added back once UV-region work lands.
-    private static bool IsFaceOverlayBodyType(int bodyType) => false;
+    // Plan B (build 0246) disabled ALL face CAS overlays on the assumption that the
+    // textures are face-REGION-sized (~256×256) and would smear when stretched to the
+    // full atlas. Probe evidence (2026-06-12) REFUTES that for the eye/brow families:
+    // yfMakeupEyeColor_Brown (0x2AD7) and yfMakeupEyebrows_ArchedMedium_Brown (0x2D14)
+    // both decode as 1024×2048 textures authored in full body-atlas UV space with content
+    // already at the correct eye/brow spots — the compositor resize is a no-op for them.
+    // Re-enabled: bt=34 (Brows) and bt=35 (EyeColor). Still suppressed pending per-part
+    // dimension evidence: bt=29-32 makeup (may genuinely be region-sized) and the legacy
+    // bt=4/14 slots (heavily reused by geometry accessories).
+    private static bool IsFaceOverlayBodyType(int bodyType) => bodyType is 34 or 35;
 
     // Per the Ts4SimInfo binary format (and Ts4CasPart age flags):
     //   0x0001=Baby, 0x0080=Infant, 0x0002=Toddler, 0x0004=Child,

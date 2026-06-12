@@ -21,6 +21,8 @@ internal static class Ts4SimInfoBuilder
     public const uint BodyTypeTop = 6u;
     public const uint BodyTypeBottom = 7u;
     public const uint BodyTypeShoes = 8u;
+    public const uint BodyTypeBrows = 34u;
+    public const uint BodyTypeEyeColor = 35u;
 
     /// <summary>
     /// Builds a synthetic Ts4SimInfo for a human Sim of (<paramref name="ageLabel"/>,
@@ -91,6 +93,10 @@ internal static class Ts4SimInfoBuilder
         AppendPart(parts, BodyTypeTop, Ts4CanonicalBaselineBodyParts.PickTop(ageLabel, genderLabel));
         AppendPart(parts, BodyTypeBottom, Ts4CanonicalBaselineBodyParts.PickBottom(ageLabel, genderLabel));
         AppendPart(parts, BodyTypeShoes, Ts4CanonicalBaselineBodyParts.PickShoes(ageLabel, genderLabel));
+        // Texture-only face parts: feed the skin-atlas compositor's face-CAS overlay path
+        // (iris/sclera land in the eye UV region, brows in the brow region). Not geometry.
+        AppendPart(parts, BodyTypeBrows, Ts4CanonicalBaselineBodyParts.PickBrows(ageLabel, genderLabel));
+        AppendPart(parts, BodyTypeEyeColor, Ts4CanonicalBaselineBodyParts.PickEyeColor(ageLabel, genderLabel));
         return parts.Count == 0 ? null : new Ts4SimOutfit(NudeOutfitCategoryValue, parts);
     }
 
