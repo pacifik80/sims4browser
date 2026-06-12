@@ -53,12 +53,62 @@ shader.
    the constant buffers (light rig values for calibration) are in the same capture —
    queued as the next mining pass.
 
+## Decoded pixel shader (eid 602, ps_5_0, hash c86a53fc…)
+
+Disassembly: `c:\tmp\s4probe\rdc-mine\eid602_ps_disasm.txt` (116 instructions). The albedo
+chain in plain math (all samples on UV0 = TEXCOORD0):
+
+```
+D     = t0.Sample(uv0).g                      // grayscale skin-detail composite
+R     = t3.Sample(float2(D, 0)).rgb           // 256×1 ramp INDEXED BY D (not by shift!)
+C     = t1.Sample(uv0).rgb                    // skin-color composite
+base  = lerp(C, C * R, 0.5)                   // ramp-modulated color, 50% fixed mix
+O1    = overlay(base, D)                      // photoshop overlay, branch on base<0.5
+O2    = overlay(O1, D)                        // overlay applied a second time
+skin  = lerp(O1, O2, k_detail)                // k_detail = cb0[189].x  (0.27 in capture)
+outfit= t2.Sample(uv0)                        // outfit composite, straight alpha
+albedo= lerp(skin, outfit.rgb, outfit.a)      // clothing source-over skin
+```
+
+Lighting (same shader, summarized): tangent-space normal from the per-part map
+(`(zw·2.0079 − 1.0394) × cb0[188].x`, strength 1.0 in capture), TWO directional lights with
+hard visibility masks, per-light specular with gloss from the spec composite
+(`power = specMap.b·190 + 10`), env cube (t6) band-selected by specMap.r and masked by
+specMap.g/.a, Fresnel rim `exp(log(1−n·v)·rimExp)` with rim exponent and color interpolated
+across a vertical gradient factor, AO/ambient from t7 on UV1 (`ambient = lerp(0.40, 0.60,
+ao)` in capture), and a stylised desaturation/tint post-stage driven by vertex COLOR data.
+
+Captured constants (cb0, `eid602_ps_cbuffers.txt`):
+
+| Slot | Value | Meaning (from disasm) |
+|---|---|---|
+| cb0[0] | (0.417, 0.460, 0.784) | light 0 direction |
+| cb0[1] | (−0.916, 0.100, 0.389) | light 1 direction |
+| cb0[4] | (0.5, 0.5, 0.5) | light 0 color |
+| cb0[5] | (0.24, 0.24, 0.24) | light 1 color |
+| cb0[6] / cb0[7] | (0.145, 0.333, 0.293) / (0.184, 0.471, 0.920) | rim colors (ground green / sky blue) |
+| cb0[188].x | 1.0 | normal-map strength |
+| cb0[189].x | **0.27** | detail second-overlay mix (candidate mapping: TONE OverlayOpacity-class param) |
+| cb0[190].xy | (0.93, 0.80) | per-light specular intensity |
+| cb0[191].xy | (3.68, 1.72) | rim exponents |
+| cb0[192].xy | (0.40, 0.60) | ambient min/max (lerped by AO) |
+| cb0[196] | (0.18, −0.118, 0.977; 1500) | sun-spec direction + power |
+
+**Implication for the offline compositor:** the game's albedo chain is the SkinBlender
+chain's shape with exact parameters now known — `overlay(overlay(lerp(C, C·ramp(D), .5), D), D)`
+mixed at 0.27 replaces our "Pass 1 soft-light ×1.2 + Pass 2 overlay at OverlayOpacity/100 +
+contrast 1.1@0.75". The repo can implement the EXACT equation (transcription, not
+approximation); ramp ≈ identity for unshifted tones.
+
 ## Follow-ups
 
-- [ ] Disassemble the sim pixel shader (eid 602) → exact detail×color×ramp math, clothing
-      blend, specular model.
-- [ ] Dump sim draw constant buffers → in-game light rig values for viewport calibration (A8).
+- [x] Pixel shader disassembled, albedo + lighting math decoded (above).
+- [x] Constant buffers dumped — light rig + material params (above).
+- [ ] Identify the ramp (87758) source: per-tone runtime generation vs static resource;
+      relation to SkintoneShift.
 - [ ] Probe nude-part CASPs for normalMapKey/specularMapKey presence; wire part normal +
       specular maps into the viewer materials.
 - [ ] Identify the second sim's texture cluster in the same capture (yafem) for a female
       reference set.
+- [ ] Re-derive the viewer light rig from cb0 values (2 dirs + colors + rim + ambient band)
+      instead of hand-tuned constants (A8).
