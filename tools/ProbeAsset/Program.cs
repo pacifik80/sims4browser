@@ -502,6 +502,47 @@ if (args.Length > 0 && string.Equals(args[0], "--dump-cas-diffuse", StringCompar
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--dump-casp-slots", StringComparison.OrdinalIgnoreCase))
+{
+    // Parses CASP(s) by instance and prints EVERY texture reference slot with the resolved
+    // resource type/size from the index. Settles which slots (diffuse/shadow/region_map/
+    // normal/specular/emission/color_shift_mask) a part actually authors.
+    // Usage: --dump-casp-slots <hexInstance[,hex,...]>
+    var dcsList = args.Length > 1 ? args[1] : null;
+    if (dcsList is null) { Console.Error.WriteLine("Usage: --dump-casp-slots <hexInstance[,...]>"); return 2; }
+    var dcsCacheDir = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var dcsCache = new ProbeCacheService(Path.GetFullPath(dcsCacheDir + "/.."));
+    dcsCache.EnsureCreated();
+    var dcsStore = new SqliteIndexStore(dcsCache);
+    await dcsStore.InitializeAsync(CancellationToken.None);
+    var dcsCat = new LlamaResourceCatalogService();
+    foreach (var hex in dcsList.Split(','))
+    {
+        if (!ulong.TryParse(hex.Trim().Replace("0x", ""), System.Globalization.NumberStyles.HexNumber, null, out var inst)) continue;
+        var matches = await dcsStore.GetResourcesByFullInstanceAsync(inst, CancellationToken.None);
+        var caspRes = matches.FirstOrDefault(r => string.Equals(r.Key.TypeName, "CASPart", StringComparison.OrdinalIgnoreCase));
+        if (caspRes is null) { Console.WriteLine($"0x{inst:X16}: no CASPart in index"); continue; }
+        byte[] bytes;
+        try { bytes = await dcsCat.GetResourceBytesAsync(caspRes.PackagePath, caspRes.Key, raw: false, CancellationToken.None, null); }
+        catch (Exception ex) { Console.WriteLine($"0x{inst:X16}: bytes failed {ex.Message}"); continue; }
+        Ts4CasPart part;
+        try { part = Ts4CasPart.Parse(bytes); }
+        catch (Exception ex) { Console.WriteLine($"0x{inst:X16}: parse failed {ex.Message}"); continue; }
+        Console.WriteLine($"0x{inst:X16} '{part.InternalName}' bt={part.BodyType} from {Path.GetFileName(caspRes.PackagePath)}");
+        foreach (var texRef in part.TextureReferences)
+        {
+            var at = await dcsStore.GetResourcesByFullInstanceAsync(texRef.Key.FullInstance, CancellationToken.None);
+            var types = string.Join(", ", at
+                .Where(r => r.Key.FullInstance == texRef.Key.FullInstance)
+                .Select(r => $"{r.Key.TypeName}@{Path.GetFileName(r.PackagePath)}")
+                .Distinct()
+                .Take(4));
+            Console.WriteLine($"   slot={texRef.Slot,-18} key={texRef.Key.FullTgi}  indexed as: {(types.Length > 0 ? types : "(nothing at instance)")}");
+        }
+    }
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--probe-sim-outfit-parts", StringComparison.OrdinalIgnoreCase))
 {
     // For a representative Human YA Female SimInfo, dump every body part referenced in
@@ -675,26 +716,76 @@ if (args.Length > 0 && string.Equals(args[0], "--compose-skin-atlas", StringComp
     var w = skin.W; var h = skin.H;
     Console.WriteLine($"  canvas: {w}×{h}");
 
-    // 1. Build the details canvas: soft-light-neutral 0.5 grey base + ALPHA-composited
-    //    detail layers. EA detail maps have transparent cut-outs (brows/nostrils/lashes)
-    //    whose decoded RGB is zero; raw channel use paints the dark T-zone blotch. The
-    //    grey canvas makes the holes a soft-light no-op (matches SimSkinAtlasComposer).
+    // 1. Build the grayscale detail canvas with coverage tracking, then fill EA's
+    //    brow/nostril cut-outs by horizontal scan-line interpolation (mirror of
+    //    SimSkinAtlasComposer's canvas; vertical pass omitted in this replica — the
+    //    known cut-outs are horizontal-bounded).
     byte[]? details = null;
     if (detNeutral is not null || detOverlay is not null)
     {
         details = new byte[w * h * 4];
-        for (var di = 0; di < details.Length; di += 4)
+    }
+    static void BlendTrackCoverage(byte[] dst, byte[] src)
+    {
+        // Full straight-alpha over (both alphas weighted) — keeps a partial-alpha layer's
+        // true color over an uncovered canvas. Mirrors SimSkinAtlasComposer.
+        for (var i = 0; i < dst.Length; i += 4)
         {
-            details[di] = 128; details[di + 1] = 128; details[di + 2] = 128; details[di + 3] = 255;
+            var sa = src[i + 3] / 255f;
+            if (sa <= 0f) continue;
+            var da = dst[i + 3] / 255f;
+            var oa = sa + da * (1f - sa);
+            if (oa <= 0f) continue;
+            for (var c = 0; c < 3; c++)
+            {
+                var b = ((src[i + c] * sa) + (dst[i + c] * da * (1f - sa))) / oa;
+                dst[i + c] = (byte)Math.Clamp(b, 0f, 255f);
+            }
+            dst[i + 3] = (byte)Math.Clamp(oa * 255f, 0f, 255f);
         }
     }
     if (details is not null && detNeutral is not null)
     {
-        BlendStraightAlphaOver(details, LoadBgraResized(detNeutral, w, h).BGRA);
+        BlendTrackCoverage(details, LoadBgraResized(detNeutral, w, h).BGRA);
     }
     if (details is not null && detOverlay is not null)
     {
-        BlendStraightAlphaOver(details, LoadBgraResized(detOverlay, w, h).BGRA);
+        BlendTrackCoverage(details, LoadBgraResized(detOverlay, w, h).BGRA);
+    }
+    if (details is not null)
+    {
+        const byte covThr = 8;
+        for (var y = 0; y < h; y++)
+        {
+            var row = y * w;
+            var x = 0;
+            while (x < w)
+            {
+                if (details[((row + x) * 4) + 3] >= covThr) { x++; continue; }
+                var gapStart = x;
+                while (x < w && details[((row + x) * 4) + 3] < covThr) x++;
+                var li = gapStart - 1;
+                var ri = x < w ? x : -1;
+                if (li < 0 && ri < 0) continue;
+                for (var fx = gapStart; fx < (x < w ? x : w); fx++)
+                {
+                    var p = (row + fx) * 4;
+                    if (li >= 0 && ri >= 0)
+                    {
+                        var t = (fx - li) / (float)(ri - li);
+                        var lp = (row + li) * 4; var rp = (row + ri) * 4;
+                        for (var c = 0; c < 3; c++)
+                            details[p + c] = (byte)(details[lp + c] + ((details[rp + c] - details[lp + c]) * t));
+                    }
+                    else
+                    {
+                        var sp = (row + (li >= 0 ? li : ri)) * 4;
+                        for (var c = 0; c < 3; c++) details[p + c] = details[sp + c];
+                    }
+                    details[p + 3] = covThr;
+                }
+            }
+        }
     }
 
     var skinPixels = skin.BGRA;
@@ -702,64 +793,28 @@ if (args.Length > 0 && string.Equals(args[0], "--compose-skin-atlas", StringComp
     if (details is not null)
         SavePng(Path.Combine(inputDir, "step_01_details_composited.png"), w, h, (byte[])details.Clone());
 
-    // 2. Pass 1 + Pass 2 + Pass 3 + contrast (faithful to SimSkinAtlasComposer:96-148)
+    // 2. The transcribed in-game albedo equation (live-proof packet, eid 602 disasm):
+    //    base = C·(1+D)/2 (identity ramp), O1 = overlay(base, D), O2 = overlay(O1, D),
+    //    skin = lerp(O1, O2, k) with k = pass2Op (cb0[189].x class; 0.27 captured).
+    //    hue/sat args retained for CLI compatibility; no longer used (alien color comes
+    //    from the tone texture itself).
+    _ = hue; _ = sat;
     if (details is not null && details.Length == skinPixels.Length)
     {
-        var pass2 = Math.Clamp(pass2Op, 0f, 1f);
-        const float contrast = 1.1f;
-        const float midpoint = 0.75f;
-
-        // Pass 3 hue conversion (HSL midpoint to RGB) — mirror SimSkinAtlasComposer:191-233.
-        float HslChannel(float v, float a1, float a2)
-        {
-            if (v < 0) v += 1; else if (v > 1) v -= 1;
-            float ch;
-            if (6f * v < 1f) ch = a2 + (a1 - a2) * 6f * v;
-            else if (2f * v < 1f) ch = a1;
-            else if (3f * v < 2f) ch = a2 + (a1 - a2) * (0.666f - v) * 6f;
-            else ch = a2;
-            ch *= 255f;
-            if (ch < 0) ch = 0; else if (ch > 255) ch = 255;
-            return ch + 0.5f;
-        }
-        const ushort hSat = 127, hLum = 127;
-        var l = hLum / 240f; if (l > 1) l = 1;
-        byte[] rgbOver;
-        if (hSat == 0) { var g = (byte)(255f * l); rgbOver = new[] { g, g, g }; }
-        else
-        {
-            var s = hSat / 240f;
-            var t1 = l < 0.5f ? l * (1f + s) : (l + s) - (l * s);
-            var t2 = 2f * l - t1;
-            var hN = hue / 239f;
-            rgbOver = new[] { (byte)HslChannel(hN + 0.333f, t1, t2), (byte)HslChannel(hN, t1, t2), (byte)HslChannel(hN - 0.333f, t1, t2) };
-        }
-        var overFactor = (float)(sat / 100); // INTEGER division — faithful to SkinBlender
-        var pass3Active = sat > 0 && overFactor > 0f;
-
+        var detailMix = Math.Clamp(pass2Op, 0f, 1f);
+        static float OverlayBlend(float b, float d) =>
+            b < 0.5f ? 2f * b * d : 1f - (2f * (1f - b) * (1f - d));
         for (var i = 0; i < skinPixels.Length; i += 4)
         {
+            var d = details[i + 1] / 255f;
+            var rampScale = (1f + d) * 0.5f;
             for (var c = 0; c < 3; c++)
             {
-                var color = skinPixels[i + c];
-                var detail = details[i + c];
-                var detF = detail / 255f;
-                var colF = color / 255f;
-                var p1 = ((1f - 2f * detF) * colF * colF + 2f * detF * colF) * 255f;
-                p1 = Math.Min(p1 * 1.2f, 255f);
-                float p2v;
-                if (p1 > 128f) p2v = 255f - ((255f - 2f * (detail - 128f)) * (255f - p1) / 256f);
-                else           p2v = (2f * detail * p1) / 256f;
-                var blended = (p2v * pass2) + (p1 * (1f - pass2));
-                if (pass3Active)
-                {
-                    var oc = rgbOver[2 - c];
-                    var p3 = (blended / 255f) * (blended + ((2f * oc) / 255f) * (255f - blended));
-                    blended = p3 * overFactor + blended * (1f - overFactor);
-                }
-                blended = (((blended / 255f) - midpoint) * contrast + midpoint) * 255f;
-                if (blended < 0) blended = 0; else if (blended > 255) blended = 255;
-                skinPixels[i + c] = (byte)blended;
+                var colF = skinPixels[i + c] / 255f;
+                var o1 = OverlayBlend(colF * rampScale, d);
+                var o2 = OverlayBlend(o1, d);
+                var skinF = Math.Clamp(o1 + ((o2 - o1) * detailMix), 0f, 1f);
+                skinPixels[i + c] = (byte)((skinF * 255f) + 0.5f);
             }
         }
     }

@@ -66,28 +66,27 @@ public sealed class SceneViewportRenderer
                 viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.Colors.Black });
                 break;
             default:
-                // Build 0310: scaled total light contribution from ~2.5× down to ~1.0× so
-                // bright pre-rendered textures (e.g. EA's full-body diffuse) render at their
-                // intended tone instead of clamping to white. PBR Lambertian response for a
-                // forward-facing pixel is ~albedo × (Σ directional / π + ambient); previously
-                // that totaled ~1.6× for any albedo, washing out peachy skin. New ambient
-                // ~0.30 + 3 dirs summing to ~0.55/π ≈ 0.18 + ~0.30 ≈ ~0.78× — leaves headroom
-                // for the PBR specular lobe so highlights aren't blown either.
-                viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.ColorHelper.FromArgb(255, 78, 84, 92) });
+                // Light rig transcribed from the live-game capture (docs/workflows/
+                // material-pipeline/live-proof-packets/sim-draw-texture-bindings.md,
+                // eid 602 cb0): two directional lights — dirs cb0[0]=(0.417,0.460,0.784)
+                // and cb0[1]=(−0.916,0.100,0.389) stored toward-light (negated here for
+                // Helix travel-direction), colors 0.5 and 0.24 grey — plus an ambient band
+                // 0.40..0.60 modulated by AO (midpoint 0.50 used; no AO map yet). The game
+                // shader computes diffuse as N·L × color with NO 1/π, while Helix PBR is
+                // Lambertian (albedo/π), so directional colors are π-compensated:
+                // 0.5π ≈ 1.57 capped to 1.0, 0.24π ≈ 0.75. Game rim lighting (green
+                // ground / blue sky, exps 3.68/1.72) is not reproducible with stock Helix
+                // lights and is deliberately omitted.
+                viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.ColorHelper.FromArgb(255, 128, 128, 128) });
                 viewport.Items.Add(new DirectionalLight3D
                 {
-                    Direction = Vector3.Normalize(new Vector3(-0.36f, -0.92f, -0.22f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 165, 160, 154)
+                    Direction = Vector3.Normalize(new Vector3(-0.417f, -0.460f, -0.784f)),
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 255, 255, 255)
                 });
                 viewport.Items.Add(new DirectionalLight3D
                 {
-                    Direction = Vector3.Normalize(new Vector3(0.78f, -0.28f, 0.42f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 130, 135, 140)
-                });
-                viewport.Items.Add(new DirectionalLight3D
-                {
-                    Direction = Vector3.Normalize(new Vector3(0.12f, 0.58f, -0.9f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 88, 92, 100)
+                    Direction = Vector3.Normalize(new Vector3(0.916f, -0.100f, -0.389f)),
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 192, 192, 192)
                 });
                 viewport.Items.Add(shadowMap);
                 break;

@@ -9,39 +9,42 @@ using Windows.Storage.Streams;
 namespace Sims4ResourceExplorer.App;
 
 /// <summary>
-/// Builds the single-skin-atlas that the in-game shader uses for both body and head meshes,
-/// per the SkinBlender chain documented in
-/// <c>docs/workflows/material-pipeline/skintone-and-overlay-compositor.md</c> and reflected in
-/// <c>docs/references/external/TS4SimRipper/src/SkinBlender.cs</c> lines 46-321.
+/// Builds the skin atlas by TRANSCRIBING the game's own sim pixel-shader albedo chain,
+/// decoded from a live RenderDoc capture — see
+/// <c>docs/workflows/material-pipeline/live-proof-packets/sim-draw-texture-bindings.md</c>
+/// (eid 602 disassembly, yafem_amale_table.rdc):
+/// <code>
+///   D      = skinDetailComposite.gray            // hardcoded per-(age × gender) detail rows
+///   C      = skinColorComposite.rgb              // tone.SkinSets[0] texture (per-tone color)
+///   base   = lerp(C, C * ramp(D), 0.5)           // 256×1 ramp ≈ identity for unshifted tones
+///   O1     = overlay(base, D)                    // photoshop overlay, branch on base &lt; 0.5
+///   O2     = overlay(O1, D)
+///   skin   = lerp(O1, O2, k)                     // k = cb0[189].x; tone-driven (0.27 captured)
+///   albedo = lerp(skin, outfit.rgb, outfit.a)    // outfit composite alpha-over
+/// </code>
+/// Mapping to this method: <paramref name="baseSkinPng"/> = C;
+/// <paramref name="detailNeutralPng"/> / <paramref name="detailOverlayPng"/> compose D;
+/// <paramref name="pass2Opacity"/> = k; the face overlay + face CAS overlays (brows, eye
+/// color — equipped bt=34/35 parts) play the outfit-composite role for the face region.
+/// The ramp is treated as identity (its runtime source / SkintoneShift relation is a
+/// tracked follow-up), so <c>base = C·(1+D)/2</c>.
 /// <para/>
-/// Pipeline implemented in this packet (subset of full SkinBlender chain):
-/// <list type="number">
-///   <item>Build details bitmap from the hardcoded per-(age × gender) neutral detail texture
-///         (and overlay row at <c>+4</c> for adult / elder), drawn at the same canvas size.
-///         Per-physique alpha-weighted blend is NOT applied yet — neutral details only.</item>
-///   <item>Build skin bitmap from <c>tone.SkinSets[0].TextureInstance</c>.</item>
-///   <item>Resize details to skin dimensions (SkinBlender resizes skin to details, but for our
-///         atlas the skin is the canonical sampling target).</item>
-///   <item>Per-pixel <c>Pass 1</c> soft-light + <c>×1.2</c> brighten + clamp; <c>Pass 2</c>
-///         overlay-blend; mix by <paramref name="pass2Opacity"/> (the caller's
-///         <c>tone.Opacity / 100</c> approximation); contrast-around-midpoint adjust.</item>
-///   <item>Draw <c>tone.OverlayList[ageGender]</c> face overlay on top of the composited skin.
-///         </item>
-///   <item>Draw face CAS overlay textures (EyeColor, Brows, Lipstick, Eyeshadow, Eyeliner,
-///         Blush) resolved from the Sim's equipped CAS parts (bt=4, 14, 29-35).</item>
-/// </list>
-/// HeadMouthColor was previously bundled per TS4SimRipper SkinBlender.cs:314-316 but is no
-/// longer used: the eye iris and mouth interior come from the EyeColor mesh (bt=4) and the
-/// in-mouth mesh, so the bundled overlay was redundant. Removed in build 0235 along with
-/// the embedded PNG and loader code (see Plan J).
-/// Skipped on purpose (future packets):
-/// <list type="bullet">
-///   <item>Per-physique-weight blends of detail rows 1..4 (heavy/fit/lean/bony).</item>
-///   <item>Hue/Saturation Pass 3 from tone.Hue / tone.Saturation.</item>
-/// </list>
-/// All pixel decoding uses <see cref="BitmapAlphaMode.Straight"/> to match SkinBlender's
-/// System.Drawing.Bitmap defaults; using premultiplied alpha here would silently scale RGB
-/// down by alpha and produce wrong colours when alpha encodes region masks.
+/// The game shader samples UNORM (non-sRGB) views and lights in gamma space, so this
+/// byte-space CPU compositing matches the in-game color pipeline exactly.
+/// <para/>
+/// EA's detail maps carry transparent CUT-OUTS at brow/nostril/lash regions (those features
+/// arrive via the outfit layer); decoded RGB under that alpha is zero. The detail canvas is
+/// therefore composited alpha-aware and holes are filled by nearest-coverage scan-line
+/// interpolation (mimicking the full-coverage runtime composite) before the equation runs.
+/// <para/>
+/// Replaced by this transcription (previous approximations, builds 0230-0312): SkinBlender
+/// Pass 1 soft-light ×1.2 + hue-preserving variant, Pass 2 overlay, contrast 1.1@0.75, and
+/// the saturation-gated Pass 3 hue shift (alien tones now get their color from C itself).
+/// <paramref name="skintoneHue"/>, <paramref name="skintoneSaturation"/> and
+/// <paramref name="pass3HueAlpha"/> are accepted for caller compatibility but no longer
+/// used by this path.
+/// Still pending: per-physique detail rows (heavy/fit/lean/bony), tan/burn skin sets,
+/// SkintoneShift via the ramp.
 /// </summary>
 public static class SimSkinAtlasComposer
 {
@@ -96,32 +99,27 @@ public static class SimSkinAtlasComposer
             }
         }
 
-        // 1. Build the details canvas. EA's detail maps carry transparent CUT-OUTS at the
-        //    brow / nostril / lash regions (those features come from other CAS layers in the
-        //    game's compositor), and our LRLE/RLE2 decodes yield RGB(0,0,0) under that
-        //    alpha. Feeding those zeros into the soft-light pass crushes the channel and
-        //    paints the dark T-zone blotch (root cause of the build-0303 artifact; the 0305
-        //    hue-preserving Pass 1 only treated the symptom). The canvas therefore starts at
-        //    soft-light-neutral 0.5 grey and every detail layer is ALPHA-composited over it,
-        //    so transparent holes resolve to "no detail influence" instead of black.
+        // 1. Build the grayscale detail canvas D. Layers are alpha-composited with coverage
+        //    tracking (dst alpha accumulates max source alpha), then transparent cut-outs
+        //    (brows/nostrils/lashes — see class doc) are filled by nearest-coverage
+        //    scan-line interpolation so the equation never consumes the RGB(0) garbage that
+        //    sits under alpha-0 in our LRLE/RLE2 decodes (root cause of the build-0303
+        //    dark-T-zone blotch).
         byte[]? detailsPixels = null;
         if (detailNeutralPng is { Length: > 0 } || detailOverlayPng is { Length: > 0 })
         {
             detailsPixels = new byte[width * height * 4];
-            for (var i = 0; i < detailsPixels.Length; i += 4)
-            {
-                detailsPixels[i] = 128;
-                detailsPixels[i + 1] = 128;
-                detailsPixels[i + 2] = 128;
-                detailsPixels[i + 3] = 255;
-            }
         }
         if (detailsPixels is not null && detailNeutralPng is { Length: > 0 })
         {
             var neutral = await DecodeBgra8StraightAsync(detailNeutralPng, cancellationToken, width, height).ConfigureAwait(false);
             if (neutral is not null)
             {
-                BlendStraightAlphaOver(detailsPixels, neutral.Value.Pixels);
+                if (clampedDetailNeutralAlpha < 1f)
+                {
+                    ScaleAlphaInPlace(neutral.Value.Pixels, clampedDetailNeutralAlpha);
+                }
+                BlendStraightAlphaOverTrackingCoverage(detailsPixels, neutral.Value.Pixels);
             }
         }
         if (detailsPixels is not null && detailOverlayPng is { Length: > 0 })
@@ -129,90 +127,36 @@ public static class SimSkinAtlasComposer
             var overlay = await DecodeBgra8StraightAsync(detailOverlayPng, cancellationToken, width, height).ConfigureAwait(false);
             if (overlay is not null)
             {
-                BlendStraightAlphaOver(detailsPixels, overlay.Value.Pixels);
+                BlendStraightAlphaOverTrackingCoverage(detailsPixels, overlay.Value.Pixels);
             }
         }
+        if (detailsPixels is not null)
+        {
+            FillUncoveredByScanlineInterpolation(detailsPixels, width, height);
+        }
 
-        // 2. Pass 1 soft-light + Pass 2 overlay-blend the details onto the skin (per-channel
-        //    per-pixel). When details aren't available, skip and use the bare base skin.
+        // 2. The transcribed in-game albedo equation (see class doc; live-proof packet
+        //    eid 602): base = C·(1+D)/2 (identity ramp), then overlay twice with D, mixed
+        //    by k = pass2Opacity. The game evaluates this per-channel in gamma space on
+        //    UNORM views; this loop is byte-space, so the color pipeline matches 1:1.
         if (detailsPixels is not null && detailsPixels.Length == skinPixels.Length)
         {
-            var pass2 = Math.Clamp(pass2Opacity, 0f, 1f);
-            const float contrast = 1.1f;
-            const float midpoint = 0.75f;
-            // Pass 3: per `DisplayableSkintone` in
-            // docs/references/external/TS4SimRipper/src/SkinBlender.cs:239-264, the tone's hue
-            // is converted to an RGB at fixed mid-saturation (127) and mid-luminance (127),
-            // and overFactor is `tone.Saturation / 100` — INTEGER division in the reference,
-            // which we replicate literally. For tones with Saturation < 100 this means
-            // overFactor = 0 and Pass 3 is effectively a no-op; tones with Saturation >= 100
-            // get a soft-light blend toward the hue tint. The `_37` variant of SkinBlender
-            // computes Pass 3 differently (radio-button toggle in the TS4SimRipper UI). We
-            // mirror the main path; switching variants would be a separate documented choice.
-            var rgbOver = HslMidpointToRgb(skintoneHue);
-            var overFactor = (float)(skintoneSaturation / 100); // literal int division
-            overFactor *= clampedPass3HueAlpha;
-            var pass3Active = skintoneSaturation > 0 && overFactor > 0f;
-
-            // Build 0305 — hue-preserving Pass 1.
-            // The original TS4SimRipper math was per-channel `pass1 = ((1-2·d)·c² + 2·d·c)·1.2`.
-            // Squaring each channel separately amplifies the dominant channel (skin tones are
-            // red-dominant), so darker detail values push the result toward saturated brown.
-            // Without a face-overlay PNG to mask it, that brown shows up as visible blotches
-            // at face-feature UVs (nose ridge, brow strip, lipline, etc.).
-            //
-            // Replacement: compute the SAME soft-light curve but on LUMINANCE only, then
-            // scale RGB uniformly to match the new luminance. Hue is preserved exactly.
-            // Pass 2 (overlay-blend) and Pass 3 (hue shift) stay per-channel — they are
-            // gated by `pass2Opacity` and `Saturation/100` respectively, both ~0 for most
-            // default skintones, so they rarely contribute to the artifact.
+            var detailMix = Math.Clamp(pass2Opacity, 0f, 1f);
             for (var i = 0; i < skinPixels.Length; i += 4)
             {
-                var bF = skinPixels[i] / 255f;
-                var gF = skinPixels[i + 1] / 255f;
-                var rF = skinPixels[i + 2] / 255f;
-                var dbF = detailsPixels[i] / 255f;
-                var dgF = detailsPixels[i + 1] / 255f;
-                var drF = detailsPixels[i + 2] / 255f;
-
-                // Rec. 601 luminance — perceptually close enough for skin tones; cheap.
-                var detLum = 0.299f * drF + 0.587f * dgF + 0.114f * dbF;
-                var biasedDetLum = (detLum * clampedDetailNeutralAlpha) + (0.5f * (1f - clampedDetailNeutralAlpha));
-                var baseLum = 0.299f * rF + 0.587f * gF + 0.114f * bF;
-
-                // Pass 1 soft-light, applied to luminance only.
-                var pass1Lum = (1f - 2f * biasedDetLum) * baseLum * baseLum + 2f * biasedDetLum * baseLum;
-                pass1Lum = Math.Min(pass1Lum * 1.2f, 1f);
-                var scale = baseLum > 1e-4f ? pass1Lum / baseLum : 0f;
-                var p1B = Math.Min(bF * scale, 1f);
-                var p1G = Math.Min(gF * scale, 1f);
-                var p1R = Math.Min(rF * scale, 1f);
-
+                // Detail composite is grayscale — the game shader reads a single channel.
+                var d = detailsPixels[i + 1] / 255f;
+                var rampScale = (1f + d) * 0.5f;
                 for (var c = 0; c < 3; c++)
                 {
-                    var pass1Channel = (c == 0 ? p1B : c == 1 ? p1G : p1R) * 255f;
-                    var detail = detailsPixels[i + c];
-                    float pass2Result;
-                    if (pass1Channel > 128f)
-                    {
-                        pass2Result = 255f - ((255f - 2f * (detail - 128f)) * (255f - pass1Channel) / 256f);
-                    }
-                    else
-                    {
-                        pass2Result = (2f * detail * pass1Channel) / 256f;
-                    }
-                    var blended = (pass2Result * pass2) + (pass1Channel * (1f - pass2));
-                    if (pass3Active)
-                    {
-                        // BGRA pixel layout, RGB rgbOver: B(c=0) -> rgbOver[2], G(c=1) -> rgbOver[1], R(c=2) -> rgbOver[0].
-                        var overChannel = rgbOver[2 - c];
-                        var pass3 = (blended / 255f) * (blended + ((2f * overChannel) / 255f) * (255f - blended));
-                        blended = (pass3 * overFactor) + (blended * (1f - overFactor));
-                    }
-                    blended = (((blended / 255f) - midpoint) * contrast + midpoint) * 255f;
-                    if (blended < 0f) blended = 0f;
-                    if (blended > 255f) blended = 255f;
-                    skinPixels[i + c] = (byte)blended;
+                    var color = skinPixels[i + c] / 255f;
+                    var baseChannel = color * rampScale;
+                    var o1 = OverlayBlend(baseChannel, d);
+                    var o2 = OverlayBlend(o1, d);
+                    var skinChannel = o1 + ((o2 - o1) * detailMix);
+                    if (skinChannel < 0f) skinChannel = 0f;
+                    if (skinChannel > 1f) skinChannel = 1f;
+                    skinPixels[i + c] = (byte)((skinChannel * 255f) + 0.5f);
                 }
             }
         }
@@ -372,6 +316,181 @@ public static class SimSkinAtlasComposer
         }
 
         return await EncodeBgra8AsPngAsync(width, height, pixels, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Photoshop "overlay" blend for one channel, branch on the BASE value — matches the
+    /// in-game shader (eid 602 disassembly lines 6-20): <c>base &lt; 0.5 ? 2·base·d :
+    /// 1 − 2·(1−base)·(1−d)</c>.
+    /// </summary>
+    private static float OverlayBlend(float baseChannel, float detail) =>
+        baseChannel < 0.5f
+            ? 2f * baseChannel * detail
+            : 1f - (2f * (1f - baseChannel) * (1f - detail));
+
+    /// <summary>
+    /// Full straight-alpha "over" that weights BOTH alphas:
+    /// <c>outA = sa + da·(1−sa); rgb = (src·sa + dst·da·(1−sa)) / outA</c>.
+    /// Unlike the opaque-destination over used elsewhere, this keeps a partial-alpha
+    /// layer's TRUE color when composited onto an uncovered canvas (plain source-over onto
+    /// empty black darkens RGB by the source alpha — that painted the whole soft-shaded
+    /// face region dark). Destination alpha becomes the accumulated coverage that the
+    /// hole-fill pass keys on.
+    /// </summary>
+    private static void BlendStraightAlphaOverTrackingCoverage(byte[] dst, byte[] src)
+    {
+        if (dst.Length != src.Length)
+        {
+            return;
+        }
+        for (var i = 0; i < dst.Length; i += 4)
+        {
+            var srcAlpha = src[i + 3] / 255f;
+            if (srcAlpha <= 0f)
+            {
+                continue;
+            }
+            var dstAlpha = dst[i + 3] / 255f;
+            var outAlpha = srcAlpha + (dstAlpha * (1f - srcAlpha));
+            if (outAlpha <= 0f)
+            {
+                continue;
+            }
+            for (var c = 0; c < 3; c++)
+            {
+                var blended = ((src[i + c] * srcAlpha) + (dst[i + c] * dstAlpha * (1f - srcAlpha))) / outAlpha;
+                if (blended < 0f) blended = 0f;
+                if (blended > 255f) blended = 255f;
+                dst[i + c] = (byte)blended;
+            }
+            dst[i + 3] = (byte)Math.Clamp(outAlpha * 255f, 0f, 255f);
+        }
+    }
+
+    /// <summary>
+    /// Fills pixels with no layer coverage (alpha below threshold) by scan-line
+    /// interpolation between the nearest covered pixels: horizontal pass first, vertical
+    /// pass for what remains, flat mid-gray for anything still uncovered (fully empty
+    /// rows/columns). Mimics the full-coverage look of the game's runtime detail composite
+    /// across EA's brow/nostril/lash cut-outs.
+    /// </summary>
+    private static void FillUncoveredByScanlineInterpolation(byte[] bgra, int width, int height)
+    {
+        const byte coverageThreshold = 8;
+
+        for (var y = 0; y < height; y++)
+        {
+            var row = y * width;
+            var x = 0;
+            while (x < width)
+            {
+                if (bgra[((row + x) * 4) + 3] >= coverageThreshold)
+                {
+                    x++;
+                    continue;
+                }
+                var gapStart = x;
+                while (x < width && bgra[((row + x) * 4) + 3] < coverageThreshold)
+                {
+                    x++;
+                }
+                var leftIndex = gapStart - 1;
+                var rightIndex = x < width ? x : -1;
+                if (leftIndex < 0 && rightIndex < 0)
+                {
+                    continue; // fully empty row — vertical pass handles it
+                }
+                for (var fillX = gapStart; fillX < (x < width ? x : width); fillX++)
+                {
+                    var p = (row + fillX) * 4;
+                    float t;
+                    int leftP = -1, rightP = -1;
+                    if (leftIndex >= 0) leftP = (row + leftIndex) * 4;
+                    if (rightIndex >= 0) rightP = (row + rightIndex) * 4;
+                    if (leftP >= 0 && rightP >= 0)
+                    {
+                        t = (fillX - leftIndex) / (float)(rightIndex - leftIndex);
+                        for (var c = 0; c < 3; c++)
+                        {
+                            bgra[p + c] = (byte)(bgra[leftP + c] + ((bgra[rightP + c] - bgra[leftP + c]) * t));
+                        }
+                    }
+                    else
+                    {
+                        var srcP = leftP >= 0 ? leftP : rightP;
+                        for (var c = 0; c < 3; c++)
+                        {
+                            bgra[p + c] = bgra[srcP + c];
+                        }
+                    }
+                    bgra[p + 3] = coverageThreshold; // mark filled (low confidence) but covered
+                }
+            }
+        }
+
+        // Vertical pass + final fallback for anything the horizontal pass could not reach.
+        for (var x = 0; x < width; x++)
+        {
+            var lastCovered = -1;
+            for (var y = 0; y < height; y++)
+            {
+                var p = ((y * width) + x) * 4;
+                if (bgra[p + 3] >= coverageThreshold)
+                {
+                    if (lastCovered >= 0 && y - lastCovered > 1)
+                    {
+                        var topP = ((lastCovered * width) + x) * 4;
+                        for (var fillY = lastCovered + 1; fillY < y; fillY++)
+                        {
+                            var fp = ((fillY * width) + x) * 4;
+                            var t = (fillY - lastCovered) / (float)(y - lastCovered);
+                            for (var c = 0; c < 3; c++)
+                            {
+                                bgra[fp + c] = (byte)(bgra[topP + c] + ((bgra[p + c] - bgra[topP + c]) * t));
+                            }
+                            bgra[fp + 3] = coverageThreshold;
+                        }
+                    }
+                    else if (lastCovered < 0 && y > 0)
+                    {
+                        for (var fillY = 0; fillY < y; fillY++)
+                        {
+                            var fp = ((fillY * width) + x) * 4;
+                            for (var c = 0; c < 3; c++)
+                            {
+                                bgra[fp + c] = bgra[p + c];
+                            }
+                            bgra[fp + 3] = coverageThreshold;
+                        }
+                    }
+                    lastCovered = y;
+                }
+            }
+            if (lastCovered >= 0 && lastCovered < height - 1)
+            {
+                var srcP = ((lastCovered * width) + x) * 4;
+                for (var fillY = lastCovered + 1; fillY < height; fillY++)
+                {
+                    var fp = ((fillY * width) + x) * 4;
+                    for (var c = 0; c < 3; c++)
+                    {
+                        bgra[fp + c] = bgra[srcP + c];
+                    }
+                    bgra[fp + 3] = coverageThreshold;
+                }
+            }
+            else if (lastCovered < 0)
+            {
+                for (var fillY = 0; fillY < height; fillY++)
+                {
+                    var fp = ((fillY * width) + x) * 4;
+                    bgra[fp] = 128;
+                    bgra[fp + 1] = 128;
+                    bgra[fp + 2] = 128;
+                    bgra[fp + 3] = coverageThreshold;
+                }
+            }
+        }
     }
 
     /// <summary>
