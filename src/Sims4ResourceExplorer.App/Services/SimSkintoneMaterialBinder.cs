@@ -19,7 +19,11 @@ public static class SimSkintoneMaterialBinder
     public static CanonicalScene RebindWithAtlas(CanonicalScene scene, byte[] atlasPng) =>
         RebindWithAtlases(scene, bodyAtlas: atlasPng, headAtlas: null);
 
-    public static CanonicalScene RebindWithAtlases(CanonicalScene scene, byte[]? bodyAtlas, byte[]? headAtlas)
+    public static CanonicalScene RebindWithAtlas(CanonicalScene scene, byte[] atlasPng, byte[]? normalPng) =>
+        RebindWithAtlases(scene, bodyAtlas: atlasPng, headAtlas: null, bodyNormal: normalPng, headNormal: normalPng);
+
+    public static CanonicalScene RebindWithAtlases(CanonicalScene scene, byte[]? bodyAtlas, byte[]? headAtlas,
+        byte[]? bodyNormal = null, byte[]? headNormal = null)
     {
         if (scene.Materials.Count == 0)
         {
@@ -31,7 +35,7 @@ public static class SimSkintoneMaterialBinder
         }
 
         var rewritten = scene.Materials
-            .Select(material => RewriteOne(material, bodyAtlas, headAtlas))
+            .Select(material => RewriteOne(material, bodyAtlas, headAtlas, bodyNormal, headNormal))
             .ToList();
         return scene with { Materials = rewritten };
     }
@@ -39,7 +43,8 @@ public static class SimSkintoneMaterialBinder
     public static CanonicalMaterial RewriteOne(CanonicalMaterial material, byte[] atlasPng) =>
         RewriteOne(material, bodyAtlas: atlasPng, headAtlas: null);
 
-    public static CanonicalMaterial RewriteOne(CanonicalMaterial material, byte[]? bodyAtlas, byte[]? headAtlas)
+    public static CanonicalMaterial RewriteOne(CanonicalMaterial material, byte[]? bodyAtlas, byte[]? headAtlas,
+        byte[]? bodyNormal = null, byte[]? headNormal = null)
     {
         if (string.IsNullOrEmpty(material.Approximation) ||
             !material.Approximation.Contains("Sim skintone route", StringComparison.OrdinalIgnoreCase))
@@ -108,6 +113,28 @@ public static class SimSkintoneMaterialBinder
         else
         {
             rewrittenTextures.Add(atlasTexture);
+        }
+
+        // Inject the derived normal map (build 0319) so the lit viewport's lighting responds
+        // to the painted musculature/detail. Replace any existing Normal-semantic texture
+        // (idempotent across rebinds); nude skin parts have none, so this adds one.
+        var normal = isHead ? (headNormal ?? bodyNormal) : bodyNormal;
+        if (normal is { Length: > 0 })
+        {
+            var normalTexture = new CanonicalTexture(
+                Slot: "normal",
+                FileName: "skin_normal.png",
+                PngBytes: normal,
+                Semantic: CanonicalTextureSemantic.Normal);
+            var existingNormal = rewrittenTextures.FindIndex(t => t.Semantic == CanonicalTextureSemantic.Normal);
+            if (existingNormal >= 0)
+            {
+                rewrittenTextures[existingNormal] = normalTexture;
+            }
+            else
+            {
+                rewrittenTextures.Add(normalTexture);
+            }
         }
 
         return material with

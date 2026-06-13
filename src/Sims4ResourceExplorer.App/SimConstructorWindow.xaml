@@ -75,10 +75,10 @@
 
             <Border VerticalAlignment="Top"
                     HorizontalAlignment="Stretch"
-                    Background="{ThemeResource SubtleFillColorTertiaryBrush}"
+                    Background="#CC101418"
                     Padding="12,8">
                 <TextBlock Text="{Binding SceneStatus}"
-                           Opacity="0.85"
+                           Foreground="#F0F0F0"
                            TextWrapping="WrapWholeWords" />
             </Border>
         </Grid>

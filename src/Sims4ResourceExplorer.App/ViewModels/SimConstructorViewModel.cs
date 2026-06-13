@@ -475,8 +475,14 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 return;
             }
 
+            // Derive a normal map from the atlas so the lit viewport responds to the painted
+            // musculature/detail (build 0319). ~3.0 strength reads the abs/pecs without
+            // looking embossed.
+            var normalMap = atlas is { Length: > 0 }
+                ? await SimSkinAtlasComposer.DeriveNormalMapPngAsync(atlas, 3.0f, token).ConfigureAwait(true)
+                : null;
             var rebound = atlas is { Length: > 0 }
-                ? SimSkintoneMaterialBinder.RebindWithAtlas(baseEntry.Scene, atlas)
+                ? SimSkintoneMaterialBinder.RebindWithAtlas(baseEntry.Scene, atlas, normalMap)
                 : baseEntry.Scene;
 
             // Diagnostic (build 0318): dump the live composed atlas + log the physique
@@ -495,6 +501,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                         "Sims4ResourceExplorer", "ConstructorDump");
                     System.IO.Directory.CreateDirectory(dumpDir);
                     await System.IO.File.WriteAllBytesAsync(System.IO.Path.Combine(dumpDir, "live_atlas.png"), atlas, token).ConfigureAwait(true);
+                    if (normalMap is { Length: > 0 })
+                    {
+                        await System.IO.File.WriteAllBytesAsync(System.IO.Path.Combine(dumpDir, "live_normal.png"), normalMap, token).ConfigureAwait(true);
+                    }
                 }
                 catch { /* diagnostic only */ }
             }
@@ -867,9 +877,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 }
                 if (atlas is { Length: > 0 })
                 {
-                    scene = SimSkintoneMaterialBinder.RebindWithAtlas(scene, atlas);
+                    var normalMap = await SimSkinAtlasComposer.DeriveNormalMapPngAsync(atlas, 3.0f, token).ConfigureAwait(true);
+                    scene = SimSkintoneMaterialBinder.RebindWithAtlas(scene, atlas, normalMap);
                     var atlasSource = fullBodyDiffuse is { Length: > 0 } ? "full-body diffuse (head CASPart)" : "skintone-base SkinBlender chain";
-                    combinedDiagnostics.Add($"Skin atlas ({atlasSource}): {atlas.Length:N0} bytes; bound to body + head shells.");
+                    combinedDiagnostics.Add($"Skin atlas ({atlasSource}): {atlas.Length:N0} bytes (+ derived normal); bound to body + head shells.");
                 }
                 else
                 {

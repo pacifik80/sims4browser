@@ -558,6 +558,85 @@ public static class SimSkinAtlasComposer
     }
 
     /// <summary>
+    /// Derives a tangent-space normal map PNG from the composed skin atlas, so the viewport's
+    /// lighting RESPONDS to the painted musculature/detail instead of leaving it as flat
+    /// shading on a smooth mesh. Without this, the physique detail rows produce a dramatically
+    /// ripped albedo (visible in the flat texture) that barely reads in the lit 3D view —
+    /// because nude body parts ship no normal map and the mesh is geometrically smooth.
+    /// <para/>
+    /// Height = per-pixel luminance; the surface gradient (central differences) becomes the
+    /// XY normal, Z fixed so flat areas stay (0,0,1). The gradient is inherently high-pass, so
+    /// the smooth base-tone falloff contributes ~nothing while ab/pec/rib creases produce
+    /// strong relief. UV-gutter pixels (near-black) are forced flat to avoid seam embossing.
+    /// </summary>
+    public static async Task<byte[]?> DeriveNormalMapPngAsync(byte[] atlasPng, float strength, CancellationToken cancellationToken)
+    {
+        if (atlasPng is not { Length: > 0 })
+        {
+            return null;
+        }
+        var decoded = await DecodeBgra8StraightAsync(atlasPng, cancellationToken).ConfigureAwait(false);
+        if (decoded is null)
+        {
+            return null;
+        }
+        var width = decoded.Value.Width;
+        var height = decoded.Value.Height;
+        var px = decoded.Value.Pixels;
+
+        // Precompute a luminance height field (0..1).
+        var lum = new float[width * height];
+        for (var i = 0; i < lum.Length; i++)
+        {
+            var p = i * 4;
+            lum[i] = (0.114f * px[p] + 0.587f * px[p + 1] + 0.299f * px[p + 2]) / 255f;
+        }
+
+        var outPx = new byte[width * height * 4];
+        const float gutterThreshold = 0.04f; // luminance below this = UV gutter, force flat
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var idx = y * width + x;
+                var p = idx * 4;
+                var here = lum[idx];
+                if (here < gutterThreshold)
+                {
+                    outPx[p] = 255; outPx[p + 1] = 128; outPx[p + 2] = 128; outPx[p + 3] = 255; // flat (B=Z, G=Y, R=X)
+                    continue;
+                }
+                var xl = x > 0 ? lum[idx - 1] : here;
+                var xr = x < width - 1 ? lum[idx + 1] : here;
+                var yt = y > 0 ? lum[idx - width] : here;
+                var yb = y < height - 1 ? lum[idx + width] : here;
+                // Force flat where a neighbour is gutter, so island edges don't emboss.
+                if (xl < gutterThreshold || xr < gutterThreshold || yt < gutterThreshold || yb < gutterThreshold)
+                {
+                    outPx[p] = 255; outPx[p + 1] = 128; outPx[p + 2] = 128; outPx[p + 3] = 255;
+                    continue;
+                }
+                var dx = (xr - xl) * strength;
+                var dy = (yb - yt) * strength;
+                // Normal = normalize(-dx, -dy, 1), encoded so the SAMPLED RGB = (X, Y, Z).
+                // The PNG is written from this BGRA buffer, so byte order is B,G,R,A and the
+                // GPU sees R=outPx[p+2], G=outPx[p+1], B=outPx[p]. Therefore: R=X, G=Y, B=Z.
+                var nx = -dx;
+                var ny = -dy;
+                const float nz = 1f;
+                var inv = 1f / System.MathF.Sqrt(nx * nx + ny * ny + nz * nz);
+                nx *= inv; ny *= inv;
+                var nzn = nz * inv;
+                outPx[p] = (byte)System.Math.Clamp((nzn * 0.5f + 0.5f) * 255f, 0f, 255f);     // B = Z
+                outPx[p + 1] = (byte)System.Math.Clamp((ny * 0.5f + 0.5f) * 255f, 0f, 255f);  // G = Y
+                outPx[p + 2] = (byte)System.Math.Clamp((nx * 0.5f + 0.5f) * 255f, 0f, 255f);  // R = X
+                outPx[p + 3] = 255;
+            }
+        }
+        return await EncodeBgra8AsPngAsync(width, height, outPx, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Shifts every BGRA pixel's HSV Value (brightness) by <paramref name="vShift"/>
     /// (normalized 0..1 units; signed). Hue and saturation are preserved exactly: changing
     /// only V scales R, G, B uniformly by <c>newV / oldV</c> (S = (max−min)/max and the hue
