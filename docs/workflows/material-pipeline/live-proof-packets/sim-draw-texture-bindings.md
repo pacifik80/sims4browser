@@ -100,10 +100,31 @@ mixed at 0.27 replaces our "Pass 1 soft-light ×1.2 + Pass 2 overlay at OverlayO
 contrast 1.1@0.75". The repo can implement the EXACT equation (transcription, not
 approximation); ramp ≈ identity for unshifted tones.
 
+## Parity check (our pipeline vs the captured composites)
+
+A 4-panel structural montage (`c:\tmp\s4probe\parity_montage.png`, 2026-06-13) places our
+composed atlas + detail source beside the game's slot-0 detail and slot-1 color composites.
+Caveat: the capture's sims are not our synthetic Adult Female / tone AFC5, so this is a
+content-TYPE comparison, not a pixel diff. Observations:
+
+- **Color source matches in kind.** The game's slot-1 color composite is a soft, per-tone,
+  full-body-UV texture with no anatomy detail — exactly the class of asset we use as base
+  color (`tone.SkinSets[0]` texture). UV layout aligns.
+- **Detail source matches in kind.** The game's slot-0 detail composite and our detail row
+  are both grayscale anatomy maps in the same UV layout. The game's carries the
+  brow/nostril/lash cut-outs (filled by the outfit layer at runtime); ours are scan-line
+  hole-filled before the equation (build 0312).
+- **Pre-bake vs in-shader is the structural divergence.** We fold detail × color × face
+  overlays into ONE atlas; the game keeps them as separate SRVs combined per-pixel, which
+  additionally lets it sample per-part normal/specular maps the pre-baked path can't carry.
+  Acceptable for the nude baseline (no per-part normal/spec on nude parts anyway); revisit
+  if clothed-part normal/spec fidelity is needed.
+
 ## Follow-ups
 
 - [x] Pixel shader disassembled, albedo + lighting math decoded (above).
 - [x] Constant buffers dumped — light rig + material params (above).
+- [x] Structural parity montage built — color + detail sources match the game in kind (above).
 - [ ] Identify the ramp (87758) source: per-tone runtime generation vs static resource;
       relation to SkintoneShift.
 - [ ] Probe nude-part CASPs for normalMapKey/specularMapKey presence; wire part normal +
