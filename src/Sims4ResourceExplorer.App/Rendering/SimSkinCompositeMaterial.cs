@@ -47,10 +47,15 @@ internal static class SimSkinCompositeMaterial
         }
 
         SimSkinTechnique.EnsureRegistered(effectsManager);
-        var technique = effectsManager.GetTechnique(SimSkinTechnique.TechniqueName);
-        if (technique is null)
+        if (!effectsManager.HasTechnique(SimSkinTechnique.TechniqueName))
         {
-            LastFailureReason = "GetTechnique returned null after EnsureRegistered";
+            LastFailureReason = "technique not registered (HasTechnique=false) after EnsureRegistered";
+            return null;
+        }
+        var technique = effectsManager.GetTechnique(SimSkinTechnique.TechniqueName);
+        if (technique is null || technique.IsNull)
+        {
+            LastFailureReason = "GetTechnique returned null/NullTechnique";
             return null;
         }
         var pass = technique.GetPass(DefaultPassNames.Default);

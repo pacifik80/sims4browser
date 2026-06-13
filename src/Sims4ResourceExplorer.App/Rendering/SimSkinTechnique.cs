@@ -90,7 +90,10 @@ float4 main(PSInput input) : SV_Target
         }
         lock (Gate)
         {
-            if (effectsManager.GetTechnique(TechniqueName) is not null)
+            // GetTechnique returns a non-null NullTechnique sentinel for unregistered names
+            // (HelixToolkit null-object pattern), so checking `is not null` would ALWAYS be
+            // true and AddTechnique would never run. Use HasTechnique for true existence.
+            if (effectsManager.HasTechnique(TechniqueName))
             {
                 return;
             }
