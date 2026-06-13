@@ -64,7 +64,12 @@ internal sealed record Ts4SimInfo(
     IReadOnlyList<Ts4SimModifierEntry> GeneticBodyModifiers,
     IReadOnlyList<uint> GeneticPartBodyTypes,
     IReadOnlyList<uint> GrowthPartBodyTypes,
-    IReadOnlyList<Ts4SimGeneticPart> GeneticParts)
+    IReadOnlyList<Ts4SimGeneticPart> GeneticParts,
+    // The 8 leading physique-block floats (after version + link-table offset + link table):
+    // [heavy, fit, lean, bony, hipsWide, hipsNarrow, waistWide, waistNarrow]. Indices 0..3
+    // are the skin-detail blend weights (verified on real v38 sims, build 0316); 4..7 are
+    // mesh-deformation only. Empty for synthesised Sims / parse failures.
+    IReadOnlyList<float> PhysiqueWeights)
 {
     public string SpeciesLabel => FormatSpecies(SpeciesValue);
     public string AgeLabel => FormatAge(AgeFlags);
@@ -225,7 +230,13 @@ internal static class Ts4SimInfoParser
         var payloadStart = stream.Position;
         var linkTable = TryReadLinkTable(reader, stream, payloadStart, linkTableOffset);
 
-        SkipBytes(stream, 8L * sizeof(float), "SimInfo physique");
+        // Physique block: 8 floats at the payload start (same offset TS4SimRipper SIMInfo.cs
+        // reads `physique`). Indices 0..3 = heavy/fit/lean/bony skin-detail weights.
+        var physiqueWeights = new float[8];
+        for (var i = 0; i < 8; i++)
+        {
+            physiqueWeights[i] = reader.ReadSingle();
+        }
         var ageFlags = reader.ReadUInt32();
         var genderFlags = reader.ReadUInt32();
 
@@ -548,7 +559,8 @@ internal static class Ts4SimInfoParser
                 geneticBodyModifiers,
                 geneticPartBodyTypes,
                 growthPartBodyTypes,
-                geneticParts);
+                geneticParts,
+                physiqueWeights);
     }
 
     public static Ts4SimInfoSeedMetadata BuildSeedMetadata(ResourceMetadata resource, byte[] bytes)

@@ -825,6 +825,24 @@ if (args.Length > 0 && string.Equals(args[0], "--compose-skin-atlas", StringComp
     {
         BlendTrackCoverage(details, LoadBgraResized(detOverlay, w, h).BGRA);
     }
+    // Physique rows: blend 05_physique_<name>.png + 06_physique_overlay_<name>.png scaled by
+    // env weight S4_PHYS_<NAME> (0..1), mirroring SimSkinAtlasComposer's physique loop.
+    if (details is not null)
+    {
+        foreach (var name in new[] { "heavy", "fit", "lean", "bony" })
+        {
+            var wStr = Environment.GetEnvironmentVariable($"S4_PHYS_{name.ToUpperInvariant()}");
+            if (!float.TryParse(wStr, System.Globalization.CultureInfo.InvariantCulture, out var weight) || weight <= 0.001f) continue;
+            foreach (var prefix in new[] { $"05_physique_{name}", $"06_physique_overlay_{name}" })
+            {
+                var path = Find(prefix);
+                if (path is null) continue;
+                var rowPx = LoadBgraResized(path, w, h).BGRA;
+                for (var i = 3; i < rowPx.Length; i += 4) rowPx[i] = (byte)(rowPx[i] * Math.Clamp(weight, 0f, 1f));
+                BlendTrackCoverage(details, rowPx);
+            }
+        }
+    }
     if (details is not null)
     {
         const byte covThr = 8;
@@ -2155,6 +2173,28 @@ if (args.Length > 0 && string.Equals(args[0], "--dump-skin-atlas", StringCompari
         for (var i = 0; i < casList.Count; i++)
         {
             await File.WriteAllBytesAsync(Path.Combine(dsaOut, $"4_face_cas_{i}.png"), casList[i]);
+        }
+    }
+    var physNames = new[] { "heavy", "fit", "lean", "bony" };
+    if (skintone.PhysiqueDetailPngBytes is { } physList)
+    {
+        Console.WriteLine($"  physique detail rows: {physList.Count(b => b is { Length: > 0 })}/4 loaded");
+        for (var i = 0; i < physList.Count && i < 4; i++)
+        {
+            if (physList[i] is { Length: > 0 } pb)
+            {
+                await File.WriteAllBytesAsync(Path.Combine(dsaOut, $"05_physique_{physNames[i]}.png"), pb);
+            }
+        }
+    }
+    if (skintone.PhysiqueOverlayPngBytes is { } physOvList)
+    {
+        for (var i = 0; i < physOvList.Count && i < 4; i++)
+        {
+            if (physOvList[i] is { Length: > 0 } pb)
+            {
+                await File.WriteAllBytesAsync(Path.Combine(dsaOut, $"06_physique_overlay_{physNames[i]}.png"), pb);
+            }
         }
     }
 

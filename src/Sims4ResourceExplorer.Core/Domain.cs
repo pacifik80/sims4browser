@@ -931,7 +931,16 @@ public sealed record SimSkintoneRenderSummary(
     // details + ×1.2 brighten, NO Pass 2 overlay blend mixed in. Hardcoding pass2Opacity
     // to 1.0 in the composer produces the wrong (full overlay-blend) result, which
     // saturates already-bright skin tones to near-white. Carry the value through here.
-    uint OverlayOpacity = 100);
+    uint OverlayOpacity = 100,
+    // Per-physique skin-detail rows (build 0317): the 4 detail textures and 4 overlay
+    // textures [heavy, fit, lean, bony] for the Sim's age × gender, fetched once regardless
+    // of weight. The composer alpha-blends them onto the detail canvas by PhysiqueWeights.
+    // Null/absent entries mean that physique row does not exist for the age/gender.
+    IReadOnlyList<byte[]?>? PhysiqueDetailPngBytes = null,
+    IReadOnlyList<byte[]?>? PhysiqueOverlayPngBytes = null,
+    // The Sim's own physique weights [heavy, fit, lean, bony] in [0,1]; empty for
+    // synthesised Sims (the constructor supplies weights via its body-type sliders instead).
+    IReadOnlyList<float>? PhysiqueWeights = null);
 
 public sealed record SimSlotGroupSummary(
     string Label,

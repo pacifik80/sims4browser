@@ -1387,7 +1387,13 @@ public sealed partial class MainViewModel : ObservableObject
                 pass2Opacity: skintoneRenderForAtlas.OverlayOpacity / 100f,
                 skintoneHue: skintoneRenderForAtlas.SkintoneHue,
                 skintoneSaturation: skintoneRenderForAtlas.SkintoneSaturation,
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken,
+                // Browsed real Sims carry their own SkintoneShift + physique weights from
+                // SimInfo; apply both so the body atlas matches what the game would show.
+                skintoneShift: skintoneRenderForAtlas.SkintoneShift ?? 0f,
+                physiqueDetailPngs: skintoneRenderForAtlas.PhysiqueDetailPngBytes,
+                physiqueOverlayPngs: skintoneRenderForAtlas.PhysiqueOverlayPngBytes,
+                physiqueWeights: skintoneRenderForAtlas.PhysiqueWeights);
             if (atlasBytes is { Length: > 0 })
             {
                 var rewrittenMaterials = sceneForAtlas.Materials

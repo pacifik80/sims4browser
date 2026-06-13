@@ -1715,13 +1715,36 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             byte[]? detailOverlayPngBytes = null;
             string? detailNeutralProbe = null;
             string? detailOverlayProbe = null;
-            if (skinIndex is { } neutralIndex && neutralIndex >= 0 && neutralIndex < SkinBlenderDetailNeutralByIndex.Length)
+            // The 4 physique detail rows (heavy/fit/lean/bony) + their 4 overlay rows, fetched
+            // once per age × gender regardless of weight. The composer blends them by the
+            // Sim's PhysiqueWeights (or the constructor's body-type sliders). Index order is
+            // [heavy, fit, lean, bony] to match SimInfo.PhysiqueWeights[0..3].
+            var physiqueDetailPngBytes = new byte[4][];
+            var physiqueOverlayPngBytes = new byte[4][];
+            if (skinIndex is { } neutralIndex && neutralIndex >= 0 && neutralIndex < SkinBlenderDetailByIndex.Length)
             {
-                (detailNeutralPngBytes, detailNeutralProbe) = await TryFetchImageByInstanceWithProbeAsync(SkinBlenderDetailNeutralByIndex[neutralIndex], cancellationToken).ConfigureAwait(false);
+                (detailNeutralPngBytes, detailNeutralProbe) = await TryFetchImageByInstanceWithProbeAsync(SkinBlenderDetailByIndex[neutralIndex][0], cancellationToken).ConfigureAwait(false);
                 var overlayIndex = neutralIndex + 4;
-                if (overlayIndex < SkinBlenderDetailNeutralByIndex.Length && SkinBlenderDetailNeutralByIndex[overlayIndex] != 0)
+                var hasOverlayRow = overlayIndex < SkinBlenderDetailByIndex.Length && SkinBlenderDetailByIndex[overlayIndex][0] != 0;
+                if (hasOverlayRow)
                 {
-                    (detailOverlayPngBytes, detailOverlayProbe) = await TryFetchImageByInstanceWithProbeAsync(SkinBlenderDetailNeutralByIndex[overlayIndex], cancellationToken).ConfigureAwait(false);
+                    (detailOverlayPngBytes, detailOverlayProbe) = await TryFetchImageByInstanceWithProbeAsync(SkinBlenderDetailByIndex[overlayIndex][0], cancellationToken).ConfigureAwait(false);
+                }
+                for (var col = 0; col < 4; col++)
+                {
+                    var detailTgi = SkinBlenderDetailByIndex[neutralIndex][col + 1];
+                    if (detailTgi != 0)
+                    {
+                        (physiqueDetailPngBytes[col], _) = await TryFetchImageByInstanceWithProbeAsync(detailTgi, cancellationToken).ConfigureAwait(false);
+                    }
+                    if (hasOverlayRow)
+                    {
+                        var overlayTgi = SkinBlenderDetailByIndex[overlayIndex][col + 1];
+                        if (overlayTgi != 0)
+                        {
+                            (physiqueOverlayPngBytes[col], _) = await TryFetchImageByInstanceWithProbeAsync(overlayTgi, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
                 }
             }
             // SkinBlender.cs:308 looks up the face overlay with `tone.GetOverlayInstance(age & gender)`,
@@ -1837,18 +1860,23 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
             if (skinIndex is { } skinIdx)
             {
                 noteParts.Add($"skinIndex={skinIdx} (per SkinBlender age×gender mapping)");
-                if (skinIdx < SkinBlenderDetailNeutralByIndex.Length)
+                if (skinIdx < SkinBlenderDetailByIndex.Length)
                 {
                     noteParts.Add(detailNeutralPngBytes is { Length: > 0 }
-                        ? $"detail neutral 0x{SkinBlenderDetailNeutralByIndex[skinIdx]:X16} loaded ({detailNeutralPngBytes.Length:N0} byte(s))"
-                        : $"detail neutral 0x{SkinBlenderDetailNeutralByIndex[skinIdx]:X16} unresolved [{detailNeutralProbe ?? "no probe data"}]");
+                        ? $"detail neutral 0x{SkinBlenderDetailByIndex[skinIdx][0]:X16} loaded ({detailNeutralPngBytes.Length:N0} byte(s))"
+                        : $"detail neutral 0x{SkinBlenderDetailByIndex[skinIdx][0]:X16} unresolved [{detailNeutralProbe ?? "no probe data"}]");
+                    var physiqueLoaded = physiqueDetailPngBytes.Count(b => b is { Length: > 0 });
+                    if (physiqueLoaded > 0)
+                    {
+                        noteParts.Add($"physique detail rows loaded: {physiqueLoaded}/4 (heavy/fit/lean/bony)");
+                    }
                 }
                 var overlayIdx = skinIdx + 4;
-                if (overlayIdx < SkinBlenderDetailNeutralByIndex.Length && SkinBlenderDetailNeutralByIndex[overlayIdx] != 0)
+                if (overlayIdx < SkinBlenderDetailByIndex.Length && SkinBlenderDetailByIndex[overlayIdx][0] != 0)
                 {
                     noteParts.Add(detailOverlayPngBytes is { Length: > 0 }
-                        ? $"detail overlay 0x{SkinBlenderDetailNeutralByIndex[overlayIdx]:X16} loaded ({detailOverlayPngBytes.Length:N0} byte(s))"
-                        : $"detail overlay 0x{SkinBlenderDetailNeutralByIndex[overlayIdx]:X16} unresolved [{detailOverlayProbe ?? "no probe data"}]");
+                        ? $"detail overlay 0x{SkinBlenderDetailByIndex[overlayIdx][0]:X16} loaded ({detailOverlayPngBytes.Length:N0} byte(s))"
+                        : $"detail overlay 0x{SkinBlenderDetailByIndex[overlayIdx][0]:X16} unresolved [{detailOverlayProbe ?? "no probe data"}]");
                 }
             }
             if (ageGenderMask is { } _)
@@ -1920,7 +1948,10 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
                 faceCasOverlayPngBytes.Count > 0 ? faceCasOverlayPngBytes : null,
                 skintoneHue,
                 skintoneSaturation,
-                skintone.OverlayOpacity);
+                skintone.OverlayOpacity,
+                physiqueDetailPngBytes,
+                physiqueOverlayPngBytes,
+                parsedSimInfo?.PhysiqueWeights);
         }
         catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException or ArgumentOutOfRangeException)
         {
@@ -1977,35 +2008,35 @@ public sealed class ExplicitAssetGraphBuilder : IAssetGraphBuilder
     // packet; for now, a plausible skin tone is preferable to an invisible Sim.
     private static readonly CanonicalColor SkintoneFallbackColor = new(0.90f, 0.75f, 0.65f, 1f);
 
-    // Hardcoded SkinBlender detail-texture TGIs, by age × gender × physique-channel-row.
-    // Source: docs/references/external/TS4SimRipper/src/SkinBlender.cs:18-43. Each row in the
-    // SimRipper table holds 5 TGIs (neutral, heavy, fit, lean, bony). For our compositor we
-    // currently only consume the neutral entry per row (we do not yet track per-physique
-    // weights for a Sim). Rows 0..6 are male/baby/toddler/child; rows 7..10 are male overlays
-    // for teen/YA/adult/elder; rows 11..14 are female teen/YA/adult/elder; rows 15..18 are
-    // female overlays for the same. The skinIndex maps via FindSetBit(age) + 8 if female and
-    // teen-or-older.
-    private static readonly ulong[] SkinBlenderDetailNeutralByIndex = new ulong[]
-    {
-        0x0A11C0657FBDB54FUL, // 0  baby
-        0xD19E353A4001EC4DUL, // 1  toddler
-        0x9CB2C5C93E357C62UL, // 2  child
-        0x48F11375333EDB51UL, // 3  teen male
-        0x58F8275474E1AE00UL, // 4  YA male
-        0x308855B3BFF0E848UL, // 5  adult male
-        0x24DFF8E30DC7E5DCUL, // 6  elder male
-        0xA062AF087257C3AAUL, // 7  teen male overlay
-        0xA3EC609A2DAB31D3UL, // 8  YA male overlay
-        0x265B16FA4E7DA19BUL, // 9  adult male overlay
-        0x25EBBD9BED791D4FUL, // 10 elder male overlay
-        0x737A5FF0EB729888UL, // 11 teen female
-        0x36C865290B1F4E79UL, // 12 YA female
-        0x59093C1074E2C911UL, // 13 adult female
-        0x2356ABE32AC4C255UL, // 14 elder female
-        0xF85FB112905485DBUL, // 15 teen female overlay
-        0x0A136CA1147B1772UL, // 16 YA female overlay
-        0x53F13B3669333A6AUL, // 17 adult female overlay
-        0x1E1930AE6138725EUL, // 18 elder female overlay
+    // Hardcoded SkinBlender detail-texture TGIs, by age × gender × physique-channel-column.
+    // Source: docs/references/external/TS4SimRipper/src/SkinBlender.cs:18-43. Each row holds
+    // 5 TGIs: [neutral, heavy, fit, lean, bony]. Column 0 (neutral) is always drawn; columns
+    // 1..4 are the physique rows alpha-blended by the Sim's PhysiqueWeights[0..3]. A 0 entry
+    // means that physique row does not exist for that age/gender (e.g. child has only
+    // heavy+lean). Rows 0..2 baby/toddler/child; 3..6 teen/YA/adult/elder male; 7..10 their
+    // overlays; 11..14 teen/YA/adult/elder female; 15..18 their overlays. skinIndex maps via
+    // FindSetBit(age) + 8 if female and teen-or-older; the overlay row is at skinIndex + 4.
+    private static readonly ulong[][] SkinBlenderDetailByIndex = new ulong[][]
+    {                          // neutral             heavy               fit                 lean                bony
+        new ulong[] { 0x0A11C0657FBDB54FUL, 0, 0, 0, 0 },                                                                                                         // 0  baby
+        new ulong[] { 0xD19E353A4001EC4DUL, 0xCB74D8715AACAEE5UL, 0, 0xFFECB88D957AB9C8UL, 0 },                                                                   // 1  toddler
+        new ulong[] { 0x9CB2C5C93E357C62UL, 0xD35E44A00EC82DD2UL, 0, 0xDCE1DE32790EEE2DUL, 0 },                                                                   // 2  child
+        new ulong[] { 0x48F11375333EDB51UL, 0xC5A686CB8DEAD669UL, 0x050DA429AF8F8579UL, 0x5B5168D56FB549CCUL, 0x493919D5653D6D22UL },                             // 3  teen male
+        new ulong[] { 0x58F8275474E1AE00UL, 0x8225CF86E9ADE5A8UL, 0xF5A23C00099ADF1CUL, 0xA6DF5710210EC357UL, 0x1E40BE1064236B31UL },                             // 4  YA male
+        new ulong[] { 0x308855B3BFF0E848UL, 0x0D2BCAD6902710D0UL, 0x14F31CC55B6B8D94UL, 0x37EF8E5A749B458FUL, 0x2930155A6CFBC099UL },                             // 5  adult male
+        new ulong[] { 0x24DFF8E30DC7E5DCUL, 0xF949199CADA33974UL, 0xA64804A650DC3CB8UL, 0x120B1D9B35364743UL, 0x47F4E49B544D0695UL },                             // 6  elder male
+        new ulong[] { 0xA062AF087257C3AAUL, 0x614DF350B2288202UL, 0x9B76618343015672UL, 0xA30CC4B09CB5AA9FUL, 0x15CCD44E2A798561UL },                             // 7  teen male overlay
+        new ulong[] { 0xA3EC609A2DAB31D3UL, 0xE6997ACD10E7ADFBUL, 0x8A4EC419617EFB8FUL, 0x983C2A528E708C94UL, 0x4C97A925081CFE8AUL },                             // 8  YA male overlay
+        new ulong[] { 0x265B16FA4E7DA19BUL, 0x25549E2A0EA2EA03UL, 0x049310925E1F7507UL, 0xBE003BD8D1E4F6CCUL, 0x0FF4F3A205CF3792UL },                             // 9  adult male overlay
+        new ulong[] { 0x25EBBD9BED791D4FUL, 0x15B4CE7F555B78E7UL, 0x02749727C1E4936BUL, 0x0DDA0E70371F1850UL, 0xE4DC67D79FE3259EUL },                             // 10 elder male overlay
+        new ulong[] { 0x737A5FF0EB729888UL, 0xCB60F0F987055510UL, 0xD9BEAB29970846D4UL, 0x3A8BC2ABBFEA0DCFUL, 0x286649ABB5675FD9UL },                             // 11 teen female
+        new ulong[] { 0x36C865290B1F4E79UL, 0x5A0156E11FEB7ED1UL, 0x980C64FFD5139131UL, 0x1A2B3CB6DF532C84UL, 0x95006DB72556DFEAUL },                             // 12 YA female
+        new ulong[] { 0x59093C1074E2C911UL, 0xB45360AD81F01829UL, 0x404315C573F47F39UL, 0x58B534842466818CUL, 0x469DE58419F058E2UL },                             // 13 adult female
+        new ulong[] { 0x2356ABE32AC4C255UL, 0xF6F5AF6EB76D95CDUL, 0xD197EDA66965137DUL, 0x33AAC3C4E5BB2680UL, 0x65CEB4C5019CBDFEUL },                             // 14 elder female
+        new ulong[] { 0xF85FB112905485DBUL, 0x983E38E671724943UL, 0x87C948F0D0911447UL, 0x24C0445548F4DD0CUL, 0x769AFB69C35341D2UL },                             // 15 teen female overlay
+        new ulong[] { 0x0A136CA1147B1772UL, 0xDA72BC0116BD2B2AUL, 0xE2C41710B0F9748AUL, 0x084BCF43E871B757UL, 0xB356C29F445C7C69UL },                             // 16 YA female overlay
+        new ulong[] { 0x53F13B3669333A6AUL, 0x6B5D4119F5F3E3C2UL, 0x6E20B376A7440832UL, 0x38E5BC3422C0E85FUL, 0x4C23AB3892B08421UL },                             // 17 adult female overlay
+        new ulong[] { 0x1E1930AE6138725EUL, 0xDFD33956DE308196UL, 0xDA922B3518C2D1E6UL, 0x718F473471CA0653UL, 0x2433EE3BE4F044ADUL },                             // 18 elder female overlay
     };
 
     private static int? TryComputeSkinIndex(string? ageLabel, string? genderLabel)

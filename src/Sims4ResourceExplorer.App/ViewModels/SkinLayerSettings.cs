@@ -18,6 +18,12 @@ public sealed record SkinLayerSettings
     // CAS SkintoneShift — signed HSV-Value brightness offset. Game-authored range is ≈ ±0.05;
     // the constructor slider allows ±0.10 so the effect is visible. 0 = no shift.
     public float SkintoneShift        { get; init; } = 0f;
+    // Body-type physique weights [0,1] — blend the heavy/fit/lean/bony skin-detail rows. This
+    // is the SKIN-SHADING half of the physique slider; mesh deformation is a separate track.
+    public float PhysiqueHeavy        { get; init; } = 0f;
+    public float PhysiqueFit          { get; init; } = 0f;
+    public float PhysiqueLean         { get; init; } = 0f;
+    public float PhysiqueBony         { get; init; } = 0f;
     public FaceCasSlotConfig EyeColor  { get; init; } = FaceCasSlotConfig.None;
     public FaceCasSlotConfig Brows     { get; init; } = FaceCasSlotConfig.None;
     public FaceCasSlotConfig Lipstick  { get; init; } = FaceCasSlotConfig.None;
@@ -41,6 +47,10 @@ public sealed record SkinLayerSettings
             h = h * 31 + System.BitConverter.SingleToInt32Bits(Pass3HueAlpha);
             h = h * 31 + System.BitConverter.SingleToInt32Bits(ToneFaceOverlayAlpha);
             h = h * 31 + System.BitConverter.SingleToInt32Bits(SkintoneShift);
+            h = h * 31 + System.BitConverter.SingleToInt32Bits(PhysiqueHeavy);
+            h = h * 31 + System.BitConverter.SingleToInt32Bits(PhysiqueFit);
+            h = h * 31 + System.BitConverter.SingleToInt32Bits(PhysiqueLean);
+            h = h * 31 + System.BitConverter.SingleToInt32Bits(PhysiqueBony);
             h = h * 31 + EyeColor.Fingerprint();
             h = h * 31 + Brows.Fingerprint();
             h = h * 31 + Lipstick.Fingerprint();
@@ -58,6 +68,10 @@ public sealed record SkinLayerSettings
         Pass3HueAlpha == 1f &&
         ToneFaceOverlayAlpha == 1f &&
         SkintoneShift == 0f &&
+        PhysiqueHeavy == 0f &&
+        PhysiqueFit == 0f &&
+        PhysiqueLean == 0f &&
+        PhysiqueBony == 0f &&
         EyeColor.IsNone() &&
         Brows.IsNone() &&
         Lipstick.IsNone() &&

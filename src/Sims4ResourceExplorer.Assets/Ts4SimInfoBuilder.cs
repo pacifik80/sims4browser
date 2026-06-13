@@ -72,7 +72,10 @@ internal static class Ts4SimInfoBuilder
             GeneticBodyModifiers: Array.Empty<Ts4SimModifierEntry>(),
             GeneticPartBodyTypes: Array.Empty<uint>(),
             GrowthPartBodyTypes: Array.Empty<uint>(),
-            GeneticParts: Array.Empty<Ts4SimGeneticPart>());
+            GeneticParts: Array.Empty<Ts4SimGeneticPart>(),
+            // Synthesised Sims carry no physique; the constructor drives the body-type
+            // weights through the render path instead.
+            PhysiqueWeights: Array.Empty<float>());
     }
 
     /// <summary>

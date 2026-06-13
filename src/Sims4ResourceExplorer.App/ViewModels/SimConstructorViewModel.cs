@@ -61,6 +61,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private float pass3HueAlpha = 1f;
     private float toneFaceOverlayAlpha = 1f;
     private float skintoneShift = 0f;
+    private float physiqueHeavy = 0f;
+    private float physiqueFit = 0f;
+    private float physiqueLean = 0f;
+    private float physiqueBony = 0f;
     private float eyeColorAlpha = 1f;
     private float browsAlpha = 1f;
     private float lipstickAlpha = 1f;
@@ -312,6 +316,11 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     public float ToneFaceOverlayAlpha { get => toneFaceOverlayAlpha; set { if (SetProperty(ref toneFaceOverlayAlpha, value)) RebuildSkinLayers(); } }
     // CAS SkintoneShift slider (HSV-Value brightness). Range ±0.10 (game-authored is ±0.05).
     public float SkintoneShift        { get => skintoneShift;        set { if (SetProperty(ref skintoneShift, value))        RebuildSkinLayers(); } }
+    // Body-type physique sliders (skin-detail shading): heavy/fit/lean/bony in [0,1].
+    public float PhysiqueHeavy        { get => physiqueHeavy;        set { if (SetProperty(ref physiqueHeavy, value))        RebuildSkinLayers(); } }
+    public float PhysiqueFit          { get => physiqueFit;          set { if (SetProperty(ref physiqueFit, value))          RebuildSkinLayers(); } }
+    public float PhysiqueLean         { get => physiqueLean;         set { if (SetProperty(ref physiqueLean, value))         RebuildSkinLayers(); } }
+    public float PhysiqueBony         { get => physiqueBony;         set { if (SetProperty(ref physiqueBony, value))         RebuildSkinLayers(); } }
     public float EyeColorAlpha        { get => eyeColorAlpha;        set { if (SetProperty(ref eyeColorAlpha, value))        RebuildSkinLayers(); } }
     public float BrowsAlpha           { get => browsAlpha;           set { if (SetProperty(ref browsAlpha, value))           RebuildSkinLayers(); } }
     public float LipstickAlpha        { get => lipstickAlpha;        set { if (SetProperty(ref lipstickAlpha, value))        RebuildSkinLayers(); } }
@@ -327,6 +336,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         Pass3HueAlpha = pass3HueAlpha,
         ToneFaceOverlayAlpha = toneFaceOverlayAlpha,
         SkintoneShift = skintoneShift,
+        PhysiqueHeavy = physiqueHeavy,
+        PhysiqueFit = physiqueFit,
+        PhysiqueLean = physiqueLean,
+        PhysiqueBony = physiqueBony,
         EyeColor = new FaceCasSlotConfig(selectedEyeColor?.IsNone == false ? selectedEyeColor.CasPartInstance : null, eyeColorAlpha),
         Brows = new FaceCasSlotConfig(selectedBrows?.IsNone == false ? selectedBrows.CasPartInstance : null, browsAlpha),
         Lipstick = new FaceCasSlotConfig(selectedLipstick?.IsNone == false ? selectedLipstick.CasPartInstance : null, lipstickAlpha),
@@ -453,7 +466,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                     faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
                     faceCasOverlayAlphas: overlayAlphas,
                     baseSkinAlpha: settings.BaseSkinAlpha,
-                    skintoneShift: effectiveShift).ConfigureAwait(true);
+                    skintoneShift: effectiveShift,
+                    physiqueDetailPngs: skintone.PhysiqueDetailPngBytes,
+                    physiqueOverlayPngs: skintone.PhysiqueOverlayPngBytes,
+                    physiqueWeights: new[] { settings.PhysiqueHeavy, settings.PhysiqueFit, settings.PhysiqueLean, settings.PhysiqueBony }).ConfigureAwait(true);
             if (token.IsCancellationRequested)
             {
                 return;
@@ -821,7 +837,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                         pass3HueAlpha: settings.Pass3HueAlpha,
                         faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
                         faceCasOverlayAlphas: overlayAlphas,
-                        skintoneShift: effectiveShift).ConfigureAwait(true);
+                        skintoneShift: effectiveShift,
+                        physiqueDetailPngs: skintone.PhysiqueDetailPngBytes,
+                        physiqueOverlayPngs: skintone.PhysiqueOverlayPngBytes,
+                        physiqueWeights: new[] { settings.PhysiqueHeavy, settings.PhysiqueFit, settings.PhysiqueLean, settings.PhysiqueBony }).ConfigureAwait(true);
                 if (token.IsCancellationRequested)
                 {
                     return;

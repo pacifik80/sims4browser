@@ -70,7 +70,15 @@ public static class SimSkinAtlasComposer
         // TS4SimRipper SkinBlender.ShiftTexture (ColorShift.cs hsv.Value += shift), which is
         // the proven oracle for the net effect of the game's runtime tone ramp. Default 0 =
         // no-op so existing callers are unchanged.
-        float skintoneShift = 0f)
+        float skintoneShift = 0f,
+        // Build 0317 — per-physique detail rows. The 4 detail textures and 4 overlay
+        // textures [heavy, fit, lean, bony] for this age × gender, alpha-blended onto the
+        // detail canvas by physiqueWeights[0..3] (each in [0,1]) — exactly as SkinBlender
+        // DisplayableSkintone draws them (neutral, neutral-overlay, then per-index
+        // detail+overlay at alpha=weight). Null/empty = neutral-only (current behaviour).
+        IReadOnlyList<byte[]?>? physiqueDetailPngs = null,
+        IReadOnlyList<byte[]?>? physiqueOverlayPngs = null,
+        IReadOnlyList<float>? physiqueWeights = null)
     {
         var clampedBaseSkinAlpha = System.Math.Clamp(baseSkinAlpha, 0f, 1f);
         var clampedDetailNeutralAlpha = System.Math.Clamp(detailNeutralAlpha, 0f, 1f);
@@ -142,6 +150,38 @@ public static class SimSkinAtlasComposer
             if (overlay is not null)
             {
                 BlendStraightAlphaOverTrackingCoverage(detailsPixels, overlay.Value.Pixels);
+            }
+        }
+        // Per-physique rows: for each i in [heavy, fit, lean, bony] with weight > 0, blend the
+        // physique detail then its overlay at alpha = weight[i] (SkinBlender order). Skipped
+        // entirely when no weights/rows are supplied (default neutral-only render).
+        if (detailsPixels is not null && physiqueWeights is { Count: > 0 } && physiqueDetailPngs is not null)
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                var weight = i < physiqueWeights.Count ? System.Math.Clamp(physiqueWeights[i], 0f, 1f) : 0f;
+                if (weight <= 0.001f)
+                {
+                    continue;
+                }
+                if (i < physiqueDetailPngs.Count && physiqueDetailPngs[i] is { Length: > 0 } detailRow)
+                {
+                    var decoded = await DecodeBgra8StraightAsync(detailRow, cancellationToken, width, height).ConfigureAwait(false);
+                    if (decoded is not null)
+                    {
+                        ScaleAlphaInPlace(decoded.Value.Pixels, weight);
+                        BlendStraightAlphaOverTrackingCoverage(detailsPixels, decoded.Value.Pixels);
+                    }
+                }
+                if (physiqueOverlayPngs is not null && i < physiqueOverlayPngs.Count && physiqueOverlayPngs[i] is { Length: > 0 } overlayRow)
+                {
+                    var decoded = await DecodeBgra8StraightAsync(overlayRow, cancellationToken, width, height).ConfigureAwait(false);
+                    if (decoded is not null)
+                    {
+                        ScaleAlphaInPlace(decoded.Value.Pixels, weight);
+                        BlendStraightAlphaOverTrackingCoverage(detailsPixels, decoded.Value.Pixels);
+                    }
+                }
             }
         }
         if (detailsPixels is not null)
