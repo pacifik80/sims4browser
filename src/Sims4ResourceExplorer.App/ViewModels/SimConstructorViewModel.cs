@@ -60,6 +60,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     private float detailOverlayAlpha = 1f;
     private float pass3HueAlpha = 1f;
     private float toneFaceOverlayAlpha = 1f;
+    private float skintoneShift = 0f;
     private float eyeColorAlpha = 1f;
     private float browsAlpha = 1f;
     private float lipstickAlpha = 1f;
@@ -309,6 +310,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
     public float DetailOverlayAlpha   { get => detailOverlayAlpha;   set { if (SetProperty(ref detailOverlayAlpha, value))   RebuildSkinLayers(); } }
     public float Pass3HueAlpha        { get => pass3HueAlpha;        set { if (SetProperty(ref pass3HueAlpha, value))        RebuildSkinLayers(); } }
     public float ToneFaceOverlayAlpha { get => toneFaceOverlayAlpha; set { if (SetProperty(ref toneFaceOverlayAlpha, value)) RebuildSkinLayers(); } }
+    // CAS SkintoneShift slider (HSV-Value brightness). Range ±0.10 (game-authored is ±0.05).
+    public float SkintoneShift        { get => skintoneShift;        set { if (SetProperty(ref skintoneShift, value))        RebuildSkinLayers(); } }
     public float EyeColorAlpha        { get => eyeColorAlpha;        set { if (SetProperty(ref eyeColorAlpha, value))        RebuildSkinLayers(); } }
     public float BrowsAlpha           { get => browsAlpha;           set { if (SetProperty(ref browsAlpha, value))           RebuildSkinLayers(); } }
     public float LipstickAlpha        { get => lipstickAlpha;        set { if (SetProperty(ref lipstickAlpha, value))        RebuildSkinLayers(); } }
@@ -323,6 +326,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
         DetailOverlayAlpha = detailOverlayAlpha,
         Pass3HueAlpha = pass3HueAlpha,
         ToneFaceOverlayAlpha = toneFaceOverlayAlpha,
+        SkintoneShift = skintoneShift,
         EyeColor = new FaceCasSlotConfig(selectedEyeColor?.IsNone == false ? selectedEyeColor.CasPartInstance : null, eyeColorAlpha),
         Brows = new FaceCasSlotConfig(selectedBrows?.IsNone == false ? selectedBrows.CasPartInstance : null, browsAlpha),
         Lipstick = new FaceCasSlotConfig(selectedLipstick?.IsNone == false ? selectedLipstick.CasPartInstance : null, lipstickAlpha),
@@ -418,6 +422,10 @@ public sealed partial class SimConstructorViewModel : ObservableObject
             if (token.IsCancellationRequested) return;
             var settings = CurrentSkinLayers;
             var fullBodyDiffuse = TryExtractFullBodyDiffuse(baseEntry.Scene);
+            // Effective shift = the Sim's own SkintoneShift (0 for synthesised Sims) plus the
+            // constructor's interactive slider, so browsed real sims honour their stored shift
+            // and the constructor exposes it as a live control.
+            var effectiveShift = (skintone.SkintoneShift ?? 0f) + settings.SkintoneShift;
             var atlas = fullBodyDiffuse is { Length: > 0 }
                 ? await SimSkinAtlasComposer.BuildAtlasFromPreRenderedBaseAsync(
                     fullBodyDiffuse,
@@ -428,7 +436,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                     overlayAlphas,
                     faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
                     pass3HueAlpha: settings.Pass3HueAlpha,
-                    cancellationToken: token).ConfigureAwait(true)
+                    cancellationToken: token,
+                    skintoneShift: effectiveShift).ConfigureAwait(true)
                 : await SimSkinAtlasComposer.BuildAsync(
                     skintone.BaseTexturePngBytes,
                     skintone.DetailNeutralPngBytes,
@@ -443,7 +452,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                     pass3HueAlpha: settings.Pass3HueAlpha,
                     faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
                     faceCasOverlayAlphas: overlayAlphas,
-                    baseSkinAlpha: settings.BaseSkinAlpha).ConfigureAwait(true);
+                    baseSkinAlpha: settings.BaseSkinAlpha,
+                    skintoneShift: effectiveShift).ConfigureAwait(true);
             if (token.IsCancellationRequested)
             {
                 return;
@@ -784,6 +794,7 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 if (token.IsCancellationRequested) return;
                 var settings = CurrentSkinLayers;
                 var fullBodyDiffuse = TryExtractFullBodyDiffuse(scene);
+                var effectiveShift = (skintone.SkintoneShift ?? 0f) + settings.SkintoneShift;
                 var atlas = fullBodyDiffuse is { Length: > 0 }
                     ? await SimSkinAtlasComposer.BuildAtlasFromPreRenderedBaseAsync(
                         fullBodyDiffuse,
@@ -794,7 +805,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                         overlayAlphas,
                         faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
                         pass3HueAlpha: settings.Pass3HueAlpha,
-                        cancellationToken: token).ConfigureAwait(true)
+                        cancellationToken: token,
+                        skintoneShift: effectiveShift).ConfigureAwait(true)
                     : await SimSkinAtlasComposer.BuildAsync(
                         skintone.BaseTexturePngBytes,
                         skintone.DetailNeutralPngBytes,
@@ -808,7 +820,8 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                         detailNeutralAlpha: settings.DetailNeutralAlpha,
                         pass3HueAlpha: settings.Pass3HueAlpha,
                         faceOverlayAlpha: settings.ToneFaceOverlayAlpha,
-                        faceCasOverlayAlphas: overlayAlphas).ConfigureAwait(true);
+                        faceCasOverlayAlphas: overlayAlphas,
+                        skintoneShift: effectiveShift).ConfigureAwait(true);
                 if (token.IsCancellationRequested)
                 {
                     return;

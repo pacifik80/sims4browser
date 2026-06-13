@@ -15,6 +15,9 @@ public sealed record SkinLayerSettings
     public float DetailOverlayAlpha   { get; init; } = 1f;
     public float Pass3HueAlpha        { get; init; } = 1f;
     public float ToneFaceOverlayAlpha { get; init; } = 1f;
+    // CAS SkintoneShift — signed HSV-Value brightness offset. Game-authored range is ≈ ±0.05;
+    // the constructor slider allows ±0.10 so the effect is visible. 0 = no shift.
+    public float SkintoneShift        { get; init; } = 0f;
     public FaceCasSlotConfig EyeColor  { get; init; } = FaceCasSlotConfig.None;
     public FaceCasSlotConfig Brows     { get; init; } = FaceCasSlotConfig.None;
     public FaceCasSlotConfig Lipstick  { get; init; } = FaceCasSlotConfig.None;
@@ -37,6 +40,7 @@ public sealed record SkinLayerSettings
             h = h * 31 + System.BitConverter.SingleToInt32Bits(DetailOverlayAlpha);
             h = h * 31 + System.BitConverter.SingleToInt32Bits(Pass3HueAlpha);
             h = h * 31 + System.BitConverter.SingleToInt32Bits(ToneFaceOverlayAlpha);
+            h = h * 31 + System.BitConverter.SingleToInt32Bits(SkintoneShift);
             h = h * 31 + EyeColor.Fingerprint();
             h = h * 31 + Brows.Fingerprint();
             h = h * 31 + Lipstick.Fingerprint();
@@ -53,6 +57,7 @@ public sealed record SkinLayerSettings
         DetailOverlayAlpha == 1f &&
         Pass3HueAlpha == 1f &&
         ToneFaceOverlayAlpha == 1f &&
+        SkintoneShift == 0f &&
         EyeColor.IsNone() &&
         Brows.IsNone() &&
         Lipstick.IsNone() &&

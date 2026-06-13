@@ -208,6 +208,17 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Skintone shift (brightness)" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="{Binding SkintoneShift, Mode=OneWay}" Opacity="0.7" />
+                                </Grid>
+                                <Slider Minimum="-0.1" Maximum="0.1" StepFrequency="0.01" Value="{Binding SkintoneShift, Mode=TwoWay}" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
                                     <TextBlock Text="Detail (neutral)" FontWeight="SemiBold" />
                                     <TextBlock Grid.Column="1" Text="{Binding DetailNeutralAlpha, Mode=OneWay}" Opacity="0.7" />
                                 </Grid>

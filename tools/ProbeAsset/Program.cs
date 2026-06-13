@@ -636,15 +636,16 @@ if (args.Length > 0 && string.Equals(args[0], "--compose-skin-atlas", StringComp
     // input PNGs from tmp/skin-dump/. Outputs the composed atlas + per-pass intermediates
     // for autonomous visual inspection. Mirrors SimSkinAtlasComposer:55-160.
     //
-    // Usage: --compose-skin-atlas [<inputDir>] [<pass2Opacity>] [<skintoneHue>] [<skintoneSaturation>] [<bundledMouthPng>]
+    // Usage: --compose-skin-atlas [<inputDir>] [<pass2Opacity>] [<skintoneHue>] [<skintoneSaturation>] [<bundledMouthPng>] [<skintoneShift>]
     var inputDir = args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "tmp", "skin-dump");
     var pass2Op  = args.Length > 2 && float.TryParse(args[2], System.Globalization.CultureInfo.InvariantCulture, out var p2) ? p2 : 0.0f;
     var hue      = args.Length > 3 && ushort.TryParse(args[3], out var hv) ? hv : (ushort)10;
     var sat      = args.Length > 4 && ushort.TryParse(args[4], out var sv) ? sv : (ushort)15;
     var mouthPng = args.Length > 5 ? args[5] : @"C:\Users\stani\PROJECTS\Sims4Browser\src\Sims4ResourceExplorer.App\Assets\HeadMouthColor.png";
+    var skinShift = args.Length > 6 && float.TryParse(args[6], System.Globalization.CultureInfo.InvariantCulture, out var ss) ? ss : 0.0f;
     if (!Directory.Exists(inputDir)) { Console.Error.WriteLine($"Input dir not found: {inputDir}"); return 1; }
     Console.WriteLine($"compose-skin-atlas: inputDir={inputDir}");
-    Console.WriteLine($"  pass2Opacity={pass2Op}  hue={hue}  saturation={sat}  mouth={Path.GetFileName(mouthPng)}");
+    Console.WriteLine($"  pass2Opacity={pass2Op}  hue={hue}  saturation={sat}  skintoneShift={skinShift}  mouth={Path.GetFileName(mouthPng)}");
 
     string? Find(string prefix) => Directory.EnumerateFiles(inputDir, $"{prefix}*.png").FirstOrDefault();
     var basePath    = Find("01_base_skin");
@@ -789,6 +790,22 @@ if (args.Length > 0 && string.Equals(args[0], "--compose-skin-atlas", StringComp
     }
 
     var skinPixels = skin.BGRA;
+    // SkintoneShift — HSV-Value brightness on base color C, before the detail equation
+    // (mirrors SimSkinAtlasComposer.HsvValueShiftInPlace). Uniform RGB scale preserves H+S.
+    if (Math.Abs(skinShift) > 0.001f)
+    {
+        var shift255 = skinShift * 255f;
+        for (var i = 0; i < skinPixels.Length; i += 4)
+        {
+            float b = skinPixels[i], g = skinPixels[i + 1], r = skinPixels[i + 2];
+            var mx = Math.Max(r, Math.Max(g, b));
+            if (mx <= 0f) { var gray = (byte)Math.Clamp(shift255, 0f, 255f); skinPixels[i] = gray; skinPixels[i + 1] = gray; skinPixels[i + 2] = gray; continue; }
+            var sc = Math.Clamp(mx + shift255, 0f, 255f) / mx;
+            skinPixels[i]     = (byte)Math.Clamp(b * sc, 0f, 255f);
+            skinPixels[i + 1] = (byte)Math.Clamp(g * sc, 0f, 255f);
+            skinPixels[i + 2] = (byte)Math.Clamp(r * sc, 0f, 255f);
+        }
+    }
     SavePng(Path.Combine(inputDir, "step_00_base_only.png"), w, h, (byte[])skinPixels.Clone());
     if (details is not null)
         SavePng(Path.Combine(inputDir, "step_01_details_composited.png"), w, h, (byte[])details.Clone());

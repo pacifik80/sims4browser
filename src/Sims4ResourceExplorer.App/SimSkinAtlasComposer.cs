@@ -64,7 +64,13 @@ public static class SimSkinAtlasComposer
         float pass3HueAlpha = 1f,
         float faceOverlayAlpha = 1f,
         IReadOnlyList<float>? faceCasOverlayAlphas = null,
-        float baseSkinAlpha = 1f)
+        float baseSkinAlpha = 1f,
+        // Build 0316 — CAS SkintoneShift: a small signed brightness offset applied to the
+        // base skin color C in HSV-Value units (game-authored range ≈ ±0.05). Mirrors
+        // TS4SimRipper SkinBlender.ShiftTexture (ColorShift.cs hsv.Value += shift), which is
+        // the proven oracle for the net effect of the game's runtime tone ramp. Default 0 =
+        // no-op so existing callers are unchanged.
+        float skintoneShift = 0f)
     {
         var clampedBaseSkinAlpha = System.Math.Clamp(baseSkinAlpha, 0f, 1f);
         var clampedDetailNeutralAlpha = System.Math.Clamp(detailNeutralAlpha, 0f, 1f);
@@ -97,6 +103,14 @@ public static class SimSkinAtlasComposer
                     skinPixels[i + c] = (byte)((skinPixels[i + c] * clampedBaseSkinAlpha) + (128f * (1f - clampedBaseSkinAlpha)));
                 }
             }
+        }
+
+        // CAS SkintoneShift — brightness offset on the base color C, applied BEFORE the
+        // detail equation, exactly as SkinBlender applies ShiftTexture(skin, ...) before its
+        // blend loop. Gated like the reference (|shift| > 0.001).
+        if (System.MathF.Abs(skintoneShift) > 0.001f)
+        {
+            HsvValueShiftInPlace(skinPixels, skintoneShift);
         }
 
         // 1. Build the grayscale detail canvas D. Layers are alpha-composited with coverage
@@ -234,7 +248,12 @@ public static class SimSkinAtlasComposer
         IReadOnlyList<float>? faceCasOverlayAlphas,
         float faceOverlayAlpha,
         float pass3HueAlpha,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        // Build 0316 — CAS SkintoneShift, applied as an HSV-Value brightness pass on the
+        // pre-rendered full-body diffuse. EA bakes the per-tone shading into this texture but
+        // NOT the live SkintoneShift slider, so applying it here keeps the two atlas paths
+        // consistent. Default 0 = no-op.
+        float skintoneShift = 0f)
     {
         if (preRenderedBasePng is not { Length: > 0 })
         {
@@ -249,6 +268,11 @@ public static class SimSkinAtlasComposer
         var width = decoded.Value.Width;
         var height = decoded.Value.Height;
         var pixels = decoded.Value.Pixels;
+
+        if (System.MathF.Abs(skintoneShift) > 0.001f)
+        {
+            HsvValueShiftInPlace(pixels, skintoneShift);
+        }
 
         var clampedPass3Alpha = System.Math.Clamp(pass3HueAlpha, 0f, 1f);
         // Integer division mirrors SkinBlender — Saturation in [0, 99] → no Pass 3 (default
@@ -490,6 +514,39 @@ public static class SimSkinAtlasComposer
                     bgra[fp + 3] = coverageThreshold;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Shifts every BGRA pixel's HSV Value (brightness) by <paramref name="vShift"/>
+    /// (normalized 0..1 units; signed). Hue and saturation are preserved exactly: changing
+    /// only V scales R, G, B uniformly by <c>newV / oldV</c> (S = (max−min)/max and the hue
+    /// ordering both survive a uniform scale). Pure-black pixels (V=0, hue/sat undefined)
+    /// become neutral gray at the shifted value. Mirrors TS4SimRipper ColorShift's
+    /// <c>hsv.Value += shift</c>.
+    /// </summary>
+    private static void HsvValueShiftInPlace(byte[] bgra, float vShift)
+    {
+        var shift255 = vShift * 255f;
+        for (var i = 0; i < bgra.Length; i += 4)
+        {
+            float b = bgra[i];
+            float g = bgra[i + 1];
+            float r = bgra[i + 2];
+            var max = System.MathF.Max(r, System.MathF.Max(g, b));
+            if (max <= 0f)
+            {
+                var gray = System.Math.Clamp(shift255, 0f, 255f);
+                bgra[i] = (byte)gray;
+                bgra[i + 1] = (byte)gray;
+                bgra[i + 2] = (byte)gray;
+                continue;
+            }
+            var newMax = System.Math.Clamp(max + shift255, 0f, 255f);
+            var scale = newMax / max;
+            bgra[i] = (byte)System.Math.Clamp(b * scale, 0f, 255f);
+            bgra[i + 1] = (byte)System.Math.Clamp(g * scale, 0f, 255f);
+            bgra[i + 2] = (byte)System.Math.Clamp(r * scale, 0f, 255f);
         }
     }
 
