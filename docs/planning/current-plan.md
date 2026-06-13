@@ -19,7 +19,11 @@ If the active work is the external-first TS4 material, texture, shader, and UV r
 
 - [Research Restart Guide](../workflows/material-pipeline/research-restart-guide.md)
 
-## Active Task: Skin-pipeline ground-truth correction (2026-06-12)
+## Active Task: GPU skin-shader refactor (2026-06-14)
+
+Status: `Builds 0314-0320 made the CPU skin compositor correct (verified: live_atlas.png shows a ripped body at fit=1; offline montages confirm physique/shift/normal all work). But the architecture is wrong for interactivity — every slider tick recomposes the whole 1024×2048 atlas + derives a normal map on the CPU (~0.5-2s), causing a cancellation-storm "perpetual loading" and no live update. User (correctly) identified that the game does this in-shader: layers bound as separate textures, weights as shader constants, combined per-pixel on the GPU. DECISION: move skin compositing to a custom GPU shader. We already have the exact game shader decoded (eid602 disassembly + cbuffers). Design workflow wf_e100c2ec running to nail the HelixToolkit.WinUI.SharpDX 3.1.2 custom-technique plumbing + shader spec, then execute Milestone 1 (prove a custom GPU material renders the skin mesh) before the full equation. The CPU SimSkinAtlasComposer is KEPT for FBX export (offline atlas bake) but retired from the per-slider live path.`
+
+## Prior Task: Skin-pipeline ground-truth correction (2026-06-12)
 
 Status: `Build 0310 baseline. Audit found the 0306-0310 "unified atlas from head-CASP region_map texture" path (Model B) rests on an unverified texture identity AND makes human skintone swaps a visual no-op (Pass 3 gated by saturation>=100; binder nulls ViewportTintColor). User-visible defects at 0310: blurry false-toned lit renders, toddler dark face "mask", child disjointed feet (geometry track, separate). User decisions: TS4SimRipper-parity = automated validation oracle; final target = in-game CAS quality; custom shaders / stronger renderer acceptable; priority = make skintones actually work.`
 
