@@ -70,23 +70,32 @@ public sealed class SceneViewportRenderer
                 // material-pipeline/live-proof-packets/sim-draw-texture-bindings.md,
                 // eid 602 cb0): two directional lights — dirs cb0[0]=(0.417,0.460,0.784)
                 // and cb0[1]=(−0.916,0.100,0.389) stored toward-light (negated here for
-                // Helix travel-direction), colors 0.5 and 0.24 grey — plus an ambient band
-                // 0.40..0.60 modulated by AO (midpoint 0.50 used; no AO map yet). The game
-                // shader computes diffuse as N·L × color with NO 1/π, while Helix PBR is
-                // Lambertian (albedo/π), so directional colors are π-compensated:
-                // 0.5π ≈ 1.57 capped to 1.0, 0.24π ≈ 0.75. Game rim lighting (green
-                // ground / blue sky, exps 3.68/1.72) is not reproducible with stock Helix
-                // lights and is deliberately omitted.
-                viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.ColorHelper.FromArgb(255, 128, 128, 128) });
+                // Helix travel-direction), colors cb0[4]=0.50 and cb0[5]=0.24 grey — plus
+                // an ambient band cb0[192]=0.40..0.60 modulated by AO (no AO map yet; 0.45
+                // floor used, just under the band midpoint to leave Helix's flat ambient
+                // some headroom).
+                //
+                // Build 0314 π-"compensated" the directional colors to 1.00 / 0.75 on the
+                // theory that Helix's Lambertian needs ×π. That was wrong: Helix's
+                // DirectionalLight3D + PBR already normalizes so a unit white light on white
+                // albedo facing the light renders ≈ white, so ×π over-brightened the
+                // directional term ~3× and blew the forward-facing torso to white. The
+                // captured colors are used literally here. Energy budget at a forward chest
+                // pixel: ambient 0.45 + 0.50·N·L + 0.24·N·L ≈ 0.95× albedo (no clip).
+                //
+                // Game rim lighting (green ground / blue sky, exps 3.68/1.72) is not
+                // reproducible with stock Helix lights and is deliberately omitted (tracked
+                // as a custom-shader candidate).
+                viewport.Items.Add(new AmbientLight3D { Color = Microsoft.UI.ColorHelper.FromArgb(255, 115, 115, 115) });
                 viewport.Items.Add(new DirectionalLight3D
                 {
                     Direction = Vector3.Normalize(new Vector3(-0.417f, -0.460f, -0.784f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 255, 255, 255)
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 128, 128, 128)
                 });
                 viewport.Items.Add(new DirectionalLight3D
                 {
                     Direction = Vector3.Normalize(new Vector3(0.916f, -0.100f, -0.389f)),
-                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 192, 192, 192)
+                    Color = Microsoft.UI.ColorHelper.FromArgb(255, 61, 61, 61)
                 });
                 viewport.Items.Add(shadowMap);
                 break;
