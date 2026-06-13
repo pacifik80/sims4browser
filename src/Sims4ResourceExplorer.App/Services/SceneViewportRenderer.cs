@@ -177,10 +177,16 @@ public sealed class SceneViewportRenderer
         catch { }
     }
 
+    // Master switch for the GPU skin compositing path. OFF while the custom material constant
+    // buffer mechanism is being fixed (build 0324 engaged the technique but crashed at render
+    // in MaterialVariable.UpdateMaterialStruct / ArrayStorage.Read — a GenericMeshMaterialCore
+    // custom-cbuffer issue). Flipped on with the fix.
+    private const bool EnableGpuSkin = false;
+
     private static HelixToolkit.SharpDX.Model.GenericMeshMaterialCore? TryCreateGpuSkinCore(
         Viewport3DX viewport, CanonicalMaterial? material)
     {
-        if (material is null)
+        if (!EnableGpuSkin || material is null)
         {
             return null; // non-skin meshes hit this constantly; don't log
         }
