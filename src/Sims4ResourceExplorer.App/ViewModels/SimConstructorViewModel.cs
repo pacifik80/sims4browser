@@ -479,13 +479,33 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 ? SimSkintoneMaterialBinder.RebindWithAtlas(baseEntry.Scene, atlas)
                 : baseEntry.Scene;
 
+            // Diagnostic (build 0318): dump the live composed atlas + log the physique
+            // weights and byte length, so a "slider does nothing" report can be pinned to a
+            // path — atlas length CHANGING per slider proves the recompose fires; the dumped
+            // PNG shows whether the physique blend actually landed in the live (WinRT)
+            // composer vs the offline (System.Drawing) replica.
+            var physTag = System.FormattableString.Invariant(
+                $"H{settings.PhysiqueHeavy:0.##}F{settings.PhysiqueFit:0.##}L{settings.PhysiqueLean:0.##}B{settings.PhysiqueBony:0.##}");
+            if (atlas is { Length: > 0 })
+            {
+                try
+                {
+                    var dumpDir = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "Sims4ResourceExplorer", "ConstructorDump");
+                    System.IO.Directory.CreateDirectory(dumpDir);
+                    await System.IO.File.WriteAllBytesAsync(System.IO.Path.Combine(dumpDir, "live_atlas.png"), atlas, token).ConfigureAwait(true);
+                }
+                catch { /* diagnostic only */ }
+            }
+
             var atlasSource = fullBodyDiffuse is { Length: > 0 } ? "full-body diffuse" : "skintone-base SkinBlender";
             var diagnostics = atlas is { Length: > 0 }
-                ? $"{baseEntry.Diagnostics}\nSkin atlas (fast path, {atlasSource}): {atlas.Length:N0} bytes for skintone 0x{newSkintone.Instance:X16}; bound to body + head shells."
+                ? $"{baseEntry.Diagnostics}\nSkin atlas (fast path, {atlasSource}): {atlas.Length:N0} bytes for skintone 0x{newSkintone.Instance:X16}; physique {physTag}; bound to body + head shells."
                 : $"{baseEntry.Diagnostics}\nSkin atlas (fast path): composition failed for skintone 0x{newSkintone.Instance:X16}; materials retain the previous binding.";
             var b = rebound.Bounds;
             var statusText = System.FormattableString.Invariant(
-                $"Scene ready (fast path) — meshes={rebound.Meshes.Count}, materials={rebound.Materials.Count}, height≈{b.MaxY - b.MinY:0.00}m.");
+                $"Scene ready (fast path) — atlas {(atlas?.Length ?? 0):N0}B, physique {physTag}, meshes={rebound.Meshes.Count}.");
 
             var newEntry = new CachedSceneEntry(
                 Scene: rebound,
