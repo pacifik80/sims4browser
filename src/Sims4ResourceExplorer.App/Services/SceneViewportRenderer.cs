@@ -3,7 +3,9 @@ using System.Runtime.InteropServices.WindowsRuntime;
 using HelixToolkit;
 using HelixToolkit.Maths;
 using HelixToolkit.SharpDX;
+using HelixToolkit.SharpDX.Model.Scene;
 using HelixToolkit.WinUI.SharpDX;
+using Sims4ResourceExplorer.App.Rendering;
 using Sims4ResourceExplorer.App.ViewModels;
 using Sims4ResourceExplorer.Core;
 using Sims4ResourceExplorer.Preview;
@@ -118,15 +120,39 @@ public sealed class SceneViewportRenderer
                 continue;
             }
 
-            viewport.Items.Add(new MeshGeometryModel3D
+            // GPU skin path (Milestone 1): for skin-routed materials in lit mode, render
+            // through the custom SimSkinComposite technique instead of the stock PBRMaterial.
+            // Falls back to the stock material if the technique/core can't be created, so a
+            // shader failure degrades to the previous behaviour rather than a blank viewport.
+            var skinCore = renderMode == SceneRenderMode.LitTexture
+                ? TryCreateGpuSkinCore(viewport, canonicalMaterial)
+                : null;
+
+            var model = new MeshGeometryModel3D
             {
                 Geometry = geometry,
-                Material = material,
+                // Leave the UI Material unset when a GPU skin core is used so the WinUI
+                // material sync doesn't overwrite the core we attach to the scene node.
+                Material = skinCore is null ? material : null,
                 IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex, selectedSlot),
                 CullMode = SharpDX.Direct3D11.CullMode.None,
                 RenderWireframe = renderMode == SceneRenderMode.Wireframe,
                 WireframeColor = Microsoft.UI.Colors.Yellow
-            });
+            };
+            if (skinCore is not null)
+            {
+                if (model.SceneNode is MaterialGeometryNode skinNode)
+                {
+                    skinNode.Material = skinCore;
+                }
+                else
+                {
+                    // Scene node not a material node — restore the stock material so the mesh
+                    // still renders instead of going untextured.
+                    model.Material = material;
+                }
+            }
+            viewport.Items.Add(model);
 
             if (multiPassPlan is not null)
             {
@@ -137,6 +163,41 @@ public sealed class SceneViewportRenderer
         if (resetCamera)
         {
             ResetSceneCamera(camera, scene);
+        }
+    }
+
+    /// <summary>
+    /// Builds the GPU skin material core for a skin-routed material (BaseColor =
+    /// skin_atlas.png / head_atlas.png), or null when the material is not skin or the custom
+    /// technique can't be created (caller then uses the stock PBR material). Any exception in
+    /// the shader path is swallowed so it degrades to the stock material, never a crash.
+    /// </summary>
+    private static HelixToolkit.SharpDX.Model.GenericMeshMaterialCore? TryCreateGpuSkinCore(
+        Viewport3DX viewport, CanonicalMaterial? material)
+    {
+        if (material is null)
+        {
+            return null;
+        }
+        var atlas = material.Textures.FirstOrDefault(static t =>
+            t.Semantic == CanonicalTextureSemantic.BaseColor &&
+            (string.Equals(t.FileName, "skin_atlas.png", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(t.FileName, "head_atlas.png", StringComparison.OrdinalIgnoreCase)));
+        if (atlas?.PngBytes is not { Length: > 0 } atlasBytes)
+        {
+            return null;
+        }
+        try
+        {
+            // MILESTONE 1 PROOF: a deliberately obvious green debugTint. If the rendered skin
+            // is green, the custom GPU technique is definitively running and the shader
+            // constant is applied (vs a silent fall-back to the stock PBR path, which would
+            // look normal). Reverted to (1,1,1,1) in Milestone 2 when real compositing lands.
+            return SimSkinCompositeMaterial.TryCreate(viewport.EffectsManager, atlasBytes, new Vector4(0.55f, 1f, 0.55f, 1f));
+        }
+        catch
+        {
+            return null;
         }
     }
 
