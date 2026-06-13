@@ -502,6 +502,78 @@ if (args.Length > 0 && string.Equals(args[0], "--dump-cas-diffuse", StringCompar
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--dump-physique", StringComparison.OrdinalIgnoreCase))
+{
+    // De-risks the per-physique-detail-rows packet: reads real SimInfo resources and dumps
+    // the leading 8-float physique block (after version + link-table offset + link table),
+    // which the TS4SimRipper oracle labels [heavy, fit, lean, bony, hipsWide, hipsNarrow,
+    // waistWide, waistNarrow]. Confirms the values are plausible normalized weights and that
+    // our skip-offset lands on the same bytes SimRipper reads as physique.
+    // Usage: --dump-physique [count]
+    var dpCount = args.Length > 1 && int.TryParse(args[1], out var dpC) ? dpC : 12;
+    var dpDb = @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache\index.sqlite";
+    if (!File.Exists(dpDb)) { Console.Error.WriteLine($"Index not found: {dpDb}"); return 3; }
+    var dpCache = new ProbeCacheService(Path.GetFullPath(@"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache\.."));
+    dpCache.EnsureCreated();
+    var dpStore = new SqliteIndexStore(dpCache);
+    await dpStore.InitializeAsync(CancellationToken.None);
+    var dpCat = new LlamaResourceCatalogService();
+
+    var dpConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dpDb};Mode=ReadOnly");
+    dpConn.Open();
+    var dpTgis = new List<string>();
+    using (var c = dpConn.CreateCommand())
+    {
+        c.CommandText = "SELECT DISTINCT root_tgi FROM assets WHERE asset_kind='Sim' LIMIT 200";
+        using var r = c.ExecuteReader();
+        while (r.Read() && dpTgis.Count < 400) dpTgis.Add(r.GetString(0));
+    }
+    Console.WriteLine($"dump-physique: scanning up to {dpTgis.Count} Sim roots for non-zero physique (want {dpCount})...");
+
+    static (uint Version, float[] Physique)? ReadPhysique(byte[] bytes)
+    {
+        if (bytes.Length < 16) return null;
+        using var ms = new MemoryStream(bytes, writable: false);
+        using var br = new BinaryReader(ms);
+        var version = br.ReadUInt32();
+        var offset = br.ReadUInt32();            // link-table offset relative to here
+        var pos = ms.Position;
+        // (skip the link table read — physique sits right at `pos`, before it, per SIMInfo.cs)
+        ms.Position = pos;
+        var phys = new float[8];
+        for (var i = 0; i < 8; i++) phys[i] = br.ReadSingle();
+        return (version, phys);
+    }
+
+    var shown = 0; var scanned = 0; var nonzero = 0;
+    foreach (var tgi in dpTgis)
+    {
+        if (shown >= dpCount) break;
+        IReadOnlyList<ResourceMetadata> matches;
+        try { matches = await dpStore.GetResourcesByTgiAsync(tgi, CancellationToken.None); }
+        catch { continue; }
+        var res = matches.FirstOrDefault(m => string.Equals(m.Key.TypeName, "SimInfo", StringComparison.OrdinalIgnoreCase));
+        if (res is null) continue;
+        byte[] bytes;
+        try { bytes = await dpCat.GetResourceBytesAsync(res.PackagePath, res.Key, raw: false, CancellationToken.None, null); }
+        catch { continue; }
+        var parsed = ReadPhysique(bytes);
+        if (parsed is null) continue;
+        scanned++;
+        var (ver, phys) = parsed.Value;
+        var anyNonZero = phys.Take(4).Any(f => Math.Abs(f) > 0.001f);
+        var allInRange = phys.All(f => f >= -2f && f <= 2f && !float.IsNaN(f));
+        if (anyNonZero) nonzero++;
+        if (anyNonZero || shown < 4)
+        {
+            Console.WriteLine($"  v{ver} {res.Key.FullInstance:X16}  heavy={phys[0]:0.###} fit={phys[1]:0.###} lean={phys[2]:0.###} bony={phys[3]:0.###} | hipsW={phys[4]:0.###} hipsN={phys[5]:0.###} waistW={phys[6]:0.###} waistN={phys[7]:0.###}  {(allInRange ? "" : "<<OUT OF RANGE")}");
+            shown++;
+        }
+    }
+    Console.WriteLine($"dump-physique: scanned {scanned}, {nonzero} had non-zero heavy/fit/lean/bony. If non-zero values are in [-1,1] and heavy/fit/lean/bony look like slider weights, the byte order is confirmed.");
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--dump-casp-slots", StringComparison.OrdinalIgnoreCase))
 {
     // Parses CASP(s) by instance and prints EVERY texture reference slot with the resolved
