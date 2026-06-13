@@ -65,15 +65,14 @@ internal static class SimSkinCompositeMaterial
             return null;
         }
 
+        // STEP 0: bind only the texture — NO SetProperty — so the material cbuffer carries
+        // exactly the stock cbMesh layout the render core expects (the green tint + light rig
+        // are HLSL literals this step). Step 1 appends slider fields past the 352-byte stock
+        // body and restores SetProperty.
+        _ = debugTint; // unused in Step 0 (green is hardcoded in the shader)
         var core = new GenericMeshMaterialCore(pass, SimSkinTechnique.SkinParamsCBuffer);
         core.SetTexture("texSkinColor", new MemoryStream(skinColorPng));
-        core.SetProperty("debugTint", debugTint);
-        core.SetProperty("lightDir0", LightDir0);
-        core.SetProperty("lightDir1", LightDir1);
-        core.SetProperty("lightColor0", LightColor0);
-        core.SetProperty("lightColor1", LightColor1);
-        core.SetProperty("ambientParams", AmbientParams);
-        LastFailureReason = $"ok (props={string.Join(",", core.PropertieNames)}; texs={string.Join(",", core.TextureNames)})";
+        LastFailureReason = $"ok step0 (props={string.Join(",", core.PropertieNames)}; texs={string.Join(",", core.TextureNames)})";
         return core;
     }
 }

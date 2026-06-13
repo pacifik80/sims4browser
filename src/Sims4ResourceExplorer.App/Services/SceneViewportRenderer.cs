@@ -181,7 +181,7 @@ public sealed class SceneViewportRenderer
     // buffer mechanism is being fixed (build 0324 engaged the technique but crashed at render
     // in MaterialVariable.UpdateMaterialStruct / ArrayStorage.Read — a GenericMeshMaterialCore
     // custom-cbuffer issue). Flipped on with the fix.
-    private const bool EnableGpuSkin = false;
+    private const bool EnableGpuSkin = true;
 
     private static HelixToolkit.SharpDX.Model.GenericMeshMaterialCore? TryCreateGpuSkinCore(
         Viewport3DX viewport, CanonicalMaterial? material)

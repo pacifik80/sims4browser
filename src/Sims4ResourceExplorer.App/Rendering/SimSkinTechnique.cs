@@ -25,8 +25,15 @@ internal static class SimSkinTechnique
 {
     public const string TechniqueName = "SimSkinComposite";
 
-    /// <summary>The PS material constant buffer name; sliders write into this by field name.</summary>
-    public const string SkinParamsCBuffer = "cbSkinParams";
+    /// <summary>
+    /// The PS material constant buffer name. MUST be the stock <c>cbMesh</c> (register b1):
+    /// HelixToolkit's MeshRenderCore unconditionally writes a 144-byte ModelStruct into the
+    /// FRONT of the named material cbuffer every frame and copies <c>StructSize − 144</c>
+    /// bytes for the tail — so the buffer must be ≥ the stock 352-byte cbMesh body or that
+    /// length goes negative and ArrayStorage.Read overflows (the build-0324 crash). Slider
+    /// fields are appended AFTER the 352-byte stock body and set by reflected field name.
+    /// </summary>
+    public const string SkinParamsCBuffer = "cbMesh";
 
     // Milestone-1 pixel shader. PSInput MUST match HelixToolkit's stock vsMeshDefault output
     // (Common/DataStructs.hlsl): same field order + semantics. We read input.t (UV) and
@@ -55,23 +62,28 @@ struct PSInput
 Texture2D texSkinColor : register(t6);
 SamplerState samplerSurface : register(s0);
 
-cbuffer cbSkinParams : register(b10)
+// MILESTONE-1 STEP-0: prove the custom technique draws without ANY custom-constant math.
+// The material cbuffer MUST be the stock cbMesh @ b1, >= 352 bytes (the mesh render core
+// prepends a 144-byte ModelStruct and tail-copies StructSize-144 bytes; a smaller buffer
+// makes that negative -> ArrayStorage.Read overflow, the build-0324 crash). We reserve the
+// full 352-byte stock body as opaque padding (written by the render core, read by the stock
+// VS for mWorld; we never write it) and set ZERO custom properties this step. The green
+// tint + captured light rig are HLSL literals here; Step 1 appends real slider fields after
+// the pad and drives them via SetProperty.
+cbuffer cbMesh : register(b1)
 {
-    float4 debugTint;     // multiplies albedo; (1,1,1,1) = passthrough, drives the M1 proof
-    float4 lightDir0;     // xyz = toward-light direction (captured cb0[0])
-    float4 lightDir1;     // captured cb0[1]
-    float4 lightColor0;   // rgb (captured cb0[4])
-    float4 lightColor1;   // rgb (captured cb0[5])
-    float4 ambientParams; // x = ambient floor
+    float4 _stockMeshReserved[22]; // 22*16 = 352 bytes == stock PhongPBRMaterialStruct body
 };
 
 float4 main(PSInput input) : SV_Target
 {
-    float3 albedo = texSkinColor.Sample(samplerSurface, input.t).rgb * debugTint.rgb;
+    float3 albedo = texSkinColor.Sample(samplerSurface, input.t).rgb;
     float3 n = normalize(input.n);
-    float ndl0 = saturate(dot(n, normalize(lightDir0.xyz)));
-    float ndl1 = saturate(dot(n, normalize(lightDir1.xyz)));
-    float3 lit = albedo * (ambientParams.x + ndl0 * lightColor0.rgb + ndl1 * lightColor1.rgb);
+    float ndl0 = saturate(dot(n, normalize(float3(0.417, 0.460, 0.784))));   // captured cb0[0]
+    float ndl1 = saturate(dot(n, normalize(float3(-0.916, 0.100, 0.389))));  // captured cb0[1]
+    float3 lit = albedo * (0.45 + ndl0 * float3(0.5, 0.5, 0.5) + ndl1 * float3(0.24, 0.24, 0.24));
+    lit *= float3(0.55, 1.0, 0.55);                 // M1 PROOF: hardcoded green tint
+    lit += _stockMeshReserved[0].xyz * 0.0;          // keep the pad alive (don't strip cbMesh)
     return float4(saturate(lit), 1.0);
 }
 ";
