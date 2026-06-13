@@ -30,18 +30,33 @@ internal static class SimSkinCompositeMaterial
     private static readonly Vector4 LightColor1 = new(0.24f, 0.24f, 0.24f, 0f);
     private static readonly Vector4 AmbientParams = new(0.45f, 0f, 0f, 0f);
 
+    /// <summary>Diagnostic: why the last TryCreate returned null (or "ok"). Build 0322.</summary>
+    public static string LastFailureReason { get; private set; } = "(not attempted)";
+
     public static GenericMeshMaterialCore? TryCreate(IEffectsManager? effectsManager, byte[]? skinColorPng, Vector4 debugTint)
     {
-        if (effectsManager is null || skinColorPng is not { Length: > 0 })
+        if (effectsManager is null)
         {
+            LastFailureReason = "effectsManager is null";
+            return null;
+        }
+        if (skinColorPng is not { Length: > 0 })
+        {
+            LastFailureReason = "skinColorPng is null/empty";
             return null;
         }
 
         SimSkinTechnique.EnsureRegistered(effectsManager);
         var technique = effectsManager.GetTechnique(SimSkinTechnique.TechniqueName);
-        var pass = technique?.GetPass(DefaultPassNames.Default);
+        if (technique is null)
+        {
+            LastFailureReason = "GetTechnique returned null after EnsureRegistered";
+            return null;
+        }
+        var pass = technique.GetPass(DefaultPassNames.Default);
         if (pass is null || pass.IsNULL)
         {
+            LastFailureReason = $"GetPass('{DefaultPassNames.Default}') null/NULL";
             return null;
         }
 
@@ -53,6 +68,7 @@ internal static class SimSkinCompositeMaterial
         core.SetProperty("lightColor0", LightColor0);
         core.SetProperty("lightColor1", LightColor1);
         core.SetProperty("ambientParams", AmbientParams);
+        LastFailureReason = $"ok (props={string.Join(",", core.PropertieNames)}; texs={string.Join(",", core.TextureNames)})";
         return core;
     }
 }

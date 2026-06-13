@@ -141,15 +141,18 @@ public sealed class SceneViewportRenderer
             };
             if (skinCore is not null)
             {
-                if (model.SceneNode is MaterialGeometryNode skinNode)
+                var node = model.SceneNode;
+                if (node is MaterialGeometryNode skinNode)
                 {
                     skinNode.Material = skinCore;
+                    GpuSkinLog($"attach: node={node.GetType().Name} OK -> core bound");
                 }
                 else
                 {
                     // Scene node not a material node — restore the stock material so the mesh
                     // still renders instead of going untextured.
                     model.Material = material;
+                    GpuSkinLog($"attach: node={(node?.GetType().Name ?? "null")} is NOT MaterialGeometryNode -> fell back to PBR");
                 }
             }
             viewport.Items.Add(model);
@@ -172,19 +175,38 @@ public sealed class SceneViewportRenderer
     /// technique can't be created (caller then uses the stock PBR material). Any exception in
     /// the shader path is swallowed so it degrades to the stock material, never a crash.
     /// </summary>
+    private static void GpuSkinLog(string line)
+    {
+        try
+        {
+            var dir = System.IO.Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
+                "Sims4ResourceExplorer", "ConstructorDump");
+            System.IO.Directory.CreateDirectory(dir);
+            System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "gpu_skin.log"), line + "\n");
+        }
+        catch { }
+    }
+
     private static HelixToolkit.SharpDX.Model.GenericMeshMaterialCore? TryCreateGpuSkinCore(
         Viewport3DX viewport, CanonicalMaterial? material)
     {
         if (material is null)
         {
-            return null;
+            return null; // non-skin meshes hit this constantly; don't log
         }
-        var atlas = material.Textures.FirstOrDefault(static t =>
-            t.Semantic == CanonicalTextureSemantic.BaseColor &&
-            (string.Equals(t.FileName, "skin_atlas.png", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(t.FileName, "head_atlas.png", StringComparison.OrdinalIgnoreCase)));
+        var baseColors = material.Textures.Where(static t => t.Semantic == CanonicalTextureSemantic.BaseColor).ToList();
+        var atlas = baseColors.FirstOrDefault(static t =>
+            string.Equals(t.FileName, "skin_atlas.png", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(t.FileName, "head_atlas.png", StringComparison.OrdinalIgnoreCase));
         if (atlas?.PngBytes is not { Length: > 0 } atlasBytes)
         {
+            // Only a candidate skin material? Log what BaseColor filenames we DID see so we
+            // know whether the atlas naming differs in the live scene.
+            if (material.SourceKind == CanonicalMaterialSourceKind.ApproximateCas)
+            {
+                GpuSkinLog($"no-atlas: approxCas material '{material.Name}' baseColors=[{string.Join(", ", baseColors.Select(b => $"{b.FileName}({b.PngBytes?.Length ?? 0}B)"))}] approx='{material.Approximation}'");
+            }
             return null;
         }
         try
@@ -193,10 +215,14 @@ public sealed class SceneViewportRenderer
             // is green, the custom GPU technique is definitively running and the shader
             // constant is applied (vs a silent fall-back to the stock PBR path, which would
             // look normal). Reverted to (1,1,1,1) in Milestone 2 when real compositing lands.
-            return SimSkinCompositeMaterial.TryCreate(viewport.EffectsManager, atlasBytes, new Vector4(0.55f, 1f, 0.55f, 1f));
+            var emHasValue = viewport.EffectsManager is not null;
+            var core = SimSkinCompositeMaterial.TryCreate(viewport.EffectsManager, atlasBytes, new Vector4(0.55f, 1f, 0.55f, 1f));
+            GpuSkinLog($"skin '{material.Name}' atlas={atlasBytes.Length}B em={emHasValue} core={(core is not null)} reason={SimSkinCompositeMaterial.LastFailureReason}");
+            return core;
         }
-        catch
+        catch (System.Exception ex)
         {
+            GpuSkinLog($"skin EXCEPTION: {ex.GetType().Name}: {ex.Message}");
             return null;
         }
     }
