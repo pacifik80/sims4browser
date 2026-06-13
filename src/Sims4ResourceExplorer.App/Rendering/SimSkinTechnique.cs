@@ -118,6 +118,12 @@ float4 main(PSInput input) : SV_Target
                             DefaultVSShaderDescriptions.VSMeshDefault,
                             psDesc,
                         },
+                        // Render states are required in practice (matches HelixToolkit's own
+                        // CustomShaderDemo mesh pass): without them the pass builds invalid /
+                        // GetPass resolves to a NULL pass. RasterStateDescription is left
+                        // default (the demo's mesh passes omit it).
+                        BlendStateDescription = DefaultBlendStateDescriptions.BSAlphaBlend,
+                        DepthStencilStateDescription = DefaultDepthStencilDescriptions.DSSDepthLess,
                     },
                 },
             };

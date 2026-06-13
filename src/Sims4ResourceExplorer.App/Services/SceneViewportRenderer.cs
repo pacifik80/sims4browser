@@ -128,12 +128,13 @@ public sealed class SceneViewportRenderer
                 ? TryCreateGpuSkinCore(viewport, canonicalMaterial)
                 : null;
 
+            // Route the GPU skin core through a UI Material element. Setting the scene node's
+            // core directly (with UI Material null) gets clobbered to null at attach time by
+            // MeshGeometryModel3D.AssignDefaultValuesToSceneNode; the wrapper survives that.
             var model = new MeshGeometryModel3D
             {
                 Geometry = geometry,
-                // Leave the UI Material unset when a GPU skin core is used so the WinUI
-                // material sync doesn't overwrite the core we attach to the scene node.
-                Material = skinCore is null ? material : null,
+                Material = skinCore is not null ? new GenericMeshMaterial(skinCore) : material,
                 IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex, selectedSlot),
                 CullMode = SharpDX.Direct3D11.CullMode.None,
                 RenderWireframe = renderMode == SceneRenderMode.Wireframe,
@@ -141,19 +142,7 @@ public sealed class SceneViewportRenderer
             };
             if (skinCore is not null)
             {
-                var node = model.SceneNode;
-                if (node is MaterialGeometryNode skinNode)
-                {
-                    skinNode.Material = skinCore;
-                    GpuSkinLog($"attach: node={node.GetType().Name} OK -> core bound");
-                }
-                else
-                {
-                    // Scene node not a material node — restore the stock material so the mesh
-                    // still renders instead of going untextured.
-                    model.Material = material;
-                    GpuSkinLog($"attach: node={(node?.GetType().Name ?? "null")} is NOT MaterialGeometryNode -> fell back to PBR");
-                }
+                GpuSkinLog("attach: bound GPU skin core via GenericMeshMaterial UI wrapper");
             }
             viewport.Items.Add(model);
 
