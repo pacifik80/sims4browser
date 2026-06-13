@@ -525,14 +525,40 @@ public sealed partial class SimConstructorViewModel : ObservableObject
                 SceneStatus: statusText);
             sceneCache[key] = newEntry;
 
-            var currentKey = new SceneCacheKey(currentSeed.AgeLabel, currentSeed.GenderLabel, currentSeed.SkintoneInstance, CurrentSkinLayers.Fingerprint());
-            if (currentKey.Equals(key))
+            try
+            {
+                var logDir = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Sims4ResourceExplorer", "ConstructorDump");
+                System.IO.Directory.CreateDirectory(logDir);
+                var willChange = !Equals(currentScene, rebound);
+                var refEq = ReferenceEquals(currentScene, rebound);
+                await System.IO.File.AppendAllTextAsync(System.IO.Path.Combine(logDir, "fastpath.log"),
+                    $"fastpath ran: atlas={atlas?.Length ?? 0}B physique={physTag} tokenCancelled={token.IsCancellationRequested} willChangeScene={willChange} refEq={refEq}\n",
+                    token).ConfigureAwait(true);
+            }
+            catch { }
+
+            // Apply to the viewport unless a NEWER rebuild has superseded this one. The
+            // cancellation token is the authoritative "still current" signal (every new
+            // RebuildForSkintoneChange cancels the prior token); the previous
+            // currentKey.Equals(key) guard also depended on the age/gender label round-trip
+            // and on the skin-layers fingerprint not moving across the compose + normal-map
+            // awaits, which silently skipped the viewport update on slider drags even though
+            // the atlas had been recomposed correctly (build 0320 fix).
+            if (!token.IsCancellationRequested)
             {
                 AssetGraphStatus = baseEntry.AssetGraphStatus;
                 BodyCandidatesSummary = baseEntry.BodyCandidatesSummary;
                 AssetGraphDiagnostics = diagnostics;
                 SceneStatus = $"{statusText}  [{sceneCache.Count} cached]";
                 CurrentScene = rebound;
+                // Force the viewport to re-render even if CurrentScene's record equality
+                // short-circuited the change notification (the fast path reuses the cached
+                // base scene's geometry and only swaps the atlas, so the only delta is the
+                // material texture bytes). Belt-and-suspenders for the "fast path doesn't
+                // update the viewport" report.
+                OnPropertyChanged(nameof(CurrentScene));
             }
         }
         catch (System.OperationCanceledException)
