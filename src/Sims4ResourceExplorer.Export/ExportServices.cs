@@ -58,7 +58,10 @@ public sealed class AssimpFbxExportService : IFbxExportService
         }
 
         var scene = BuildAssimpScene(request.Scene);
-        var fbxPath = Path.Combine(assetFolder, $"{request.AssetSlug}.fbx");
+        // Slugs may carry subfolders ("home/sofa") — the FILE name must be the leaf only, or the
+        // path gains a phantom nested directory and the write dies with DirectoryNotFoundException.
+        var fileName = Path.GetFileName(request.AssetSlug.TrimEnd('/', '\\'));
+        var fbxPath = Path.Combine(assetFolder, $"{fileName}.fbx");
         try
         {
             using var context = new AssimpContext();

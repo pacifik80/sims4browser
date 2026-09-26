@@ -6468,6 +6468,1130 @@ if (args.Length > 0 && string.Equals(args[0], "--list-species", StringComparison
     return 0;
 }
 
+if (args.Length > 0 && string.Equals(args[0], "--geom-ids", StringComparison.OrdinalIgnoreCase))
+{
+    // Decisive test for body morphs: do EA's body GEOMs carry per-vertex IDs (usage 0x0A) that BGEO
+    // morphs index by? Parse each given GEOM instance and report how many vertices have a VertexId.
+    // Usage: --geom-ids <cacheDir> <instanceHex> [<instanceHex> ...]
+    var giDir = args.Length > 1 ? args[1] : @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    if (!Directory.Exists(giDir)) { Console.Error.WriteLine($"Cache dir not found: {giDir}"); return 1; }
+    var giCache = new ProbeCacheService(Path.GetFullPath(giDir + "/.."));
+    giCache.EnsureCreated();
+    var giStore = new SqliteIndexStore(giCache);
+    await giStore.InitializeAsync(CancellationToken.None);
+    var giCat = new LlamaResourceCatalogService();
+    for (var ai = 2; ai < args.Length; ai++)
+    {
+        ulong inst;
+        try { inst = Convert.ToUInt64(args[ai].Replace("0x", "", StringComparison.OrdinalIgnoreCase), 16); }
+        catch { Console.WriteLine($"{args[ai]}: not hex"); continue; }
+        var ress = (await giStore.GetResourcesByFullInstanceAsync(inst, CancellationToken.None))
+            .Where(r => r.Key.Type == 0x015A1849u).ToList();
+        if (ress.Count == 0) { Console.WriteLine($"{inst:X16}: no GEOM resource at instance"); continue; }
+        var gi = 0;
+        foreach (var r in ress)
+        {
+            byte[] bytes;
+            try { bytes = await giCat.GetResourceBytesAsync(r.PackagePath, r.Key, false, CancellationToken.None, null); }
+            catch (Exception ex) { Console.WriteLine($"{inst:X16}[{gi}]: load failed {ex.Message}"); gi++; continue; }
+            try
+            {
+                var geom = Sims4ResourceExplorer.Preview.Ts4GeomResource.Parse(bytes);
+                var withId = geom.Vertices.Count(v => v.VertexId.HasValue);
+                var withTag = geom.Vertices.Count(v => v.TagVal.HasValue);
+                Console.WriteLine($"{inst:X16}[{gi}]: verts={geom.Vertices.Count} withVertexId={withId} withTag={withTag} pkg={Path.GetFileName(r.PackagePath)}");
+            }
+            catch (Exception ex) { Console.WriteLine($"{inst:X16}[{gi}]: parse failed {ex.GetType().Name}: {ex.Message}"); }
+            gi++;
+        }
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--clip-decode", StringComparison.OrdinalIgnoreCase))
+{
+    // Fully decode one CLIP's S3 codec → per-channel keyframe VALUES, and VALIDATE without Unity:
+    // decoded orientation quaternions should be ~unit length. If they're not, the decode math is wrong.
+    // Usage: --clip-decode [<cacheDir>] [<nameFilter=ad_CAS_idle_stand>]
+    var cdDir = args.Length > 1 ? args[1] : @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var cdName = args.Length > 2 ? args[2] : "ad_CAS_idle_stand";
+    var cdCache = new ProbeCacheService(Path.GetFullPath(cdDir + "/.."));
+    cdCache.EnsureCreated();
+    var cdStore = new SqliteIndexStore(cdCache);
+    await cdStore.InitializeAsync(CancellationToken.None);
+    var cdCat = new LlamaResourceCatalogService();
+
+    static string CdIoStr(BinaryReader r) { var n = r.ReadUInt32(); return n > 4096 ? "" : System.Text.Encoding.ASCII.GetString(r.ReadBytes((int)n)); }
+    // Walk the CLIP_RESOURCE header, return the codecData byte range, or (-1,-1).
+    static (long start, long len, string name) CdHeader(byte[] b)
+    {
+        try
+        {
+            using var ms = new MemoryStream(b); using var r = new BinaryReader(ms);
+            if (r.ReadUInt32() != 14) return (-1, -1, "");
+            r.ReadUInt32(); r.ReadSingle(); r.BaseStream.Position += 4 * 4 + 3 * 4;
+            r.ReadUInt32(); r.ReadUInt32(); r.ReadUInt32(); r.ReadUInt32();
+            var name = CdIoStr(r); CdIoStr(r);
+            var ec = r.ReadUInt32(); for (var i = 0; i < ec && i < 256; i++) CdIoStr(r);
+            var sc = r.ReadUInt32(); for (var i = 0; i < sc && i < 256; i++) { r.ReadUInt16(); r.ReadUInt16(); CdIoStr(r); CdIoStr(r); }
+            var ev = r.ReadUInt32(); for (var i = 0; i < ev && i < 4096; i++) { r.ReadUInt32(); var z = r.ReadUInt32(); r.BaseStream.Position += z; }
+            var len = r.ReadUInt32();
+            return (r.BaseStream.Position, len, name);
+        }
+        catch { return (-1, -1, ""); }
+    }
+    // find the clip
+    var cdClips = await cdStore.GetResourcesByTypeNameAsync("Clip", CancellationToken.None);
+    byte[]? cdBytes = null; string cdFound = "";
+    foreach (var res in cdClips)
+    {
+        byte[] bb; try { bb = await cdCat.GetResourceBytesAsync(res.PackagePath, res.Key, false, CancellationToken.None, null); } catch { continue; }
+        var hd = CdHeader(bb);
+        if (hd.start < 0 || hd.name.IndexOf(cdName, StringComparison.OrdinalIgnoreCase) < 0) continue;
+        cdBytes = bb; cdFound = hd.name; Console.WriteLine($"clip-decode: '{hd.name}' {res.Key.FullTgi} codecLen={hd.len}"); break;
+    }
+    if (cdBytes is null) { Console.Error.WriteLine($"clip-decode: no clip matching '{cdName}'"); return 1; }
+
+    // Decode via the SHARED library (Sims4ResourceExplorer.Preview.Ts4ClipDecoder) — same code
+    // the exporter uses — so this validates the real decoder, not a probe-only copy.
+    var clip = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Decode(cdBytes);
+    if (clip is null) { Console.Error.WriteLine("clip-decode: decoder returned null"); return 1; }
+    Console.WriteLine($"clip-decode: name='{clip.Name}' rigNs='{clip.RigNamespace}' fps={clip.Fps:0.##} numTicks={clip.NumTicks} dur={clip.Duration:0.00}s channels={clip.Channels.Count}");
+
+    var typeHist = new Dictionary<int, int>(); var subHist = new Dictionary<int, int>();
+    int oriCh = 0, oriFrames = 0; double qMin = 9, qMax = 0, qSum = 0; int qN = 0;
+    double tMaxAbs = 0;
+    foreach (var ch in clip.Channels)
+    {
+        typeHist[ch.ChannelType] = typeHist.TryGetValue(ch.ChannelType, out var th) ? th + 1 : 1;
+        subHist[(int)ch.SubTarget] = subHist.TryGetValue((int)ch.SubTarget, out var sh) ? sh + 1 : 1;
+        if (ch.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation)
+        {
+            oriCh++; oriFrames += ch.Keyframes.Count;
+            foreach (var k in ch.Keyframes)
+            {
+                var mag = Math.Sqrt((double)k.X * k.X + k.Y * k.Y + k.Z * k.Z + k.W * k.W);
+                qMin = Math.Min(qMin, mag); qMax = Math.Max(qMax, mag); qSum += mag; qN++;
+            }
+        }
+        else if (ch.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Translation)
+            foreach (var k in ch.Keyframes) tMaxAbs = Math.Max(tMaxAbs, Math.Max(Math.Abs(k.X), Math.Max(Math.Abs(k.Y), Math.Abs(k.Z))));
+    }
+    Console.WriteLine($"clip-decode: channelType histogram: " + string.Join(", ", typeHist.OrderBy(k => k.Key).Select(k => $"t{k.Key}={k.Value}")));
+    Console.WriteLine($"clip-decode: subTarget histogram (1=Trans,2=Orient,3=Scale): " + string.Join(", ", subHist.OrderBy(k => k.Key).Select(k => $"s{k.Key}={k.Value}")));
+    Console.WriteLine($"clip-decode: ORIENTATION channels={oriCh} frames={oriFrames}  |q| mean={(qN > 0 ? qSum / qN : 0):0.0000} min={qMin:0.0000} max={qMax:0.0000}  (should be ~1.0 if decode is correct)");
+    Console.WriteLine($"clip-decode: TRANSLATION maxAbs={tMaxAbs:0.000} m (sane if < ~2)");
+
+    // ---- Bone-hash coverage: prove channel.target == FNV-32(boneName) by loading rigs ----
+    // Union every rig's bone (NameHash → Name); also verify our Fnv32() reproduces the rig's
+    // stored NameHash, which proves the hash function matches EA's.
+    // Load the adult-human rig (auRig) SPECIFICALLY by its canonical FNV-64 instance — the
+    // clip 'ad_CAS_idle_stand_x' targets this skeleton (not the ~9-bone prop rigs).
+    var hashToName = new Dictionary<uint, string>();
+    var hashToBone = new Dictionary<uint, Sims4ResourceExplorer.Preview.Ts4RigBone>();
+    int fnvOk = 0, fnvTot = 0, rigsParsed = 0;
+    var auInst = Sims4ResourceExplorer.Core.Ts4CanonicalRigCatalog.ComputeFnv64("auRig");
+    var auRes = await cdStore.GetResourcesByFullInstanceAsync(auInst, CancellationToken.None);
+    var rigList = auRes.Where(r => r.Key.TypeName == "Rig").ToList();
+    Console.WriteLine($"clip-decode: auRig instance={auInst:X16} -> {rigList.Count} Rig resource(s)");
+    foreach (var rr in rigList)
+    {
+        byte[] rb; try { rb = await cdCat.GetResourceBytesAsync(rr.PackagePath, rr.Key, false, CancellationToken.None, null); }
+        catch (Exception ex) { Console.WriteLine($"    rig load failed: {ex.Message}"); continue; }
+        Sims4ResourceExplorer.Preview.Ts4RigResource rig;
+        try { rig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(rb); }
+        catch (Exception ex) { Console.WriteLine($"    rig parse failed: {ex.Message}"); continue; }
+        rigsParsed++;
+        // Per-rig fingerprint: bone count + b__Spine0__ X position + b__L_Thigh__ local rotation.
+        var sp0 = rig.Bones.FirstOrDefault(b => b.Name == "b__Spine0__");
+        var thg = rig.Bones.FirstOrDefault(b => b.Name == "b__L_Thigh__");
+        Console.WriteLine($"    rig pkg={Path.GetFileName(rr.PackagePath)} bones={rig.Bones.Count} Spine0.X={sp0.Position.X:0.0000} Thigh.rot=({thg.Rotation.X:0.000},{thg.Rotation.Y:0.000},{thg.Rotation.Z:0.000},{thg.Rotation.W:0.000})");
+        foreach (var bn in rig.Bones)
+        {
+            hashToName[bn.NameHash] = bn.Name;
+            hashToBone[bn.NameHash] = bn;
+            fnvTot++;
+            if (Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(bn.Name) == bn.NameHash) fnvOk++;
+        }
+    }
+    var targets = clip.Channels.Select(c => c.TargetHash).Distinct().ToList();
+    var resolved = targets.Count(t => hashToName.ContainsKey(t));
+    Console.WriteLine($"clip-decode: rigs parsed={rigsParsed}; Fnv32==rig.NameHash for {fnvOk}/{fnvTot} bones (proves hash fn); " +
+                      $"clip channels resolved to a bone: {resolved}/{targets.Count}");
+    var oriNames = clip.Channels.Where(c => c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation)
+        .Select(c => hashToName.TryGetValue(c.TargetHash, out var nm) ? nm : null).Where(n => n != null).OrderBy(n => n).ToList();
+    Console.WriteLine($"clip-decode: RESOLVED orientation bones ({oriNames.Count}): " + string.Join(", ", oriNames));
+    var unresolvedOri = clip.Channels.Count(c => c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation && !hashToName.ContainsKey(c.TargetHash));
+    Console.WriteLine($"clip-decode: UNRESOLVED orientation channels: {unresolvedOri} (likely face/CAS/IK bones not in auRig)");
+
+    // ---- DECISIVE DIAGNOSTIC: clip tick-0 LOCAL transform  vs  rig RAW local BIND transform ----
+    // The clip stores each bone's local-to-parent transform per frame. An idle's tick-0 should be
+    // ~the bind pose. If clip-tick0 == rig-local-bind, applying the clip at rest reproduces bind
+    // (so it can't be destroying the skeleton); if they DIFFER, that delta IS the bug (convention/scale).
+    Console.WriteLine("clip-decode: ===== TICK-0 (clip) vs RIG LOCAL BIND, per key bone =====");
+    string[] keyBones = { "b__ROOT_bind__", "b__Pelvis__", "b__Spine0__", "b__Spine1__", "b__Spine2__", "b__Head__", "b__L_UpperArm__", "b__L_Forearm__", "b__L_Thigh__", "b__L_Calf__", "b__R_UpperArm__", "b__R_Thigh__" };
+    foreach (var bone in keyBones)
+    {
+        var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(bone);
+        if (!hashToBone.TryGetValue(h, out var rb)) { Console.WriteLine($"  {bone}: (not in rig)"); continue; }
+        var oriCh2 = clip.Channels.FirstOrDefault(c => c.TargetHash == h && c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation);
+        var trCh2 = clip.Channels.FirstOrDefault(c => c.TargetHash == h && c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Translation);
+        Console.WriteLine($"  {bone}:");
+        Console.WriteLine($"      rig.localPos =({rb.Position.X,8:0.0000},{rb.Position.Y,8:0.0000},{rb.Position.Z,8:0.0000})  rig.localRot =({rb.Rotation.X,7:0.0000},{rb.Rotation.Y,7:0.0000},{rb.Rotation.Z,7:0.0000},{rb.Rotation.W,7:0.0000})");
+        if (trCh2 is not null && trCh2.Keyframes.Count > 0) { var k = trCh2.Keyframes[0]; Console.WriteLine($"      clip.t0.Pos  =({k.X,8:0.0000},{k.Y,8:0.0000},{k.Z,8:0.0000})"); }
+        else Console.WriteLine("      clip.t0.Pos  = (no translation channel)");
+        if (oriCh2 is not null && oriCh2.Keyframes.Count > 0) { var k = oriCh2.Keyframes[0]; Console.WriteLine($"      clip.t0.Rot  =({k.X,7:0.0000},{k.Y,7:0.0000},{k.Z,7:0.0000},{k.W,7:0.0000})"); }
+        else Console.WriteLine("      clip.t0.Rot  = (no orientation channel)");
+    }
+
+    // ---- FORWARD-KINEMATICS sanity: where do joints land at clip tick-0? ----
+    // Replicates SimRigLoader.ComputeWorldBindPoses (local = S*R*T; world = local*parentWorld) — the
+    // SAME math that yields the CORRECT bind pose. Three modes: bind (rig R+T), rotOnly (clip R, bind T),
+    // full (clip R+T). If rotOnly gives a sensible standing pose (head up ~1.6m, feet ~0) it's the fix.
+    var clipRot = new Dictionary<uint, System.Numerics.Quaternion>();
+    var clipPos = new Dictionary<uint, System.Numerics.Vector3>();
+    foreach (var ch in clip.Channels)
+    {
+        if (ch.Keyframes.Count == 0) continue;
+        var k = ch.Keyframes[0];
+        if (ch.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation) clipRot[ch.TargetHash] = new System.Numerics.Quaternion(k.X, k.Y, k.Z, k.W);
+        else if (ch.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Translation) clipPos[ch.TargetHash] = new System.Numerics.Vector3(k.X, k.Y, k.Z);
+    }
+    // Bones frozen at bind (mode 3): the root chain. Find every bone whose name contains "ROOT".
+    var frozen = new HashSet<uint>(hashToBone.Where(kv => kv.Value.Name.Contains("ROOT", StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Key));
+    // modes: 0 bind | 1 rotOnly | 2 full | 3 freezeROOT | 4 rotOnly+conj | 5 freezeROOT+conj
+    System.Numerics.Matrix4x4 WorldOf(uint h, int mode, Dictionary<uint, System.Numerics.Matrix4x4> cache)
+    {
+        if (cache.TryGetValue(h, out var c)) return c;
+        if (!hashToBone.TryGetValue(h, out var bone)) return System.Numerics.Matrix4x4.Identity;
+        var freeze = (mode == 3 || mode == 5) && frozen.Contains(h);
+        var conj = mode == 4 || mode == 5;
+        var useClipRot = mode >= 1 && !freeze;
+        var rot = bone.Rotation;
+        if (useClipRot && clipRot.TryGetValue(h, out var cr2)) rot = conj ? System.Numerics.Quaternion.Conjugate(cr2) : cr2;
+        var pos = mode == 2 && clipPos.TryGetValue(h, out var cp2) ? cp2 : bone.Position;
+        var local = System.Numerics.Matrix4x4.CreateScale(bone.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(rot) * System.Numerics.Matrix4x4.CreateTranslation(pos);
+        var pw = bone.ParentHash is uint ph ? WorldOf(ph, mode, cache) : System.Numerics.Matrix4x4.Identity;
+        var w = local * pw;
+        cache[h] = w;
+        return w;
+    }
+
+    // Hierarchy: parent chain for Pelvis + Head (is ROOT_bind an ancestor?).
+    Console.WriteLine("clip-decode: ===== parent chains =====");
+    foreach (var bone in new[] { "b__Pelvis__", "b__Head__", "b__L_Thigh__" })
+    {
+        var chain = new List<string>(); var cur = (uint?)Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(bone);
+        for (int g = 0; g < 30 && cur is uint cc && hashToBone.TryGetValue(cc, out var bb); g++) { chain.Add(bb.Name); cur = bb.ParentHash; }
+        Console.WriteLine($"  {bone}: {string.Join(" <- ", chain)}");
+    }
+
+    // ===== EXHAUSTIVE BASIS-CHANGE SEARCH =====
+    // Hypothesis: clip quats are in a basis rotated/permuted vs the rig. Try every proper axis
+    // remap (P: signed permutation, det +1 = the 24 cube rotations) × {identity, conjugate} ×
+    // application {rotOnly, freezeROOT}. Remap each clip quat by similarity q' = fromMatrix(P*M*Pᵀ),
+    // FK, and score by closeness to a real STANDING pose. The lowest score reveals the convention.
+    string[] scoreBones = { "b__Head__", "b__Pelvis__", "b__L_Foot__", "b__R_Foot__", "b__L_Calf__", "b__R_Calf__", "b__L_Hand__", "b__R_Hand__" };
+    var targetY = new Dictionary<string, float> { ["b__Head__"] = 1.62f, ["b__Pelvis__"] = 1.05f, ["b__L_Foot__"] = 0.10f, ["b__R_Foot__"] = 0.10f, ["b__L_Calf__"] = 0.50f, ["b__R_Calf__"] = 0.50f, ["b__L_Hand__"] = 0.75f, ["b__R_Hand__"] = 0.75f };
+    var scoreHash = scoreBones.ToDictionary(b => b, b => Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(b));
+
+    // Generate the 24 proper signed permutations (det +1).
+    int[][] perms = { new[] { 0, 1, 2 }, new[] { 0, 2, 1 }, new[] { 1, 0, 2 }, new[] { 1, 2, 0 }, new[] { 2, 0, 1 }, new[] { 2, 1, 0 } };
+    var basisList = new List<(string label, System.Numerics.Matrix4x4 P)>();
+    foreach (var pm in perms)
+        for (var sx = -1; sx <= 1; sx += 2) for (var sy = -1; sy <= 1; sy += 2) for (var sz = -1; sz <= 1; sz += 2)
+            {
+                var s = new[] { sx, sy, sz };
+                var P = new System.Numerics.Matrix4x4(); P.M44 = 1;
+                // row i has s[i] at column pm[i]
+                void Set(int r, int col, float v) { switch (r * 4 + col) { case 0: P.M11 = v; break; case 1: P.M12 = v; break; case 2: P.M13 = v; break; case 4: P.M21 = v; break; case 5: P.M22 = v; break; case 6: P.M23 = v; break; case 8: P.M31 = v; break; case 9: P.M32 = v; break; case 10: P.M33 = v; break; } }
+                Set(0, pm[0], sx); Set(1, pm[1], sy); Set(2, pm[2], sz);
+                // det of 3x3
+                var det = P.M11 * (P.M22 * P.M33 - P.M23 * P.M32) - P.M12 * (P.M21 * P.M33 - P.M23 * P.M31) + P.M13 * (P.M21 * P.M32 - P.M22 * P.M31);
+                if (det > 0) basisList.Add(($"perm[{pm[0]}{pm[1]}{pm[2]}] sgn({sx:+0;-0},{sy:+0;-0},{sz:+0;-0})", P));
+            }
+
+    System.Numerics.Quaternion Remap(System.Numerics.Quaternion q, System.Numerics.Matrix4x4 P, bool conj)
+    {
+        if (conj) q = System.Numerics.Quaternion.Conjugate(q);
+        var M = System.Numerics.Matrix4x4.CreateFromQuaternion(q);
+        var Mp = P * M * System.Numerics.Matrix4x4.Transpose(P);
+        return System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromRotationMatrix(Mp));
+    }
+
+    // FK over a supplied remapped clip-rotation dict; freeze=keep ROOT chain at bind.
+    System.Numerics.Vector3 FkWorld(uint h, Dictionary<uint, System.Numerics.Quaternion> rotMap, bool freezeRoot, Dictionary<uint, System.Numerics.Matrix4x4> cache)
+    {
+        if (cache.TryGetValue(h, out var c)) return c.Translation;
+        if (!hashToBone.TryGetValue(h, out var bone)) return System.Numerics.Vector3.Zero;
+        var rot = bone.Rotation;
+        if (!(freezeRoot && frozen.Contains(h)) && rotMap.TryGetValue(h, out var rq)) rot = rq;
+        var local = System.Numerics.Matrix4x4.CreateScale(bone.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(rot) * System.Numerics.Matrix4x4.CreateTranslation(bone.Position);
+        var pw = bone.ParentHash is uint ph ? (cache.TryGetValue(ph, out var pc) ? pc : default) : System.Numerics.Matrix4x4.Identity;
+        if (bone.ParentHash is uint ph2 && !cache.ContainsKey(ph2)) { FkWorld(ph2, rotMap, freezeRoot, cache); pw = cache[ph2]; }
+        var w = local * pw; cache[h] = w; return w.Translation;
+    }
+
+    (double score, string label, bool conj, bool freeze) best = (double.MaxValue, "", false, false);
+    var results = new List<(double score, string desc)>();
+    foreach (var (label, P) in basisList)
+        foreach (var conj in new[] { false, true })
+        {
+            var remapped = new Dictionary<uint, System.Numerics.Quaternion>();
+            foreach (var kv in clipRot) remapped[kv.Key] = Remap(kv.Value, P, conj);
+            foreach (var freeze in new[] { false, true })
+            {
+                double sc = 0;
+                foreach (var b in scoreBones)
+                {
+                    var w = FkWorld(scoreHash[b], remapped, freeze, new());
+                    var wy = b.Contains("Hand") ? Math.Max(0, w.Y - targetY[b]) : (w.Y - targetY[b]); // hands: only penalize too-high
+                    sc += wy * wy + 0.7 * w.Z * w.Z;
+                }
+                results.Add((sc, $"{label} conj={conj,-5} freeze={freeze,-5}"));
+                if (sc < best.score) best = (sc, label, conj, freeze);
+            }
+        }
+
+    Console.WriteLine("clip-decode: ===== BASIS-CHANGE SEARCH (lowest score = best standing pose) =====");
+    foreach (var r in results.OrderBy(r => r.score).Take(8)) Console.WriteLine($"  score={r.score,7:0.000}  {r.desc}");
+    // Detailed dump of the WINNER.
+    Console.WriteLine($"clip-decode: (basis search winner is identity-equivalent → NOT a convention issue)");
+    Console.WriteLine($"clip-decode: CLIP header initialOffset Q=({clip.InitialOffsetRotation.X:0.000},{clip.InitialOffsetRotation.Y:0.000},{clip.InitialOffsetRotation.Z:0.000},{clip.InitialOffsetRotation.W:0.000})  T=({clip.InitialOffsetTranslation.X:0.000},{clip.InitialOffsetTranslation.Y:0.000},{clip.InitialOffsetTranslation.Z:0.000})");
+    foreach (var bone in new[] { "b__Spine0__", "b__Spine1__", "b__Spine2__", "b__L_Thigh__", "b__ROOT_bind__" })
+    {
+        var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(bone);
+        foreach (var ch in clip.Channels.Where(c => c.TargetHash == h))
+            Console.WriteLine($"    {bone,-14} {ch.SubTarget,-11} t{ch.ChannelType} numKeys={ch.Keyframes.Count} off={ch.Offset:0.0000} scl={ch.Scale:0.0000} k0=({ch.Keyframes[0].X:0.000},{ch.Keyframes[0].Y:0.000},{ch.Keyframes[0].Z:0.000},{ch.Keyframes[0].W:0.000})");
+    }
+    // Dump L_Thigh orientation motion across keyframes (is tick0 an outlier?).
+    {
+        var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32("b__L_Thigh__");
+        var och = clip.Channels.First(c => c.TargetHash == h && c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation);
+        Console.WriteLine($"    L_Thigh orientation motion ({och.Keyframes.Count} keys): " + string.Join(" ", och.Keyframes.Select(k => $"[t{k.Tick}:Z{k.Z:0.00},W{k.W:0.00}]").Take(20)));
+    }
+
+    // ===== 2x2 MATRIX: {bind pos | clip pos} × {ROOT free | ROOT frozen}, full XYZ per joint =====
+    System.Numerics.Vector3 FkFull(uint h, bool useClipTrans, bool freezeRoot, Dictionary<uint, System.Numerics.Matrix4x4> cache)
+    {
+        if (cache.TryGetValue(h, out var cc)) return cc.Translation;
+        if (!hashToBone.TryGetValue(h, out var bone)) return System.Numerics.Vector3.Zero;
+        var rot = bone.Rotation;
+        if (!(freezeRoot && frozen.Contains(h)) && clipRot.TryGetValue(h, out var rq)) rot = rq;
+        var pos = useClipTrans && clipPos.TryGetValue(h, out var cp) ? cp : bone.Position;
+        var local = System.Numerics.Matrix4x4.CreateScale(bone.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(rot) * System.Numerics.Matrix4x4.CreateTranslation(pos);
+        System.Numerics.Matrix4x4 pw = System.Numerics.Matrix4x4.Identity;
+        if (bone.ParentHash is uint ph) { if (!cache.ContainsKey(ph)) FkFull(ph, useClipTrans, freezeRoot, cache); pw = cache[ph]; }
+        var w = local * pw; cache[h] = w; return w.Translation;
+    }
+    string[] allJoints = { "b__Head__", "b__Spine2__", "b__Pelvis__", "b__L_Hand__", "b__R_Hand__", "b__L_Calf__", "b__L_Foot__", "b__R_Foot__" };
+
+    // ===== s4animtools FIX: bones whose parent is b__ROOT__ carry a WORLD-space clip transform =====
+    // (animate_frame: parent==b__ROOT__ → animate relative to world_root, NOT to b__ROOT__).
+    // So set such a bone's WORLD matrix = clip(rot[,trans]); all other bones stay local-to-parent.
+    var rootHash = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32("b__ROOT__");
+    // b__ROOT__ bind transform (for reference):
+    if (hashToBone.TryGetValue(rootHash, out var rootBone))
+        Console.WriteLine($"clip-decode: b__ROOT__ bind localPos=({rootBone.Position.X:0.000},{rootBone.Position.Y:0.000},{rootBone.Position.Z:0.000}) localRot=({rootBone.Rotation.X:0.000},{rootBone.Rotation.Y:0.000},{rootBone.Rotation.Z:0.000},{rootBone.Rotation.W:0.000}) parentHash={rootBone.ParentHash}");
+
+    System.Numerics.Vector3 FkRootWorld(uint h, bool useClipTransForRoot, bool useClipPosLimbs, Dictionary<uint, System.Numerics.Matrix4x4> cache)
+    {
+        if (cache.TryGetValue(h, out var cc)) return cc.Translation;
+        if (!hashToBone.TryGetValue(h, out var bone)) return System.Numerics.Vector3.Zero;
+        var parentIsRoot = bone.ParentHash == rootHash;
+        var rot = bone.Rotation;
+        if (clipRot.TryGetValue(h, out var rq)) rot = rq;
+        var pos = bone.Position;
+        if ((parentIsRoot ? useClipTransForRoot : useClipPosLimbs) && clipPos.TryGetValue(h, out var cp)) pos = cp;
+        var local = System.Numerics.Matrix4x4.CreateScale(bone.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(rot) * System.Numerics.Matrix4x4.CreateTranslation(pos);
+        System.Numerics.Matrix4x4 w;
+        if (parentIsRoot)
+        {
+            // WORLD-space: the clip transform IS this bone's world matrix (relative to scene origin).
+            w = local;
+        }
+        else
+        {
+            System.Numerics.Matrix4x4 pw = System.Numerics.Matrix4x4.Identity;
+            if (bone.ParentHash is uint ph) { if (!cache.ContainsKey(ph)) FkRootWorld(ph, useClipTransForRoot, useClipPosLimbs, cache); pw = cache[ph]; }
+            w = local * pw;
+        }
+        cache[h] = w; return w.Translation;
+    }
+    // ===== DELTA-FROM-TICK0 TEST =====
+    // animated_local(t) = bind_local ∘ (clip(0)^-1 ∘ clip(t)). Apply at the LAST keyframe of each bone
+    // (max motion). At t=0 it is exactly bind (A-pose) by construction; here we verify it stays coherent
+    // under motion, and pick the compose order (bone-frame vs parent-frame).
+    var clipFirst = new Dictionary<uint, System.Numerics.Quaternion>();
+    var clipLast = new Dictionary<uint, System.Numerics.Quaternion>();
+    foreach (var ch in clip.Channels.Where(c => c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation && c.Keyframes.Count > 0))
+    {
+        var k0 = ch.Keyframes[0]; var kn = ch.Keyframes[^1];
+        clipFirst[ch.TargetHash] = new System.Numerics.Quaternion(k0.X, k0.Y, k0.Z, k0.W);
+        clipLast[ch.TargetHash] = new System.Numerics.Quaternion(kn.X, kn.Y, kn.Z, kn.W);
+    }
+    // order: 0 = bind*(conj(c0)*cT) [bone frame], 1 = (cT*conj(c0))*bind [parent frame]
+    System.Numerics.Vector3 FkDelta(uint h, int order, Dictionary<uint, System.Numerics.Matrix4x4> cache)
+    {
+        if (cache.TryGetValue(h, out var cc)) return cc.Translation;
+        if (!hashToBone.TryGetValue(h, out var bone)) return System.Numerics.Vector3.Zero;
+        var rot = bone.Rotation;
+        if (clipFirst.TryGetValue(h, out var c0) && clipLast.TryGetValue(h, out var cT))
+        {
+            rot = order == 0
+                ? bone.Rotation * (System.Numerics.Quaternion.Conjugate(c0) * cT)
+                : (cT * System.Numerics.Quaternion.Conjugate(c0)) * bone.Rotation;
+            rot = System.Numerics.Quaternion.Normalize(rot);
+        }
+        var local = System.Numerics.Matrix4x4.CreateScale(bone.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(rot) * System.Numerics.Matrix4x4.CreateTranslation(bone.Position);
+        System.Numerics.Matrix4x4 pw = System.Numerics.Matrix4x4.Identity;
+        if (bone.ParentHash is uint ph) { if (!cache.ContainsKey(ph)) FkDelta(ph, order, cache); pw = cache[ph]; }
+        var w = local * pw; cache[h] = w; return w.Translation;
+    }
+    foreach (var order in new[] { 0, 1 })
+    {
+        Console.WriteLine($"clip-decode: --- DELTA-from-tick0 @ last keyframe, order={(order == 0 ? "bind*(c0^-1*cT)" : "(cT*c0^-1)*bind")} ---");
+        foreach (var b in allJoints)
+        {
+            var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(b);
+            if (!hashToBone.ContainsKey(h)) continue;
+            var w = FkDelta(h, order, new());
+            Console.WriteLine($"      {b,-14}: ({w.X,6:0.00},{w.Y,6:0.00},{w.Z,6:0.00})");
+        }
+    }
+    Console.WriteLine("clip-decode: (compare to bind A-pose: Head~1.67, Hand~±0.59/1.09, Foot~±0.10/0.11; delta@last should stay CLOSE = coherent idle motion)");
+
+    // ===== PER-BONE MOTION RANGE: how far does each resolved bone move from tick-0? =====
+    // Tells us which bones the idle actually animates (big angle) vs holds constant (~0).
+    Console.WriteLine("clip-decode: ===== per-bone max rotation from tick-0 (deg), resolved bones, top 30 =====");
+    var motion = new List<(string bone, double deg)>();
+    foreach (var ch in clip.Channels.Where(c => c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation && c.Keyframes.Count > 1))
+    {
+        if (!hashToName.TryGetValue(ch.TargetHash, out var nm)) continue;
+        var q0 = new System.Numerics.Quaternion(ch.Keyframes[0].X, ch.Keyframes[0].Y, ch.Keyframes[0].Z, ch.Keyframes[0].W);
+        double maxDeg = 0;
+        foreach (var k in ch.Keyframes)
+        {
+            var qk = new System.Numerics.Quaternion(k.X, k.Y, k.Z, k.W);
+            var dot = Math.Abs(q0.X * qk.X + q0.Y * qk.Y + q0.Z * qk.Z + q0.W * qk.W);
+            var deg = 2 * Math.Acos(Math.Min(1, dot)) * 180 / Math.PI;
+            if (deg > maxDeg) maxDeg = deg;
+        }
+        motion.Add((nm, maxDeg));
+    }
+    foreach (var m in motion.OrderByDescending(m => m.deg).Take(30))
+        Console.WriteLine($"    {m.bone,-22} {m.deg,6:0.0}°");
+
+    // ===== WORLD-SPACE RETARGET FK VALIDATION (mirrors exporter BuildRetargetedTracks) =====
+    // Wa = Wb·inv(Wc0)·Wc ; La = Wa·inv(Wa_parent). tick0 must reproduce the bind A-pose; a mid-frame
+    // must stay a coherent body (no exploded/backward limbs).
+    {
+        var chanByHash = new Dictionary<uint, Sims4ResourceExplorer.Preview.Ts4ClipChannel>();
+        foreach (var ch in clip.Channels)
+            if (ch.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation && ch.Keyframes.Count > 0 && hashToBone.ContainsKey(ch.TargetHash))
+                chanByHash[ch.TargetHash] = ch;
+        int Depth2(Sims4ResourceExplorer.Preview.Ts4RigBone b) { int d = 0; var p = b.ParentHash; var g = 0; while (p is uint ph && hashToBone.TryGetValue(ph, out var pb) && g++ < 300) { d++; p = pb.ParentHash; } return d; }
+        var ord = hashToBone.Values.OrderBy(Depth2).ToList();
+        System.Numerics.Quaternion Samp(Sims4ResourceExplorer.Preview.Ts4ClipChannel ch, int tk)
+        {
+            var kf = ch.Keyframes; System.Numerics.Quaternion Q(int i) => new(kf[i].X, kf[i].Y, kf[i].Z, kf[i].W);
+            if (kf.Count == 1 || tk <= kf[0].Tick) return Q(0);
+            if (tk >= kf[^1].Tick) return Q(kf.Count - 1);
+            for (var i = 0; i < kf.Count - 1; i++) if (tk >= kf[i].Tick && tk <= kf[i + 1].Tick) { var sp = kf[i + 1].Tick - kf[i].Tick; return System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.Slerp(Q(i), Q(i + 1), sp > 0 ? (float)(tk - kf[i].Tick) / sp : 0)); }
+            return Q(kf.Count - 1);
+        }
+        System.Numerics.Matrix4x4 BL(Sims4ResourceExplorer.Preview.Ts4RigBone b) => System.Numerics.Matrix4x4.CreateFromQuaternion(b.Rotation);
+        System.Numerics.Matrix4x4 CL(Sims4ResourceExplorer.Preview.Ts4RigBone b, int tk) => chanByHash.TryGetValue(b.NameHash, out var ch) ? System.Numerics.Matrix4x4.CreateFromQuaternion(Samp(ch, tk)) : BL(b);
+        System.Numerics.Matrix4x4 IV(System.Numerics.Matrix4x4 m) { System.Numerics.Matrix4x4.Invert(m, out var r); return r; }
+        var Wb2 = new Dictionary<uint, System.Numerics.Matrix4x4>(); var Wc02 = new Dictionary<uint, System.Numerics.Matrix4x4>();
+        foreach (var b in ord) { var pb = b.ParentHash is uint ph && Wb2.TryGetValue(ph, out var m) ? m : System.Numerics.Matrix4x4.Identity; Wb2[b.NameHash] = BL(b) * pb; var pc = b.ParentHash is uint ph0 && Wc02.TryGetValue(ph0, out var m0) ? m0 : System.Numerics.Matrix4x4.Identity; Wc02[b.NameHash] = CL(b, 0) * pc; }
+        void DumpRetarget(int tk)
+        {
+            var Wc = new Dictionary<uint, System.Numerics.Matrix4x4>(); var Wa = new Dictionary<uint, System.Numerics.Matrix4x4>(); var La = new Dictionary<uint, System.Numerics.Quaternion>();
+            foreach (var b in ord) { var pc = b.ParentHash is uint ph && Wc.TryGetValue(ph, out var m) ? m : System.Numerics.Matrix4x4.Identity; Wc[b.NameHash] = CL(b, tk) * pc; Wa[b.NameHash] = Wb2[b.NameHash] * IV(Wc02[b.NameHash]) * Wc[b.NameHash]; }
+            foreach (var b in ord) { var pa = b.ParentHash is uint ph && Wa.TryGetValue(ph, out var m) ? m : System.Numerics.Matrix4x4.Identity; La[b.NameHash] = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromRotationMatrix(Wa[b.NameHash] * IV(pa))); }
+            // FK positions with La rotations + bind positions.
+            var fk = new Dictionary<uint, System.Numerics.Matrix4x4>();
+            System.Numerics.Vector3 P(string nm) { var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(nm); return fk.TryGetValue(h, out var w) ? w.Translation : default; }
+            foreach (var b in ord) { var local = System.Numerics.Matrix4x4.CreateScale(b.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(La[b.NameHash]) * System.Numerics.Matrix4x4.CreateTranslation(b.Position); var pw = b.ParentHash is uint ph && fk.TryGetValue(ph, out var m) ? m : System.Numerics.Matrix4x4.Identity; fk[b.NameHash] = local * pw; }
+            Console.WriteLine($"  tick {tk,3}: Head=({P("b__Head__").Y:0.00},{P("b__Head__").Z:0.00}) Pelvis=({P("b__Pelvis__").Y:0.00},{P("b__Pelvis__").Z:0.00}) L_Hand=({P("b__L_Hand__").X:0.00},{P("b__L_Hand__").Y:0.00},{P("b__L_Hand__").Z:0.00}) L_Foot=({P("b__L_Foot__").Y:0.00},{P("b__L_Foot__").Z:0.00}) L_Calf.Y={P("b__L_Calf__").Y:0.00}");
+        }
+        Console.WriteLine("clip-decode: ===== WORLD-RETARGET FK (tick0 must == bind A-pose: Head Y1.67, Hand ±0.59/1.09, Foot Y0.11) =====");
+        DumpRetarget(0);
+        DumpRetarget(Math.Max(1, clip.NumTicks / 3));
+        DumpRetarget(Math.Max(1, clip.NumTicks / 2));
+    }
+    Console.WriteLine($"clip-decode: bones that MOVE >2°: {motion.Count(m => m.deg > 2)} / {motion.Count}; arms/legs specifically:");
+    foreach (var b in new[] { "b__L_Clavicle__", "b__L_UpperArm__", "b__L_Forearm__", "b__L_Hand__", "b__L_Thigh__", "b__L_Calf__", "b__L_Foot__", "b__Pelvis__" })
+    {
+        var mm = motion.FirstOrDefault(m => m.bone == b);
+        Console.WriteLine($"    {b,-22} {(mm.bone == null ? "(no/constant channel)" : $"{mm.deg:0.0}° max")}");
+    }
+
+    // ===== TRUE-REST RETARGET LAB (reproduces the Unity builder offline) =====
+    // Loads the ANIMATION rig (52385BC57E4DB284), FKs its rest (sanity), then FKs the retargeted pose
+    // under CANDIDATE formulas so the correct one is proven numerically BEFORE another Unity round-trip.
+    {
+        var animRigRes = await cdStore.GetResourcesByFullInstanceAsync(0x52385BC57E4DB284UL, CancellationToken.None);
+        var animRigRec = animRigRes.FirstOrDefault(r => r.Key.TypeName == "Rig");
+        if (animRigRec is null) { Console.WriteLine("retarget-lab: anim rig NOT FOUND"); return 0; }
+        var animRigBytes = await cdCat.GetResourceBytesAsync(animRigRec.PackagePath, animRigRec.Key, false, CancellationToken.None, null);
+        var animRig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(animRigBytes);
+        var srcByHash = new Dictionary<uint, Sims4ResourceExplorer.Preview.Ts4RigBone>();
+        foreach (var b in animRig.Bones) srcByHash[b.NameHash] = b;
+
+        // --- 1. FK the ANIM RIG's own rest pose (its own hierarchy/positions): standing? ---
+        var srcOrd = animRig.Bones.ToList(); // rig bones come parent-before-child
+        var srcW = new Dictionary<uint, System.Numerics.Matrix4x4>();
+        foreach (var b in srcOrd)
+        {
+            var local = System.Numerics.Matrix4x4.CreateScale(b.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(b.Rotation) * System.Numerics.Matrix4x4.CreateTranslation(b.Position);
+            var pw = b.ParentHash is uint ph && srcW.TryGetValue(ph, out var m) ? m : System.Numerics.Matrix4x4.Identity;
+            srcW[b.NameHash] = local * pw;
+        }
+        System.Numerics.Vector3 SP(string nm) { var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(nm); return srcW.TryGetValue(h, out var w) ? w.Translation : new System.Numerics.Vector3(float.NaN, 0, 0); }
+        Console.WriteLine($"retarget-lab: ANIM RIG rest FK: Head=({SP("b__Head__").X:0.00},{SP("b__Head__").Y:0.00},{SP("b__Head__").Z:0.00}) Pelvis=({SP("b__Pelvis__").Y:0.00}) L_Foot=({SP("b__L_Foot__").Y:0.00},{SP("b__L_Foot__").Z:0.00}) L_Hand=({SP("b__L_Hand__").X:0.00},{SP("b__L_Hand__").Y:0.00},{SP("b__L_Hand__").Z:0.00}) bones={animRig.Bones.Count}");
+
+        // Source-rest WORLD ORIENTATION (quaternion chain over the anim rig's own hierarchy).
+        var WsQ = new Dictionary<uint, System.Numerics.Quaternion>();
+        foreach (var b in srcOrd)
+        {
+            var pq = b.ParentHash is uint ph && WsQ.TryGetValue(ph, out var q) ? q : System.Numerics.Quaternion.Identity;
+            WsQ[b.NameHash] = System.Numerics.Quaternion.Normalize(b.Rotation * pq); // row-convention: local*parent
+        }
+        // Target bind WORLD ORIENTATION over auRig hierarchy.
+        var ordT = hashToBone.Values.OrderBy(b => { int d = 0; var p = b.ParentHash; var g = 0; while (p is uint ph && hashToBone.TryGetValue(ph, out var pb) && g++ < 300) { d++; p = pb.ParentHash; } return d; }).ToList();
+        var WbQ = new Dictionary<uint, System.Numerics.Quaternion>();
+        foreach (var b in ordT)
+        {
+            var pq = b.ParentHash is uint ph && WbQ.TryGetValue(ph, out var q) ? q : System.Numerics.Quaternion.Identity;
+            WbQ[b.NameHash] = System.Numerics.Quaternion.Normalize(b.Rotation * pq);
+        }
+
+        // Clip channels + sampler (dedup: last orientation channel per target wins).
+        var oriByHash = new Dictionary<uint, Sims4ResourceExplorer.Preview.Ts4ClipChannel>();
+        foreach (var ch in clip.Channels)
+            if (ch.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation && ch.Keyframes.Count > 0)
+                oriByHash[ch.TargetHash] = ch;
+        System.Numerics.Quaternion SampQ(Sims4ResourceExplorer.Preview.Ts4ClipChannel ch, int tk)
+        {
+            var kf = ch.Keyframes; System.Numerics.Quaternion Q(int i) => new(kf[i].X, kf[i].Y, kf[i].Z, kf[i].W);
+            if (kf.Count == 1 || tk <= kf[0].Tick) return Q(0);
+            if (tk >= kf[^1].Tick) return Q(kf.Count - 1);
+            for (var i = 0; i < kf.Count - 1; i++) if (tk >= kf[i].Tick && tk <= kf[i + 1].Tick) { var sp = kf[i + 1].Tick - kf[i].Tick; return System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.Slerp(Q(i), Q(i + 1), sp > 0 ? (float)(tk - kf[i].Tick) / sp : 0)); }
+            return Q(kf.Count - 1);
+        }
+
+        // Candidate retargets → final LOCAL rotation per bone at tick t.
+        // A: Unity-current  — Wc/Wc0 chains over TARGET hierarchy (rest fallback tick0/bind), Wa=Wc*invWc0*Wb (LEFT delta, no F).
+        // B: T-conjugation  — La = inv(T(parent)) * clipLocal * T(bone), T(b)=inv(Ws(b))*Wb(b) (per-bone frame conversion; F=identity).
+        // C: local-right    — La = bindLocal * inv(srcRestLocal) * clipLocal (delta in source bone frame, right-composed).
+        System.Numerics.Quaternion Inv(System.Numerics.Quaternion q) => System.Numerics.Quaternion.Inverse(q);
+        Dictionary<uint, System.Numerics.Quaternion> Candidate(char mode, int tk)
+        {
+            var la = new Dictionary<uint, System.Numerics.Quaternion>();
+            if (mode == 'A')
+            {
+                var Wc = new Dictionary<uint, System.Numerics.Quaternion>(); var Wc0 = new Dictionary<uint, System.Numerics.Quaternion>(); var Wa = new Dictionary<uint, System.Numerics.Quaternion>();
+                foreach (var b in ordT)
+                {
+                    var pC = b.ParentHash is uint ph && Wc.TryGetValue(ph, out var q1) ? q1 : System.Numerics.Quaternion.Identity;
+                    var pC0 = b.ParentHash is uint ph2 && Wc0.TryGetValue(ph2, out var q2) ? q2 : System.Numerics.Quaternion.Identity;
+                    var cl = oriByHash.TryGetValue(b.NameHash, out var ch) ? SampQ(ch, tk) : b.Rotation;
+                    var rest = srcByHash.TryGetValue(b.NameHash, out var sb) ? sb.Rotation : (oriByHash.TryGetValue(b.NameHash, out var ch0) ? SampQ(ch0, 0) : b.Rotation);
+                    Wc[b.NameHash] = System.Numerics.Quaternion.Normalize(cl * pC);       // row conv: local*parent
+                    Wc0[b.NameHash] = System.Numerics.Quaternion.Normalize(rest * pC0);
+                    // Unity Wa = Wc*inv(Wc0)*Wb in UNITY q-mult (column). Unity q1*q2 == numerics q2*q1 → numerics: Wb*inv(Wc0)... careful:
+                    // Unity: Wa_u = Wc_u * inv(Wc0_u) * Wb_u. Numerics equivalent (reverse whole product): Wa_n = Wb_n * inv(Wc0_n) * Wc_n.
+                    Wa[b.NameHash] = System.Numerics.Quaternion.Normalize(WbQ[b.NameHash] * Inv(Wc0[b.NameHash]) * Wc[b.NameHash]);
+                }
+                foreach (var b in ordT)
+                {
+                    var paWa = b.ParentHash is uint ph && Wa.TryGetValue(ph, out var q) ? q : System.Numerics.Quaternion.Identity;
+                    la[b.NameHash] = System.Numerics.Quaternion.Normalize(Wa[b.NameHash] * Inv(paWa)); // numerics local = W * inv(parentW)
+                }
+            }
+            else if (mode == 'B')
+            {
+                foreach (var b in ordT)
+                {
+                    if (!oriByHash.TryGetValue(b.NameHash, out var ch) || !srcByHash.TryGetValue(b.NameHash, out var sb)) { la[b.NameHash] = b.Rotation; continue; }
+                    var Tb = System.Numerics.Quaternion.Normalize(WbQ[b.NameHash] * Inv(WsQ[b.NameHash]));   // numerics: maps src world→tgt world for this bone
+                    var Tp = b.ParentHash is uint ph && WsQ.TryGetValue(ph, out var wsp) && WbQ.TryGetValue(ph, out var wbp)
+                        ? System.Numerics.Quaternion.Normalize(wbp * Inv(wsp)) : System.Numerics.Quaternion.Identity;
+                    var cl = SampQ(ch, tk);
+                    // Unity: La_u = inv(T(p)) * clipLocal * T(b) with T_u(b)=inv(Ws_u)*Wb_u. Numerics reverse: La_n = T_n(b) * clipLocal_n * inv(T_n(p))
+                    la[b.NameHash] = System.Numerics.Quaternion.Normalize(Tb * cl * Inv(Tp));
+                }
+            }
+            else if (mode == 'C')
+            {
+                foreach (var b in ordT)
+                {
+                    if (!oriByHash.TryGetValue(b.NameHash, out var ch) || !srcByHash.TryGetValue(b.NameHash, out var sb)) { la[b.NameHash] = b.Rotation; continue; }
+                    var cl = SampQ(ch, tk);
+                    // Unity: La_u = bindLocal * inv(srcRest) * clipLocal → numerics: clipLocal * inv(srcRest) * bindLocal
+                    la[b.NameHash] = System.Numerics.Quaternion.Normalize(cl * Inv(sb.Rotation) * b.Rotation);
+                }
+            }
+            else // D: DIRECT — clip locals ARE auRig-relative (loco clips are authored on auRig)
+            {
+                foreach (var b in ordT)
+                    la[b.NameHash] = oriByHash.TryGetValue(b.NameHash, out var ch) ? SampQ(ch, tk) : b.Rotation;
+            }
+            return la;
+        }
+        void FkDump(char mode, int tk)
+        {
+            var la = Candidate(mode, tk);
+            var fk = new Dictionary<uint, System.Numerics.Matrix4x4>();
+            foreach (var b in ordT)
+            {
+                var q = la.TryGetValue(b.NameHash, out var lq) ? lq : b.Rotation;
+                var local = System.Numerics.Matrix4x4.CreateScale(b.Scale) * System.Numerics.Matrix4x4.CreateFromQuaternion(q) * System.Numerics.Matrix4x4.CreateTranslation(b.Position);
+                var pw = b.ParentHash is uint ph && fk.TryGetValue(ph, out var m) ? m : System.Numerics.Matrix4x4.Identity;
+                fk[b.NameHash] = local * pw;
+            }
+            System.Numerics.Vector3 P(string nm) { var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(nm); return fk.TryGetValue(h, out var w) ? w.Translation : default; }
+            Console.WriteLine($"  [{mode}] tick {tk,3}: Head=({P("b__Head__").X,5:0.00},{P("b__Head__").Y,5:0.00},{P("b__Head__").Z,5:0.00}) Pelvis.Y={P("b__Pelvis__").Y:0.00} L_Foot=({P("b__L_Foot__").Y,5:0.00},{P("b__L_Foot__").Z,5:0.00}) R_Foot.Y={P("b__R_Foot__").Y:0.00} L_Hand=({P("b__L_Hand__").X,5:0.00},{P("b__L_Hand__").Y,5:0.00},{P("b__L_Hand__").Z,5:0.00})");
+        }
+        // How far is the clip's tick-0 local from the ANIM RIG rest, per key bone? A mid-stride pose
+        // should be small on the spine (<15°) — a ~90° outlier on ROOT_bind = trajectory-frame root.
+        Console.WriteLine("retarget-lab: walk tick-0 local vs anim-rig rest (deg):");
+        foreach (var nm in new[] { "b__ROOT_bind__", "b__Pelvis__", "b__Spine0__", "b__Spine2__", "b__L_Thigh__", "b__L_Calf__", "b__L_UpperArm__", "b__Head__" })
+        {
+            var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(nm);
+            if (!oriByHash.TryGetValue(h, out var ch) || !srcByHash.TryGetValue(h, out var sb)) { Console.WriteLine($"    {nm,-18} (missing)"); continue; }
+            var q0 = SampQ(ch, 0);
+            var dot = Math.Abs(q0.X * sb.Rotation.X + q0.Y * sb.Rotation.Y + q0.Z * sb.Rotation.Z + q0.W * sb.Rotation.W);
+            Console.WriteLine($"    {nm,-18} {2 * Math.Acos(Math.Min(1, dot)) * 180 / Math.PI,6:0.0}°  clip0=({q0.X:0.00},{q0.Y:0.00},{q0.Z:0.00},{q0.W:0.00})  rest=({sb.Rotation.X:0.00},{sb.Rotation.Y:0.00},{sb.Rotation.Z:0.00},{sb.Rotation.W:0.00})");
+        }
+
+        // TRANSLATION SURVEY: which bones have ANIMATED translation channels (range > 2mm)? Loco carries
+        // root motion on ROOT_bind; dances may carry pelvis bob on b__Pelvis__ directly. Also compare
+        // tick-0 with the auRig bind position (frame check before applying).
+        {
+            Console.WriteLine("trans-survey: bone | keys | tick0 | range(m) | auRigBindPos");
+            foreach (var ch in clip.Channels.Where(c => c.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Translation && c.Keyframes.Count > 0))
+            {
+                if (!hashToBone.TryGetValue(ch.TargetHash, out var bb)) continue;
+                float mnx = float.MaxValue, mny = float.MaxValue, mnz = float.MaxValue, mxx = float.MinValue, mxy = float.MinValue, mxz = float.MinValue;
+                foreach (var k in ch.Keyframes)
+                {
+                    mnx = Math.Min(mnx, k.X); mxx = Math.Max(mxx, k.X);
+                    mny = Math.Min(mny, k.Y); mxy = Math.Max(mxy, k.Y);
+                    mnz = Math.Min(mnz, k.Z); mxz = Math.Max(mxz, k.Z);
+                }
+                var range = Math.Max(mxx - mnx, Math.Max(mxy - mny, mxz - mnz));
+                if (range < 0.002f) continue; // constant = bone length, skip
+                var k0 = ch.Keyframes[0];
+                Console.WriteLine($"trans-survey: {bb.Name,-20} keys={ch.Keyframes.Count,3} t0=({k0.X:0.000},{k0.Y:0.000},{k0.Z:0.000}) range={range:0.000} bind=({bb.Position.X:0.000},{bb.Position.Y:0.000},{bb.Position.Z:0.000})");
+            }
+        }
+
+        // ROOT MOTION: dump every b__ROOT__/b__ROOT_bind__ channel with its keyframes (loco clips carry
+        // the forward advance + pelvis bob on the ROOT_bind translation in the trajectory frame).
+        foreach (var nm in new[] { "b__ROOT__", "b__ROOT_bind__" })
+        {
+            var h = Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32(nm);
+            foreach (var ch in clip.Channels.Where(c => c.TargetHash == h))
+            {
+                var keys = string.Join(" ", ch.Keyframes.Take(8).Select(k => ch.SubTarget == Sims4ResourceExplorer.Preview.Ts4ClipSubTarget.Orientation
+                    ? $"[t{k.Tick}:({k.X:0.00},{k.Y:0.00},{k.Z:0.00},{k.W:0.00})]" : $"[t{k.Tick}:({k.X:0.000},{k.Y:0.000},{k.Z:0.000})]"));
+                Console.WriteLine($"root-motion: {nm,-14} {ch.SubTarget,-11} t{ch.ChannelType} keys={ch.Keyframes.Count}: {keys}{(ch.Keyframes.Count > 8 ? " ..." : "")}");
+                if (ch.Keyframes.Count > 8)
+                {
+                    var last = ch.Keyframes[^1];
+                    Console.WriteLine($"root-motion:   ... last=[t{last.Tick}:({last.X:0.000},{last.Y:0.000},{last.Z:0.000},{last.W:0.000})]");
+                }
+            }
+        }
+
+        Console.WriteLine("retarget-lab: candidates A=Unity-current B=T-conjugation C=local-right (standing: Head~1.6, feet~0.1, hands LOW ~0.5-0.8 for walk):");
+        foreach (var mode in new[] { 'A', 'B', 'C' })
+            foreach (var tk in new[] { 0, Math.Max(1, clip.NumTicks / 2), Math.Max(1, clip.NumTicks - 1) })
+                FkDump(mode, tk);
+
+        // Same candidates with the ROOT chain FROZEN at our bind (in-place playback: loco clips carry
+        // the root in the TRAJECTORY frame — drop root rotation like we already drop root translation).
+        var rootHashes = new[] { Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32("b__ROOT__"), Sims4ResourceExplorer.Preview.Ts4ClipDecoder.Fnv32("b__ROOT_bind__") };
+        foreach (var rh in rootHashes) oriByHash.Remove(rh);
+        Console.WriteLine("retarget-lab: SAME candidates + D=DIRECT(auRig-relative), ROOT/ROOT_bind channels DROPPED (frozen at our bind):");
+        foreach (var mode in new[] { 'A', 'B', 'C', 'D' })
+            foreach (var tk in new[] { 0, Math.Max(1, clip.NumTicks / 2), Math.Max(1, clip.NumTicks - 1) })
+                FkDump(mode, tk);
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--find-anim-rig", StringComparison.OrdinalIgnoreCase))
+{
+    // Scan ALL Rig resources for the clip AUTHORING rig — the skeleton whose REST pose matches the
+    // locals a CAS stand idle HOLDS constant (clip rest fingerprint): b__L_Thigh__ rot≈(0,0,-0.645,0.764),
+    // b__ROOT_bind__ rot≈(0,-0.707,0,0.707), b__Spine0/1/2__ pos.X≈0.0825. auRig does NOT match (thigh
+    // ≈identity, spine 0.117/0.162/0.16) — the animation rig is a different resource. Finding it turns
+    // the retarget into a textbook source-rest→target-rest mapping (fixes sideways knees).
+    var farDir = args.Length > 1 ? args[1] : @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var farCache = new ProbeCacheService(Path.GetFullPath(farDir + "/.."));
+    farCache.EnsureCreated();
+    var farStore = new SqliteIndexStore(farCache);
+    await farStore.InitializeAsync(CancellationToken.None);
+    var farCat = new LlamaResourceCatalogService();
+    var farRigs = await farStore.GetResourcesByTypeNameAsync("Rig", CancellationToken.None);
+    Console.WriteLine($"find-anim-rig: scanning {farRigs.Count} Rig resource(s)...");
+    var qThigh = new System.Numerics.Quaternion(0, 0, -0.645f, 0.764f);
+    var qRoot = new System.Numerics.Quaternion(0, -0.7071f, 0, 0.7071f);
+    static double AngleDeg(System.Numerics.Quaternion a, System.Numerics.Quaternion b)
+    {
+        a = System.Numerics.Quaternion.Normalize(a); b = System.Numerics.Quaternion.Normalize(b);
+        var dot = Math.Abs(a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W);
+        return 2 * Math.Acos(Math.Min(1, dot)) * 180 / Math.PI;
+    }
+    var farResults = new List<(double score, string desc)>();
+    var farSeen = new HashSet<ulong>();
+    foreach (var rr in farRigs)
+    {
+        if (!farSeen.Add(rr.Key.FullInstance)) continue; // same rig in multiple packages
+        byte[] rb; try { rb = await farCat.GetResourceBytesAsync(rr.PackagePath, rr.Key, false, CancellationToken.None, null); } catch { continue; }
+        Sims4ResourceExplorer.Preview.Ts4RigResource rig;
+        try { rig = Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(rb); } catch { continue; }
+        if (rig.Bones.Count < 30) continue; // want humanoid-scale rigs
+        Sims4ResourceExplorer.Preview.Ts4RigBone? th = null, rt = null, s0 = null, s1 = null;
+        foreach (var b in rig.Bones)
+        {
+            if (b.Name == "b__L_Thigh__") th = b;
+            else if (b.Name == "b__ROOT_bind__") rt = b;
+            else if (b.Name == "b__Spine0__") s0 = b;
+            else if (b.Name == "b__Spine1__") s1 = b;
+        }
+        if (th is null || rt is null || s0 is null) continue;
+        var score = AngleDeg(th.Value.Rotation, qThigh) + AngleDeg(rt.Value.Rotation, qRoot)
+                    + Math.Abs(s0.Value.Position.X - 0.0825) * 500 + (s1 is null ? 0 : Math.Abs(s1.Value.Position.X - 0.0825) * 500);
+        farResults.Add((score, $"bones={rig.Bones.Count,3} inst={rr.Key.FullInstance:X16} pkg={Path.GetFileName(rr.PackagePath)} " +
+                               $"thighΔ={AngleDeg(th.Value.Rotation, qThigh):0.0}° rootΔ={AngleDeg(rt.Value.Rotation, qRoot):0.0}° sp0.X={s0.Value.Position.X:0.0000}"));
+    }
+    Console.WriteLine($"find-anim-rig: {farResults.Count} candidate rig(s) with Thigh+ROOT_bind+Spine0. Best 12 (score=angle°+posΔ, lower=better):");
+    foreach (var r in farResults.OrderBy(r => r.score).Take(12)) Console.WriteLine($"  score={r.score,8:0.00}  {r.desc}");
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--clips", StringComparison.OrdinalIgnoreCase))
+{
+    // Enumerate CLIP (animation, type 0x6B20C4F3) resources, parse the CLIP_RESOURCE header (v14, per
+    // docs/references/external/Binary-Templates/Clip_0x6b20c4f3.bt), and report adult idle candidates +
+    // the S3_CLIP codec channel summary. Validates the parser end-to-end before the codec decode.
+    // Usage: --clips [<cacheDir>] [<filterSubstr>]
+    var clDir = args.Length > 1 ? args[1] : @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var clFilter = args.Length > 2 ? args[2] : "idle";
+    var clCache = new ProbeCacheService(Path.GetFullPath(clDir + "/.."));
+    clCache.EnsureCreated();
+    var clStore = new SqliteIndexStore(clCache);
+    await clStore.InitializeAsync(CancellationToken.None);
+    var clCat = new LlamaResourceCatalogService();
+
+    var clips = await clStore.GetResourcesByTypeNameAsync("Clip", CancellationToken.None);
+    if (clips.Count == 0) clips = await clStore.GetResourcesByTypeNameAsync("Animation", CancellationToken.None);
+    Console.WriteLine($"clips: {clips.Count} Clip resource(s) indexed; filter='{clFilter}'");
+
+    static string ReadIoString(BinaryReader r)
+    {
+        var len = r.ReadUInt32();
+        if (len > 4096) throw new InvalidDataException("io string too long");
+        return System.Text.Encoding.ASCII.GetString(r.ReadBytes((int)len));
+    }
+
+    // Parse just enough of the header to get version/name/rig; returns (version, name, rig, codecLen, codecPos) or null.
+    static (uint ver, string name, string rig, int channelCount)? ParseClip(byte[] b)
+    {
+        try
+        {
+            using var ms = new MemoryStream(b);
+            using var r = new BinaryReader(ms);
+            var ver = r.ReadUInt32();
+            if (ver != 14) return null;
+            r.ReadUInt32();                  // flags
+            r.ReadSingle();                  // duration
+            r.BaseStream.Position += 4 * 4;  // initialOffsetQ
+            r.BaseStream.Position += 3 * 4;  // initialOffsetT
+            r.ReadUInt32();                  // referenceNamespaceHash (v>=5)
+            r.ReadUInt32(); r.ReadUInt32();  // surface ns + joint (v>=10)
+            r.ReadUInt32();                  // surfacechild ns (v>=11)
+            var name = ReadIoString(r);      // clipName (v>=7)
+            var rig = ReadIoString(r);       // rigNamespace
+            var explicitCount = r.ReadUInt32(); // v>=4
+            for (var i = 0; i < explicitCount && i < 256; i++) ReadIoString(r);
+            var slotCount = r.ReadUInt32();  // ikConfiguration
+            for (var i = 0; i < slotCount && i < 256; i++) { r.ReadUInt16(); r.ReadUInt16(); ReadIoString(r); ReadIoString(r); }
+            var evCount = r.ReadUInt32();    // events
+            for (var i = 0; i < evCount && i < 4096; i++) { r.ReadUInt32(); var sz = r.ReadUInt32(); r.BaseStream.Position += sz; }
+            var codecLen = r.ReadUInt32();
+            var channelCount = 0;
+            if (codecLen > 0)
+            {
+                var s3Start = r.BaseStream.Position;
+                r.BaseStream.Position = s3Start + 8 + 4 + 4 + 4; // formatToken[8], version, flags, tickLength
+                r.ReadUInt16(); r.ReadUInt16();  // numTicks, padding
+                channelCount = (int)r.ReadUInt32();
+            }
+            return (ver, name, rig, channelCount);
+        }
+        catch { return null; }
+    }
+
+    int clParsed = 0, clMatch = 0;
+    var clHits = new List<(string name, string rig, int ch, string tgi)>();
+    foreach (var res in clips)
+    {
+        byte[] bytes;
+        try { bytes = await clCat.GetResourceBytesAsync(res.PackagePath, res.Key, false, CancellationToken.None, null); }
+        catch { continue; }
+        var p = ParseClip(bytes);
+        if (p is null) continue;
+        clParsed++;
+        if (p.Value.name.IndexOf(clFilter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+        clMatch++;
+        if (clHits.Count < 40) clHits.Add((p.Value.name, p.Value.rig, p.Value.channelCount, res.Key.FullTgi));
+    }
+    Console.WriteLine($"clips: parsed={clParsed} matched '{clFilter}'={clMatch}");
+    foreach (var h in clHits.OrderBy(h => h.name))
+    {
+        Console.WriteLine($"  {h.name,-50} rig={h.rig,-28} channels={h.ch,-4} {h.tgi}");
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--sculpt-normals", StringComparison.OrdinalIgnoreCase))
+{
+    // EA's real FACE skin-detail NORMAL maps live in Sculpt resources as `bumpmapRef` (a DST/DDS),
+    // present when version>0x60. Enumerate adult-female Sculpts, read bumpmapRef, and dump a few as PNG
+    // to verify they're genuine pore/wrinkle normals (not albedo-derived). Layout: TS4SimRipper Sculpt.cs.
+    // Usage: --sculpt-normals [<cacheDir>]
+    var snDir = args.Length > 1 ? args[1] : @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var snCache = new ProbeCacheService(Path.GetFullPath(snDir + "/.."));
+    snCache.EnsureCreated();
+    var snStore = new SqliteIndexStore(snCache);
+    await snStore.InitializeAsync(CancellationToken.None);
+    var snCat = new LlamaResourceCatalogService();
+    var snOut = Path.Combine(Path.GetTempPath(), "sculpt-normals");
+    Directory.CreateDirectory(snOut);
+
+    var sculpts = await snStore.GetResourcesByTypeNameAsync("Sculpt", CancellationToken.None);
+    Console.WriteLine($"sculpt-normals: {sculpts.Count} Sculpt resource(s) indexed");
+    int parsed = 0, af = 0, afWithBump = 0, dumped = 0;
+    var regionTally = new Dictionary<uint, int>();
+    var snSeen = new HashSet<ulong>();
+    foreach (var r in sculpts)
+    {
+        byte[] bytes;
+        try { bytes = await snCat.GetResourceBytesAsync(r.PackagePath, r.Key, false, CancellationToken.None, null); }
+        catch { continue; }
+        (uint version, uint ag, uint region, uint bumpType, ulong bumpInst) s;
+        try { s = ParseSculpt(bytes); } catch { continue; }
+        parsed++;
+        var isAf = (s.ag & 0x2000u) != 0 && (s.ag & 0x20u) != 0;
+        if (!isAf) continue;
+        af++;
+        if (s.bumpInst == 0) continue;
+        afWithBump++;
+        regionTally[s.region] = regionTally.TryGetValue(s.region, out var c) ? c + 1 : 1;
+        if (dumped < 24 && snSeen.Add(s.bumpInst))
+        {
+            var bumpRes = (await snStore.GetResourcesByFullInstanceAsync(s.bumpInst, CancellationToken.None))
+                .FirstOrDefault(x => x.Key.Type == s.bumpType);
+            if (bumpRes is not null)
+            {
+                try
+                {
+                    var png = await snCat.GetTexturePngAsync(bumpRes.PackagePath, bumpRes.Key, CancellationToken.None, null);
+                    if (png is { Length: > 0 })
+                    {
+                        var f = Path.Combine(snOut, $"sculpt_r{s.region:X}_{s.bumpInst:X16}.png");
+                        await File.WriteAllBytesAsync(f, png, CancellationToken.None);
+                        Console.WriteLine($"  DUMPED region=0x{s.region:X} bump={s.bumpType:X8}:{s.bumpInst:X16} -> {Path.GetFileName(f)} ({png.Length:N0} B)");
+                        dumped++;
+                    }
+                }
+                catch (Exception ex) { Console.WriteLine($"  region=0x{s.region:X} bump decode failed: {ex.Message}"); }
+            }
+        }
+    }
+    Console.WriteLine($"sculpt-normals: parsed={parsed} adultFemale={af} af-with-bumpmap={afWithBump} dumped={dumped} -> {snOut}");
+    Console.WriteLine("  af bumpmap regions: " + string.Join(", ", regionTally.OrderBy(k => k.Key).Select(k => $"0x{k.Key:X}={k.Value}")));
+
+    static (uint version, uint ag, uint region, uint bumpType, ulong bumpInst) ParseSculpt(byte[] b)
+    {
+        using var ms = new MemoryStream(b);
+        using var r = new BinaryReader(ms);
+        r.ReadUInt32(); // contextVersion
+        uint pk = r.ReadUInt32(), ek = r.ReadUInt32(), dk = r.ReadUInt32(), ok = r.ReadUInt32();
+        r.BaseStream.Position += ((long)(pk + ek + dk) * 16) + ((long)ok * 8); // skip key tables (TGI=16, ObjectData=8)
+        uint version = r.ReadUInt32();
+        uint ag = r.ReadUInt32();
+        uint region = r.ReadUInt32();
+        if (version > 0x60) r.ReadUInt32(); // subRegion
+        r.ReadUInt32(); // linkTag
+        r.ReadUInt64(); r.ReadUInt32(); r.ReadUInt32(); // textureRef (ITG)
+        uint bumpType = 0; ulong bumpInst = 0;
+        if (version > 0x60)
+        {
+            r.ReadUInt64(); r.ReadUInt32(); r.ReadUInt32(); // specularRef (ITG)
+            bumpInst = r.ReadUInt64(); bumpType = r.ReadUInt32(); r.ReadUInt32(); // bumpmapRef (ITG)
+        }
+        return (version, ag, region, bumpType, bumpInst);
+    }
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--cas-tuning", StringComparison.OrdinalIgnoreCase))
+{
+    // The AUTHORITATIVE CAS slider list: parse CASModifierTuning (type 0xF3ABFF3C) for the real
+    // ModifierName + Scale of every slider, map each via FNV64(name)=SMOD instance, and report whether
+    // its morph is BGEO (face) or DMap (body). This replaces region-code/scale guessing.
+    // Usage: --cas-tuning [<tuningPackage>] [<cacheDir>]
+    var ctPkg = args.Length > 1 ? args[1] : @"docs\references\external\TS4SimRipper\src\CASModifierTuning.package";
+    if (!File.Exists(ctPkg)) { Console.Error.WriteLine($"tuning package not found: {ctPkg}"); return 1; }
+    var ctDir = args.Length > 2 ? args[2] : @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    var ctCache = new ProbeCacheService(Path.GetFullPath(ctDir + "/.."));
+    ctCache.EnsureCreated();
+    var ctStore = new SqliteIndexStore(ctCache);
+    await ctStore.InitializeAsync(CancellationToken.None);
+    var ctCat = new LlamaResourceCatalogService();
+    var ctSrc = new DataSourceDefinition(Guid.NewGuid(), "CasTuning", Path.GetDirectoryName(Path.GetFullPath(ctPkg))!, SourceKind.Game);
+    var ctScan = await ctCat.ScanPackageAsync(ctSrc, ctPkg, progress: null, CancellationToken.None);
+    var ctRes = ctScan.Resources.Where(r => r.Key.Type == 0xF3ABFF3Cu).ToList();
+    Console.WriteLine($"cas-tuning: {ctScan.Resources.Count} resources, {ctRes.Count} CASModifierTuning (0xF3ABFF3C)");
+
+    if (Environment.GetEnvironmentVariable("CT_DUMP") == "1")
+    {
+        foreach (var res in ctRes)
+        {
+            var fb = await ctCat.GetResourceBytesAsync(ctPkg, res.Key, false, CancellationToken.None, null);
+            var txt = System.Text.Encoding.UTF8.GetString(fb);
+            if (!txt.Contains("Client_CASModifierTuning")) continue;
+            Console.WriteLine("=== Client_CASModifierTuning XML (head) ===");
+            Console.WriteLine(txt.Length > 3500 ? txt.Substring(0, 3500) : txt);
+            Console.WriteLine("=== end ===");
+            break;
+        }
+    }
+
+    var rows = new List<(string Name, float Scale, string Ages, string Genders, string Species)>();
+    foreach (var res in ctRes)
+    {
+        byte[] xml;
+        try { xml = await ctCat.GetResourceBytesAsync(ctPkg, res.Key, false, CancellationToken.None, null); }
+        catch { continue; }
+        ParseCasTuning(xml, rows);
+    }
+    Console.WriteLine($"cas-tuning: parsed {rows.Count} modifier rows");
+
+    // Age/gender is the modifier-name prefix; "yf" = young-adult/adult female (Sims shares YA+Adult+Elder).
+    var af = rows.Where(r => r.Name.StartsWith("yf", StringComparison.OrdinalIgnoreCase))
+        .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+    Console.WriteLine($"cas-tuning: {af.Count} adult-female (yf*) sliders");
+    Console.WriteLine($"  {"name",-44} {"scale",8}  smod kind");
+    var outRows = new List<string>();
+    // Bone-hash → name map (auRig) so BOND adjustments are reported with real bone names.
+    var ctBoneNames = new Dictionary<uint, string>();
+    {
+        var auI = Sims4ResourceExplorer.Core.Ts4CanonicalRigCatalog.ComputeFnv64("auRig");
+        foreach (var rr in (await ctStore.GetResourcesByFullInstanceAsync(auI, CancellationToken.None)).Where(x => x.Key.TypeName == "Rig"))
+        {
+            try
+            {
+                var rb = await ctCat.GetResourceBytesAsync(rr.PackagePath, rr.Key, false, CancellationToken.None, null);
+                foreach (var bn in Sims4ResourceExplorer.Preview.Ts4RigResource.Parse(rb).Bones) ctBoneNames[bn.NameHash] = bn.Name;
+            }
+            catch { }
+        }
+    }
+
+    int withSmod = 0, faceN = 0, bodyN = 0, bondN = 0;
+    var bondDetails = new List<string>();
+    foreach (var r in af.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase))
+    {
+        var inst = Sims4ResourceExplorer.Core.Ts4CanonicalRigCatalog.ComputeFnv64(r.Name);
+        var smods = await ctStore.GetResourcesByFullInstanceAsync(inst, CancellationToken.None);
+        var smod = smods.FirstOrDefault(x => x.Key.Type == 0xC5F6763Eu);
+        var kind = "(no smod)";
+        if (smod is not null)
+        {
+            withSmod++;
+            try
+            {
+                var sb = await ctCat.GetResourceBytesAsync(smod.PackagePath, smod.Key, false, CancellationToken.None, null);
+                var sm = Sims4ResourceExplorer.Packages.Ts4SimModifierResource.Parse(sb);
+                var hasB = sm.BgeoKeys.Count > 0; var hasD = sm.HasShapeDeformerMap;
+                kind = hasB && hasD ? "bgeo+dmap" : hasB ? "bgeo" : hasD ? "dmap" : "(none)";
+                if (hasB) faceN++; if (hasD) bodyN++;
+                // BOND audit: does this slider ALSO adjust bones (scale/offset/rotation) that our
+                // Unity morph pipeline (BGEO+DMap only) currently DROPS?
+                if (sm.HasBondReference)
+                {
+                    var bonds = await ctStore.GetResourcesByFullInstanceAsync(sm.BonePoseKey.Instance, CancellationToken.None);
+                    var bondRes = bonds.FirstOrDefault(x => x.Key.Type == sm.BonePoseKey.Type);
+                    if (bondRes is not null)
+                    {
+                        try
+                        {
+                            var bb = await ctCat.GetResourceBytesAsync(bondRes.PackagePath, bondRes.Key, false, CancellationToken.None, null);
+                            var bond = Sims4ResourceExplorer.Packages.Ts4BondResource.Parse(bb);
+                            float maxScale = 0, maxOff = 0;
+                            var bones = new List<string>();
+                            foreach (var a in bond.Adjustments)
+                            {
+                                maxScale = Math.Max(maxScale, Math.Max(Math.Abs(a.ScaleX - 1), Math.Max(Math.Abs(a.ScaleY - 1), Math.Abs(a.ScaleZ - 1))));
+                                maxOff = Math.Max(maxOff, Math.Max(Math.Abs(a.OffsetX), Math.Max(Math.Abs(a.OffsetY), Math.Abs(a.OffsetZ))));
+                                bones.Add(ctBoneNames.TryGetValue(a.SlotHash, out var bn2) ? bn2 : $"0x{a.SlotHash:X8}");
+                            }
+                            if (bond.Adjustments.Count > 0 && (maxScale > 0.005f || maxOff > 0.002f))
+                            {
+                                bondN++;
+                                kind += "+BOND";
+                                bondDetails.Add($"  {r.Name,-44} bones={bond.Adjustments.Count} maxScaleDev={maxScale:0.000} maxOffset={maxOff:0.000}m [{string.Join(",", bones.Take(6))}{(bones.Count > 6 ? ",..." : "")}]");
+                            }
+                        }
+                        catch { kind += "+BOND?"; }
+                    }
+                }
+            }
+            catch { kind = "(parse fail)"; }
+        }
+        var nm = r.Name.Length > 44 ? r.Name.Substring(0, 44) : r.Name;
+        Console.WriteLine($"  {nm,-44} {r.Scale,8:0.###}  {(smod is null ? "-" : "Y")} {kind}  {inst:X16}");
+        outRows.Add($"{r.Name}\t{r.Scale}\t{(smod is null ? "" : $"C5F6763E:00000000:{inst:X16}")}\t{kind}\t{r.Ages.Trim()}\t{r.Genders.Trim()}");
+    }
+    Console.WriteLine($"cas-tuning: {withSmod}/{af.Count} have an SMOD; bgeo(face)={faceN} dmap(body)={bodyN} withActiveBOND={bondN}");
+    Console.WriteLine("cas-tuning: ===== sliders with a BONE component (dropped by the Unity pipeline!) =====");
+    foreach (var d in bondDetails) Console.WriteLine(d);
+    var ctTsv = Path.Combine(Path.GetTempPath(), "cas-tuning-af.tsv");
+    await File.WriteAllLinesAsync(ctTsv, outRows, CancellationToken.None);
+    Console.WriteLine($"cas-tuning: wrote {outRows.Count} rows -> {ctTsv}");
+
+    // Parse one Client_CASModifierTuning XML resource → EVERY modifier in its <L n="Modifiers"> list,
+    // each as (ModifierName, Scale). Age/gender/species live in the modifier-name prefix (yf/ym/tf/...).
+    static void ParseCasTuning(byte[] xmlBytes, List<(string Name, float Scale, string Ages, string Genders, string Species)> sink)
+    {
+        try
+        {
+            using var ms = new MemoryStream(xmlBytes);
+            using var reader = System.Xml.XmlReader.Create(ms, new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
+            string curName = ""; float curScale = float.NaN;
+            void Flush()
+            {
+                if (curName.Length > 0) sink.Add((curName.Trim(), curScale, "", "", ""));
+                curName = ""; curScale = float.NaN;
+            }
+            while (reader.Read())
+            {
+                if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
+                var n = reader.GetAttribute("n");
+                if (n == null) continue;
+                if (string.Equals(n, "ModifierName", StringComparison.Ordinal))
+                {
+                    Flush(); // emit the previous modifier before starting the next
+                    reader.Read();
+                    if (reader.NodeType == System.Xml.XmlNodeType.Text) curName = reader.Value;
+                }
+                else if (string.Equals(n, "Scale", StringComparison.Ordinal))
+                {
+                    reader.Read();
+                    if (reader.NodeType == System.Xml.XmlNodeType.Text &&
+                        float.TryParse(reader.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var s))
+                        curScale = s;
+                }
+            }
+            Flush();
+        }
+        catch { }
+    }
+
+    return 0;
+}
+
+if (args.Length > 0 && string.Equals(args[0], "--scan-smod-catalog", StringComparison.OrdinalIgnoreCase))
+{
+    // Enumerate ALL SMOD (SimModifier) resources from the index and tally which morph types
+    // (BOND / BGEO / DMap) each carries, grouped by (AgeGender, Region). This locates the real
+    // adult-female BODY slider morphs we can expose as Unity sliders — independent of any Sim's
+    // (often empty) modifier list.
+    var sscDir = args.Length > 1 ? args[1] : @"C:\Users\stani\AppData\Local\Sims4ResourceExplorer\Cache";
+    if (!Directory.Exists(sscDir)) { Console.Error.WriteLine($"Cache dir not found: {sscDir}"); return 1; }
+    var sscCache = new ProbeCacheService(Path.GetFullPath(sscDir + "/.."));
+    sscCache.EnsureCreated();
+    var sscStore = new SqliteIndexStore(sscCache);
+    await sscStore.InitializeAsync(CancellationToken.None);
+    var sscCat = new LlamaResourceCatalogService();
+
+    var sscSmods = await sscStore.GetResourcesByTypeNameAsync("SimModifier", CancellationToken.None);
+    Console.WriteLine($"scan-smod-catalog: {sscSmods.Count} SMOD resource(s) indexed");
+
+    var sscTally = new Dictionary<(uint ag, uint reg), (int total, int bond, int bgeo, int dmap)>();
+    var sscAfBgeo = new List<(string smodTgi, uint region, Sims4ResourceExplorer.Packages.Ts4BondResourceKey bgeoKey)>();
+    var sscParsed = 0; var sscFailed = 0;
+    foreach (var r in sscSmods)
+    {
+        byte[] sscBytes;
+        try { sscBytes = await sscCat.GetResourceBytesAsync(r.PackagePath, r.Key, raw: false, CancellationToken.None, null); }
+        catch { sscFailed++; continue; }
+        Sims4ResourceExplorer.Packages.Ts4SimModifierResource smod;
+        try { smod = Sims4ResourceExplorer.Packages.Ts4SimModifierResource.Parse(sscBytes); } catch { sscFailed++; continue; }
+        sscParsed++;
+        var hasBond = smod.HasBondReference;
+        var hasBgeo = smod.BgeoKeys.Count > 0;
+        var hasDmap = smod.HasShapeDeformerMap || smod.HasNormalDeformerMap;
+        if (!hasBond && !hasBgeo && !hasDmap) continue;
+        if (hasBgeo && (smod.AgeGender & 0x2000u) != 0 && (smod.AgeGender & 0x20u) != 0)
+            sscAfBgeo.Add((r.Key.FullTgi, smod.Region, smod.BgeoKeys[0]));
+        var k = (smod.AgeGender, smod.Region);
+        sscTally.TryGetValue(k, out var cur);
+        sscTally[k] = (cur.total + 1, cur.bond + (hasBond ? 1 : 0), cur.bgeo + (hasBgeo ? 1 : 0), cur.dmap + (hasDmap ? 1 : 0));
+    }
+    Console.WriteLine($"  parsed={sscParsed} failed={sscFailed} morph-bearing (ageGender,region) groups={sscTally.Count}");
+    Console.WriteLine($"  (AgeGender flags: female=0x2000, male=0x1000; adult=0x20, young-adult=0x10)");
+    Console.WriteLine($"  {"AgeGender",-12} {"Region",-12}  total  BOND  BGEO  DMap");
+    foreach (var kv in sscTally.OrderByDescending(x => x.Value.total))
+    {
+        Console.WriteLine($"  0x{kv.Key.ag:X8}   0x{kv.Key.reg:X8}  {kv.Value.total,5} {kv.Value.bond,5} {kv.Value.bgeo,5} {kv.Value.dmap,5}");
+    }
+
+    // --- Adult-female BGEO sample: prove real per-vertex deltas + list concrete SMOD instances. ---
+    Console.WriteLine();
+    var sscAfDistinct = sscAfBgeo.GroupBy(z => z.smodTgi).Select(g => g.First())
+        .OrderBy(z => z.region).ToList();
+    Console.WriteLine($"  adult-female BGEO SMODs: {sscAfBgeo.Count} ({sscAfDistinct.Count} distinct). First 16 distinct:");
+    foreach (var x in sscAfDistinct.Take(16))
+    {
+        Console.WriteLine($"    SMOD {x.smodTgi}  region=0x{x.region:X}  -> BGEO {x.bgeoKey.Type:X8}:{x.bgeoKey.Instance:X16}");
+    }
+    Console.WriteLine();
+    Console.WriteLine($"  Resolving first 8 distinct BGEOs (vertex deltas):");
+    foreach (var x in sscAfDistinct.Take(8))
+    {
+        var bgeoRes = (await sscStore.GetResourcesByFullInstanceAsync(x.bgeoKey.Instance, CancellationToken.None))
+            .FirstOrDefault(rr => rr.Key.Type == x.bgeoKey.Type);
+        if (bgeoRes is null) { Console.WriteLine($"    BGEO {x.bgeoKey.Instance:X16}: not in index"); continue; }
+        byte[] bb;
+        try { bb = await sscCat.GetResourceBytesAsync(bgeoRes.PackagePath, bgeoRes.Key, raw: false, CancellationToken.None, null); }
+        catch { Console.WriteLine($"    BGEO {x.bgeoKey.Instance:X16}: load failed"); continue; }
+        Sims4ResourceExplorer.Packages.Ts4BlendGeometryResource bgeo;
+        try { bgeo = Sims4ResourceExplorer.Packages.Ts4BlendGeometryResource.Parse(bb); }
+        catch (Exception ex) { Console.WriteLine($"    BGEO {x.bgeoKey.Instance:X16}: parse failed ({ex.Message})"); continue; }
+        var posCount = 0; var maxMag = 0f;
+        foreach (var blend in bgeo.BlendMap)
+        {
+            if (blend.PositionDelta && blend.Index >= 0 && blend.Index < bgeo.VectorData.Count)
+            {
+                posCount++;
+                var m = bgeo.VectorData[blend.Index].ToVector3().Length();
+                if (m > maxMag) maxMag = m;
+            }
+        }
+        Console.WriteLine($"    BGEO {x.bgeoKey.Instance:X16}: LODs={bgeo.Lods.Count} verts={bgeo.BlendMap.Count} vectors={bgeo.VectorData.Count} posDeltaVerts={posCount} maxDelta={maxMag:F4}m");
+    }
+    return 0;
+}
+
 if (args.Length > 0 && string.Equals(args[0], "--probe-morph-coverage", StringComparison.OrdinalIgnoreCase))
 {
     // Sweep multiple SimInfos (one per age × gender × species combo if available) and report

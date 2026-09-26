@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <Style src="project://database/Assets/Game/UI/GameTheme.uss" />
+
+    <!-- Buy/Build dock. picking-mode Ignore on the root so only the dock itself intercepts clicks; the
+         open 3D area above the dock passes through to GameBuildMode's place/select raycast. The category
+         rail, room chips, and swatch strip are populated in C# (data-driven from GameCatalog). -->
+    <ui:VisualElement name="build-root" class="game-root" picking-mode="Ignore">
+        <ui:VisualElement name="build-dock" class="build-dock glass">
+
+            <!-- header: mode tabs · search · room filter · close -->
+            <ui:VisualElement class="dock-header">
+                <ui:Button name="build-tab-buy" class="tab tab--on" text="Buy" />
+                <ui:Button name="build-tab-build" class="tab tab--soon" text="Build" />
+                <ui:VisualElement class="dock-sep" />
+                <ui:TextField name="build-search" class="search-field" />
+                <ui:VisualElement name="room-filter" class="room-filter" />
+                <ui:VisualElement class="spacer" />
+                <ui:Button name="build-back" class="btn" text="Close  (Esc)" />
+            </ui:VisualElement>
+
+            <!-- body: category rail + thumbnail grid -->
+            <ui:VisualElement class="dock-body">
+                <ui:VisualElement name="category-rail" class="category-rail" />
+                <ui:VisualElement name="grid-holder" class="grid-holder" />
+            </ui:VisualElement>
+
+            <!-- footer: colour swatches · tools · status -->
+            <ui:VisualElement class="dock-footer">
+                <ui:Label class="dock-foot-label" text="COLOUR" />
+                <ui:VisualElement name="swatch-bar" class="swatch-bar" />
+                <ui:VisualElement class="spacer" />
+                <ui:Label name="build-status" class="status status--foot"
+                          text="Pick a category, then an item to place. Click an object to recolour or delete." />
+                <ui:Button name="build-rotate" class="btn" text="Rotate  (R)" />
+                <ui:Button name="build-delete" class="btn btn--danger" text="Delete  (Del)" />
+            </ui:VisualElement>
+
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

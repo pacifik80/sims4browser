@@ -5,6 +5,30 @@ using Sims4ResourceExplorer.Packages;
 namespace Sims4ResourceExplorer.Preview;
 
 /// <summary>
+/// How the per-vertex face-morph weight (BGEO tag bits 16-21) scales each vertex's morph delta.
+/// </summary>
+public enum FaceMorphWeighting
+{
+    /// <summary>
+    /// Original behaviour: <c>bits==0 ? 1 : bits/63</c>. Kept as the default so the desktop app's
+    /// existing morph preview is unchanged. BUG: in EA data bits==0 means "this vertex does NOT
+    /// participate in face morphs" (weight 0 / frozen); this rule instead moves those vertices at
+    /// FULL strength, scattering spurious deltas across the head.
+    /// </summary>
+    Legacy,
+
+    /// <summary>
+    /// TS4SimRipper parity. Only meshes that actually carry a face-morph weight field (i.e. a head)
+    /// mask by <c>bits/63</c> (so bits==0 → frozen, like <c>copyFaceMorphs</c>); meshes with all-zero
+    /// tags (a body) take the full delta. This is the correct rule for baking clean morphs.
+    /// </summary>
+    Faithful,
+
+    /// <summary>No masking anywhere — every participating vertex takes the full delta.</summary>
+    Ignore,
+}
+
+/// <summary>
 /// Applies BGEO (BlendGeometry) shape morphs to a <see cref="CanonicalScene"/> at the per-vertex
 /// level by looking up each vertex's <c>VertexID</c> in the BGEO's blend map. Mirrors the
 /// algorithm in TS4SimRipper <c>PreviewControl.LoadBGEOMorph</c> at
@@ -37,7 +61,8 @@ public static class BlendGeometryMorpher
     public static CanonicalScene MorphScene(
         CanonicalScene scene,
         IReadOnlyList<Ts4SimBlendGeometryMorph> morphs,
-        IList<string>? diagnostics)
+        IList<string>? diagnostics,
+        FaceMorphWeighting weighting = FaceMorphWeighting.Legacy)
     {
         ArgumentNullException.ThrowIfNull(scene);
         ArgumentNullException.ThrowIfNull(morphs);
@@ -62,13 +87,13 @@ public static class BlendGeometryMorpher
                 morphedMeshes[meshIdx] = mesh;
                 continue;
             }
-            var changed = MorphMesh(mesh, morphs, ref totalSamples, ref totalHits, ref maxDisplacement, out var morphed);
+            var changed = MorphMesh(mesh, morphs, weighting, ref totalSamples, ref totalHits, ref maxDisplacement, out var morphed);
             morphedMeshes[meshIdx] = morphed;
             if (changed) anyMeshChanged = true;
         }
 
         diagnostics?.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"BlendGeometryMorpher.MorphScene: {morphs.Count} morphs, {meshesWithoutVertexIds}/{scene.Meshes.Count} meshes had no VertexIds, {totalSamples} vertex×morph samples, {totalHits} hits, max displacement = {maxDisplacement:0.######}"));
+            $"BlendGeometryMorpher.MorphScene: {morphs.Count} morphs ({weighting} weighting), {meshesWithoutVertexIds}/{scene.Meshes.Count} meshes had no VertexIds, {totalSamples} vertex×morph samples, {totalHits} hits, max displacement = {maxDisplacement:0.######}"));
 
         if (!anyMeshChanged) return scene;
 
@@ -79,6 +104,7 @@ public static class BlendGeometryMorpher
     private static bool MorphMesh(
         CanonicalMesh mesh,
         IReadOnlyList<Ts4SimBlendGeometryMorph> morphs,
+        FaceMorphWeighting weighting,
         ref int totalSamples,
         ref int totalHits,
         ref float maxDisplacement,
@@ -102,27 +128,39 @@ public static class BlendGeometryMorpher
         var anyChanged = false;
         var hasTags = mesh.VertexTags is not null && mesh.VertexTags.Count >= vertexCount;
 
+        // Faithful mode (TS4SimRipper parity, replacing the broken Legacy hack): only meshes that
+        // actually carry a face-morph weight field (a head) mask by bits/63 — for those, bits==0 means
+        // the vertex is FROZEN. Meshes with effectively all-zero tags (a body, which TS4SimRipper would
+        // skip because copyFaceMorphs is false) take the full delta. The 2% floor is the "copyFaceMorphs"
+        // proxy: real face meshes have a broad spread of non-zero weights, bodies do not.
+        var faceMesh = false;
+        if (weighting == FaceMorphWeighting.Faithful && hasTags)
+        {
+            var nonZero = 0;
+            for (var v = 0; v < vertexCount; v++)
+            {
+                if (((mesh.VertexTags![v] & 0x003F0000u) >> 16) != 0) nonZero++;
+            }
+            faceMesh = nonZero > vertexCount * 0.02;
+        }
+
         // Pre-compute the LOD 0 startIndex (always 0). For higher LODs we'd sum NumberVertices
         // of preceding LODs — but our scenes only carry the top-LOD mesh, so we hit LOD 0 only.
         for (var v = 0; v < vertexCount; v++)
         {
             var vertexId = mesh.VertexIds[v];
-            // TS4SimRipper PreviewControl.cs:177-178 (faceMorphs path) — vertWeight scales each
-            // vertex's morph contribution. The 6-bit value lives at bits 16-21 of the tag, so
-            // divide by 63 to map [0..63] → [0..1]. Defaults to 1 when no tag info is present.
+            // The 6-bit face-morph weight lives at bits 16-21 of the tag (TS4SimRipper
+            // PreviewControl.cs:177-178). See FaceMorphWeighting for the per-mode rules.
             var vertWeight = 1f;
             if (hasTags)
             {
-                var tag = mesh.VertexTags![v];
-                var bits = (tag & 0x003F0000u) >> 16;
-                // TS4SimRipper PreviewControl.cs:177-178 only applies the divisor when the
-                // mesh's `copyFaceMorphs` flag is set — for meshes that don't participate in
-                // face-morph weighting, vertWeight stays at 1. We don't track that flag, so we
-                // treat "all zero bits" as "no weighting configured" (vertWeight = 1) instead
-                // of "weight is zero" (skip vertex). Without this, body meshes with no face-
-                // morph tags would never receive BGEO position deltas (verified in build 0256
-                // session log: 0/2 meshes had no VertexIds yet 0 samples on the head mesh).
-                vertWeight = bits == 0 ? 1f : bits / 63f;
+                var bits = (mesh.VertexTags![v] & 0x003F0000u) >> 16;
+                vertWeight = weighting switch
+                {
+                    FaceMorphWeighting.Ignore => 1f,
+                    FaceMorphWeighting.Faithful => faceMesh ? bits / 63f : 1f,
+                    _ => bits == 0 ? 1f : bits / 63f, // Legacy hack (default; preserves desktop app)
+                };
             }
             var totalPositionDelta = Vector3.Zero;
             var totalNormalDelta = Vector3.Zero;

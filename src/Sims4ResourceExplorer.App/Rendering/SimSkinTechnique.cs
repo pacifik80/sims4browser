@@ -77,12 +77,16 @@ cbuffer cbMesh : register(b1)
 
 float4 main(PSInput input) : SV_Target
 {
-    float3 albedo = texSkinColor.Sample(samplerSurface, input.t).rgb;
+    // M1 STEP-0b BISECTION: do NOT sample the texture. Output a lit green body using ONLY the
+    // interpolated normal. If the body turns shaded green -> VS runs, mesh draws, PS executes,
+    // normals interpolate; the prior all-black was purely texSkinColor.Sample() returning 0
+    // (no surface sampler bound for a custom GenericMaterial). If it's STILL black, the draw
+    // itself isn't happening (cull/depth/blend) and the texture is a red herring.
     float3 n = normalize(input.n);
     float ndl0 = saturate(dot(n, normalize(float3(0.417, 0.460, 0.784))));   // captured cb0[0]
     float ndl1 = saturate(dot(n, normalize(float3(-0.916, 0.100, 0.389))));  // captured cb0[1]
+    float3 albedo = float3(0.35, 0.85, 0.35);        // synthetic green albedo (no texture)
     float3 lit = albedo * (0.45 + ndl0 * float3(0.5, 0.5, 0.5) + ndl1 * float3(0.24, 0.24, 0.24));
-    lit *= float3(0.55, 1.0, 0.55);                 // M1 PROOF: hardcoded green tint
     lit += _stockMeshReserved[0].xyz * 0.0;          // keep the pad alive (don't strip cbMesh)
     return float4(saturate(lit), 1.0);
 }
@@ -119,30 +123,44 @@ float4 main(PSInput input) : SV_Target
                 }
                 psBytecode = result.Bytecode.Data;
             }
-
             var psDesc = new ShaderDescription("PSSimSkinComposite", ShaderStage.Pixel, new ShaderReflector(), psBytecode);
-            var technique = new TechniqueDescription(TechniqueName)
-            {
-                InputLayoutDescription = new InputLayoutDescription(DefaultVSShaderByteCodes.VSMeshDefault, DefaultInputLayout.VSInput),
-                PassDescriptions = new[]
-                {
-                    new ShaderPassDescription(DefaultPassNames.Default)
-                    {
-                        ShaderList = new[]
-                        {
-                            DefaultVSShaderDescriptions.VSMeshDefault,
-                            psDesc,
-                        },
-                        // Render states are required in practice (matches HelixToolkit's own
-                        // CustomShaderDemo mesh pass): without them the pass builds invalid /
-                        // GetPass resolves to a NULL pass. RasterStateDescription is left
-                        // default (the demo's mesh passes omit it).
-                        BlendStateDescription = DefaultBlendStateDescriptions.BSAlphaBlend,
-                        DepthStencilStateDescription = DefaultDepthStencilDescriptions.DSSDepthLess,
-                    },
-                },
-            };
-            effectsManager.AddTechnique(technique);
+
+            // Build a MINIMAL custom technique (a single Default pass) — exactly HelixToolkit's
+            // own CustomShaderDemo "NoiseMesh" recipe. This technique is consumed by a custom
+            // SimSkinMeshNode whose OnCreateRenderTechnique returns it (see SimSkinMeshNode), so
+            // node.technique == material.pass.technique — the consistency BOTH working Helix
+            // demos rely on. The prior approaches put our pass on a STOCK MeshGeometryModel3D
+            // node (whose own RenderMesh technique drove a DepthPrepass that black-out our color
+            // pass, AND mismatched node-vs-pass technique) and drew nothing — even after cloning
+            // RenderMesh's states. Because THIS technique has NO DepthPrepass pass, no prepass
+            // runs for the node and the color pass draws on cleared depth.
+            effectsManager.AddTechnique(BuildMinimalTechnique(psDesc));
         }
     }
+
+    /// <summary>
+    /// Builds the minimal SimSkinComposite technique: a single Default pass = stock mesh vertex
+    /// shader + our custom pixel shader, with the stock mesh render states (BSAlphaBlend,
+    /// DSSDepthLessEqual) and the stock VSInput layout. No DepthPrepass/Shadow/Wireframe passes
+    /// — matching HelixToolkit's CustomShaderDemo. The custom node (SimSkinMeshNode) selects
+    /// this technique so node and material agree on it.
+    /// </summary>
+    private static TechniqueDescription BuildMinimalTechnique(ShaderDescription psDesc) =>
+        new(TechniqueName)
+        {
+            InputLayoutDescription = new InputLayoutDescription(DefaultVSShaderByteCodes.VSMeshDefault, DefaultInputLayout.VSInput),
+            PassDescriptions = new[]
+            {
+                new ShaderPassDescription(DefaultPassNames.Default)
+                {
+                    ShaderList = new[]
+                    {
+                        DefaultVSShaderDescriptions.VSMeshDefault,
+                        psDesc,
+                    },
+                    BlendStateDescription = DefaultBlendStateDescriptions.BSAlphaBlend,
+                    DepthStencilStateDescription = DefaultDepthStencilDescriptions.DSSDepthLessEqual,
+                },
+            },
+        };
 }

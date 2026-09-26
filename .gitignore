@@ -29,3 +29,11 @@ junk/local-artifacts/
 docs/references/external/Binary-Templates/
 docs/references/external/TS4SimRipper/
 .claude/
+
+# Local input payloads; excluded from the source preservation snapshot.
+/ModsFromDev/
+/unity/Sims4Creator/Assets/Sims4/
+/unity/Sims4Creator/Assets/Sims4.meta
+/unity/Sims4Creator/Assets/_Recovery/
+/unity/Sims4Creator/Assets/_Recovery.meta
+/tools/Sims4UnityExport/catalog.json.bak

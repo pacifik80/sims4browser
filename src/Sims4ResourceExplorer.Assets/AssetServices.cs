@@ -7862,33 +7862,54 @@ internal sealed class Ts4ObjectDefinition
         for (var offset = 0; offset + 20 <= bytes.Length; offset++)
         {
             var marker = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
-            if (marker is not 4u and not 9u and not 12u)
+            // The marker prefixes a run of 16-byte [instance u64][type u32][group u32] entries:
+            // 4 = one entry, 8 = two (DOORS/WINDOWS ship paired panel+frame models — the old
+            // 4/9/12-only filter made every door resolve NO model), 12 = three; 9 kept as the
+            // observed legacy single-entry variant.
+            var entryCount = marker switch
+            {
+                4u or 9u => 1,
+                8u => 2,
+                12u => 3,
+                16u => 4,
+                _ => 0
+            };
+            if (entryCount == 0)
             {
                 continue;
             }
 
-            var rawInstance = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(offset + 4, 8));
-            var type = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset + 12, 4));
-            var group = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset + 16, 4));
-            var typeName = GuessTypeName(type);
-            if (type == 0 || typeName.StartsWith("0x", StringComparison.Ordinal))
+            for (var entry = 0; entry < entryCount; entry++)
             {
-                continue;
-            }
+                var entryOffset = offset + 4 + (entry * 16);
+                if (entryOffset + 16 > bytes.Length)
+                {
+                    break;
+                }
 
-            var rawKey = new ResourceKeyRecord(type, group, rawInstance, typeName);
-            var swappedInstanceKey = rawKey with { FullInstance = SwapUInt32Halves(rawKey.FullInstance) };
-            var candidate = new Ts4ObjectDefinitionReferenceCandidate(
-                offset,
-                marker,
-                rawKey,
-                swappedInstanceKey);
-            if (!seen.Add($"{candidate.Offset}:{candidate.RawKey.FullTgi}:{candidate.Swap32Key.FullTgi}"))
-            {
-                continue;
-            }
+                var rawInstance = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(entryOffset, 8));
+                var type = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(entryOffset + 8, 4));
+                var group = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(entryOffset + 12, 4));
+                var typeName = GuessTypeName(type);
+                if (type == 0 || typeName.StartsWith("0x", StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            candidates.Add(candidate);
+                var rawKey = new ResourceKeyRecord(type, group, rawInstance, typeName);
+                var swappedInstanceKey = rawKey with { FullInstance = SwapUInt32Halves(rawKey.FullInstance) };
+                var candidate = new Ts4ObjectDefinitionReferenceCandidate(
+                    entryOffset - 4, // keep the historical "marker offset" shape for entry 0
+                    marker,
+                    rawKey,
+                    swappedInstanceKey);
+                if (!seen.Add($"{candidate.Offset}:{candidate.RawKey.FullTgi}:{candidate.Swap32Key.FullTgi}"))
+                {
+                    continue;
+                }
+
+                candidates.Add(candidate);
+            }
         }
 
         return candidates;

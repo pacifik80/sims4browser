@@ -51,9 +51,51 @@ public sealed partial class BuildBuySceneBuildService
                     ? group[i]
                     : await resourceCatalogService.EnrichResourceAsync(group[i], cancellationToken).ConfigureAwait(false);
             }
-            geometryRoots[groupIndex] = enriched
+            var bySize = enriched
                 .OrderByDescending(r => r.UncompressedSize ?? r.CompressedSize ?? 0)
-                .First();
+                .ToArray();
+            // Build 0344: HAT-VARIANT tie-break. A CAS part's LOD0 can ship as several near-equal-size
+            // VARIANTS of the same instance (full hair vs hat-chopped: Stealthic Vapor's three 7413-vert
+            // LOD0 GEOMs differ only in crown height 1.869/1.877/1.896). Byte size separates LOD LEVELS
+            // but cannot separate variants — picking by size alone chose the hat-flattened crown, which
+            // sits exactly at scalp height and lets the head poke through. We never render hats, so among
+            // candidates within 10% of the largest size, decode the GEOMs and keep the LARGEST BOUNDING
+            // VOLUME (the fullest variant). Decode failures fall back to the size pick.
+            var maxSize = bySize[0].UncompressedSize ?? bySize[0].CompressedSize ?? 0;
+            var ties = bySize.TakeWhile(r => (r.UncompressedSize ?? r.CompressedSize ?? 0) >= maxSize * 0.9).ToArray();
+            var chosen = bySize[0];
+            if (ties.Length > 1 && maxSize > 0)
+            {
+                var bestVolume = -1.0;
+                foreach (var candidate in ties)
+                {
+                    try
+                    {
+                        var candidateBytes = await resourceCatalogService.GetResourceBytesAsync(
+                            candidate.PackagePath, candidate.Key, raw: false, cancellationToken, null).ConfigureAwait(false);
+                        if (candidateBytes is null || candidateBytes.Length == 0) continue;
+                        var geom = Ts4GeomResource.Parse(candidateBytes);
+                        if (geom.Vertices.Count == 0) continue;
+                        float minX = float.MaxValue, minY = float.MaxValue, minZ = float.MaxValue;
+                        float maxX = float.MinValue, maxY = float.MinValue, maxZ = float.MinValue;
+                        foreach (var v in geom.Vertices)
+                        {
+                            var p = v.Position;
+                            if (p is not { Length: >= 3 }) continue;
+                            if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+                            if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+                            if (p[2] < minZ) minZ = p[2]; if (p[2] > maxZ) maxZ = p[2];
+                        }
+                        var volume = (double)(maxX - minX) * (maxY - minY) * (maxZ - minZ);
+                        if (volume > bestVolume) { bestVolume = volume; chosen = candidate; }
+                    }
+                    catch
+                    {
+                        // Unparseable candidate: ignore — the size-ordered default still stands.
+                    }
+                }
+            }
+            geometryRoots[groupIndex] = chosen;
         }
         if (geometryRoots.Length == 0)
         {

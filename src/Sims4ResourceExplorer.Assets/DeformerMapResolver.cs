@@ -62,6 +62,38 @@ public sealed class DeformerMapResolver
         return Memoize(cacheKey, resolved);
     }
 
+    /// <summary>
+    /// Resolve a SINGLE chosen SMOD instance directly into its SHAPE deformer-map morph at the given
+    /// weight, independent of any Sim's modifier list (synthetic Sims have empty lists). Mirrors the
+    /// per-modifier path in <see cref="AppendAsync"/>; returns empty if the SMOD has no shape DMap.
+    /// This is the body-morph analogue of <c>BlendGeometryResolver.ResolveSmodMorphsAsync</c>.
+    /// </summary>
+    public async Task<IReadOnlyList<Ts4SimDeformerMorph>> ResolveSmodAsync(
+        uint smodType, ulong smodInstance, float weight, CancellationToken cancellationToken)
+    {
+        var smodResources = await indexStore.GetResourcesByFullInstanceAsync(smodInstance, cancellationToken).ConfigureAwait(false);
+        var smodResource = smodResources.FirstOrDefault(r => r.Key.Type == smodType);
+        if (smodResource is null) return [];
+
+        byte[] smodBytes;
+        try
+        {
+            smodBytes = await resourceCatalogService.GetResourceBytesAsync(
+                smodResource.PackagePath, smodResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch { return []; }
+
+        Ts4SimModifierResource smod;
+        try { smod = Ts4SimModifierResource.Parse(smodBytes); }
+        catch { return []; }
+
+        if (!smod.HasShapeDeformerMap) return [];
+        var cache = new Dictionary<(uint Type, ulong Instance), Ts4DeformerMapSampler?>();
+        var sampler = await ResolveDeformerMapAsync(smod.DeformerMapShapeKey, cache, cancellationToken).ConfigureAwait(false);
+        if (sampler is null) return [];
+        return new[] { new Ts4SimDeformerMorph(sampler, weight, IsNormalMap: false, smod.Region) };
+    }
+
     private IReadOnlyList<Ts4SimDeformerMorph> Memoize(ulong key, IReadOnlyList<Ts4SimDeformerMorph> value)
     {
         lock (cacheLock) resolutionCache[key] = value;

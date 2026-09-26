@@ -128,23 +128,39 @@ public sealed class SceneViewportRenderer
                 ? TryCreateGpuSkinCore(viewport, canonicalMaterial)
                 : null;
 
-            // Route the GPU skin core through a UI Material element. Setting the scene node's
-            // core directly (with UI Material null) gets clobbered to null at attach time by
-            // MeshGeometryModel3D.AssignDefaultValuesToSceneNode; the wrapper survives that.
-            var model = new MeshGeometryModel3D
-            {
-                Geometry = geometry,
-                Material = skinCore is not null ? new GenericMeshMaterial(skinCore) : material,
-                IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex, selectedSlot),
-                CullMode = SharpDX.Direct3D11.CullMode.None,
-                RenderWireframe = renderMode == SceneRenderMode.Wireframe,
-                WireframeColor = Microsoft.UI.Colors.Yellow
-            };
             if (skinCore is not null)
             {
-                GpuSkinLog("attach: bound GPU skin core via GenericMeshMaterial UI wrapper");
+                // CUSTOM-NODE path (build 0329): render skin through a SimSkinMeshNode whose
+                // OnCreateRenderTechnique returns the SimSkinComposite technique, added as a raw
+                // scene node via SceneNodeGroupModel3D. This makes node.technique ==
+                // material.pass.technique — the consistency BOTH working Helix demos rely on
+                // (the prior stock-node + foreign-pass hybrid drew nothing). The node takes the
+                // MaterialCore directly; no GenericMeshMaterial UI wrapper.
+                var node = new SimSkinMeshNode
+                {
+                    Geometry = geometry,
+                    Material = skinCore,
+                    CullMode = SharpDX.Direct3D11.CullMode.None,
+                    IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex, selectedSlot),
+                };
+                var group = new SceneNodeGroupModel3D();
+                group.AddNode(node);
+                viewport.Items.Add(group);
+                GpuSkinLog("attach: custom SimSkinMeshNode via SceneNodeGroupModel3D");
             }
-            viewport.Items.Add(model);
+            else
+            {
+                var model = new MeshGeometryModel3D
+                {
+                    Geometry = geometry,
+                    Material = material,
+                    IsTransparent = IsTransparentMaterial(scene, mesh.MaterialIndex, selectedSlot),
+                    CullMode = SharpDX.Direct3D11.CullMode.None,
+                    RenderWireframe = renderMode == SceneRenderMode.Wireframe,
+                    WireframeColor = Microsoft.UI.Colors.Yellow
+                };
+                viewport.Items.Add(model);
+            }
 
             if (multiPassPlan is not null)
             {

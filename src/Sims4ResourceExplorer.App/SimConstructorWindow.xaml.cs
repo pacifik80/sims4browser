@@ -69,6 +69,7 @@ public sealed partial class SimConstructorWindow : Window
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         Activated += OnActivated;
         ConfigureWindow();
+        BuildVorticePocOverlay();
     }
 
     public SimConstructorViewModel ViewModel { get; }

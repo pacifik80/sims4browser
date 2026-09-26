@@ -1,0 +1,491 @@
+/* Game UI theme.
+   Everything visual lives here as tokens + component classes, so the entire UI can be re-skinned
+   from this one file without touching UXML layout or C#. Add new screens by reusing these classes. */
+
+:root {
+    --bg-panel:      rgba(20, 23, 31, 0.93);
+    --bg-raised:     rgba(38, 43, 56, 0.96);
+    --bg-hover:      rgba(56, 63, 80, 0.98);
+    --border:        rgba(255, 255, 255, 0.10);
+
+    --text:          rgb(230, 234, 242);
+    --text-muted:    rgb(150, 160, 178);
+
+    --accent:        rgb(77, 163, 255);
+    --accent-dim:    rgba(77, 163, 255, 0.22);
+    --good:          rgb(92, 207, 122);
+    --bad:           rgb(226, 86, 90);
+
+    --pad:           8px;
+    --gap:           6px;
+    --radius:        6px;
+}
+
+/* ---------- layout shell ---------- */
+
+.root {
+    flex-grow: 1;
+    font-size: 13px;
+    color: var(--text);
+    -unity-font-style: normal;
+}
+
+.topbar {
+    flex-direction: row;
+    align-items: center;
+    padding: var(--pad);
+    background-color: var(--bg-panel);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border);
+}
+
+.sidepanel {
+    position: absolute;
+    top: 52px;
+    left: 0;
+    bottom: 0;
+    width: 300px;
+    padding: var(--pad);
+    background-color: var(--bg-panel);
+    border-right-width: 1px;
+    border-right-color: var(--border);
+}
+
+.row     { flex-direction: row; align-items: center; }
+.spacer  { flex-grow: 1; }
+
+/* ---------- text ---------- */
+
+.clock {
+    font-size: 16px;
+    -unity-font-style: bold;
+    margin-right: 14px;
+    min-width: 190px;
+}
+
+.panel-title {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    margin-bottom: var(--gap);
+}
+
+.status {
+    color: var(--text-muted);
+    white-space: normal;
+    margin-top: var(--gap);
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+    background-color: var(--bg-raised);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 4px 10px;
+    margin: 0 3px 0 0;
+    transition-duration: 0.08s;
+}
+.btn:hover  { background-color: var(--bg-hover); }
+.btn:active { background-color: var(--accent-dim); }
+
+.btn--on {
+    background-color: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.btn--speed { min-width: 40px; -unity-text-align: middle-center; }
+.btn--wide  { min-width: 92px; -unity-text-align: middle-center; }
+
+/* ---------- sim cards ---------- */
+
+.sim-list { flex-grow: 1; }
+
+.sim-card {
+    background-color: var(--bg-raised);
+    border-radius: var(--radius);
+    border-width: 1px;
+    border-color: var(--border);
+    padding: var(--pad);
+    margin-bottom: var(--gap);
+}
+.sim-card--possessed { border-color: var(--accent); }
+
+.sim-name {
+    -unity-font-style: bold;
+    margin-bottom: 2px;
+}
+.sim-action {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-bottom: var(--gap);
+}
+
+/* ---------- need meters ---------- */
+
+.need { flex-direction: row; align-items: center; margin-bottom: 3px; }
+
+.need-icon {
+    width: 14px;
+    height: 14px;
+    margin-right: 6px;
+    -unity-background-scale-mode: scale-to-fit;
+    -unity-background-image-tint-color: var(--text-muted);
+}
+
+.need-label {
+    width: 52px;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.need-track {
+    flex-grow: 1;
+    height: 8px;
+    background-color: rgba(0, 0, 0, 0.45);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.need-fill {
+    height: 100%;
+    background-color: var(--good);
+    border-radius: 4px;
+}
+
+.need-value {
+    width: 26px;
+    -unity-text-align: middle-right;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* ---------- full-height modal side panel (build/CAS reuse) ---------- */
+
+.sidepanel--full { top: 0; }
+
+/* ---------- catalog list (reusable: build palette, CAS hair/clothing) ---------- */
+
+.palette-holder { flex-grow: 1; margin-bottom: var(--gap); }
+
+.catalog {
+    flex-grow: 1;
+    min-height: 140px;
+    background-color: rgba(0, 0, 0, 0.28);
+    border-radius: var(--radius);
+    border-width: 1px;
+    border-color: var(--border);
+}
+
+.catalog-row {
+    flex-direction: row;
+    align-items: center;
+    padding: 3px 7px;
+}
+.catalog-row:hover { background-color: var(--bg-hover); }
+
+.catalog-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    margin-right: 9px;
+    border-width: 1px;
+    border-color: var(--border);
+    -unity-background-scale-mode: scale-to-fit;
+}
+
+.catalog-label { flex-grow: 1; }
+
+/* selected row (UI Toolkit adds this class to ListView selections) */
+.unity-collection-view__item--selected,
+.unity-collection-view__item--selected:hover {
+    background-color: var(--accent-dim);
+}
+
+/* ============================================================================
+   Game HUD — inZOI-style: floating glass clusters pinned to the edges, clear
+   centre. Glassmorphism-lite (translucent + hairline border + shadow; no blur).
+   ============================================================================ */
+
+.game-root { flex-grow: 1; font-size: 13px; color: var(--text); }
+
+/* --- edge anchoring --- */
+.zone { position: absolute; }
+.zone--tl { top: 14px; left: 14px; }
+.zone--tc { top: 14px; left: 50%; translate: -50% 0; }
+.zone--tr { top: 14px; right: 14px; flex-direction: row; align-items: center; }
+.zone--r  { top: 50%; right: 14px; translate: 0 -50%; }
+.zone--bl { bottom: 14px; left: 14px; }
+.zone--bc { bottom: 14px; left: 50%; translate: -50% 0; }
+.zone--br { bottom: 14px; right: 14px; align-items: flex-end; }
+
+/* --- glass surface --- */
+.glass {
+    background-color: rgba(17, 19, 26, 0.74);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    padding: 8px 10px;
+}
+.pill { border-radius: 22px; }
+.row  { flex-direction: row; align-items: center; }
+
+/* --- icons --- */
+.icon-img {
+    width: 20px; height: 20px;
+    -unity-background-scale-mode: scale-to-fit;
+    -unity-background-image-tint-color: var(--text);
+}
+.icon-img--sm { width: 15px; height: 15px; }
+
+.icon-btn {
+    width: 40px; height: 40px;
+    border-radius: 20px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-width: 0;
+    align-items: center; justify-content: center;
+    margin: 0 3px; padding: 0;
+    transition-duration: 0.08s;
+}
+.icon-btn:hover  { background-color: rgba(255, 255, 255, 0.16); }
+.icon-btn--on    { background-color: var(--accent-dim); }
+.icon-btn--on > .icon-img { -unity-background-image-tint-color: var(--accent); }
+.icon-btn--ghost { opacity: 0.35; }              /* empty placeholder slot */
+.icon-btn--sm    { width: 32px; height: 32px; border-radius: 16px; }
+
+/* --- location pill --- */
+.loc-pill  { flex-direction: row; align-items: center; border-radius: 22px; padding: 6px 14px 6px 12px; }
+.loc-name  { -unity-font-style: bold; font-size: 14px; margin-left: 7px; }
+
+/* --- logo / menu --- */
+.logo { -unity-font-style: bold; font-size: 17px; letter-spacing: 2px; margin-right: 10px; }
+.debug-glyph { font-size: 10px; -unity-font-style: bold; letter-spacing: 1px; color: var(--text-muted); }
+.icon-btn--on > .debug-glyph { color: var(--accent); }
+
+/* --- time + transport --- */
+.time-cluster { align-items: flex-start; padding: 8px 12px; }
+.time-head    { flex-direction: row; align-items: center; margin-bottom: 6px; }
+.clock        { -unity-font-style: bold; font-size: 14px; margin-left: 7px; }
+.transport    { flex-direction: row; align-items: center; }
+
+/* --- right-edge Sim switcher --- */
+.switcher      { align-items: center; padding: 8px; }
+.portrait-list { align-items: center; }
+.switcher-more { color: var(--text-muted); margin-top: 4px; font-size: 12px; }
+
+/* --- portraits (placeholder: coloured circle + initial) --- */
+.portrait {
+    width: 44px; height: 44px; border-radius: 22px;
+    align-items: center; justify-content: center;
+    border-width: 2px; border-color: rgba(255, 255, 255, 0.18);
+    margin: 4px 0;
+    background-color: rgb(70, 80, 100);
+}
+.portrait--sel     { border-color: var(--accent); }
+.portrait--lg      { width: 58px; height: 58px; border-radius: 29px; }
+.portrait-initial  { -unity-font-style: bold; font-size: 17px; color: rgb(255,255,255); }
+
+/* --- bottom-centre focus card --- */
+.focus-card   { flex-direction: row; align-items: center; padding: 8px 14px; border-radius: 22px; min-width: 330px; }
+.focus-mid    { margin: 0 12px; min-width: 140px; }
+.focus-name   { -unity-font-style: bold; font-size: 15px; }
+.focus-action { color: var(--text-muted); font-size: 11px; margin-top: 3px; }
+.need-strip   { flex-direction: row; margin-top: 6px; }
+
+.mood-chip {
+    flex-direction: row; align-items: center; align-self: flex-start;
+    background-color: rgba(255, 255, 255, 0.09);
+    border-radius: 11px; padding: 2px 9px 2px 5px; margin-top: 4px;
+}
+.mood-text { font-size: 11px; margin-left: 5px; }
+
+.action-queue { flex-direction: row; margin-left: 8px; }
+.slot {
+    width: 26px; height: 26px; border-radius: 13px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-width: 1px; border-color: rgba(255, 255, 255, 0.09);
+    margin: 0 3px;
+}
+
+/* --- money + mode cluster (bottom-right) --- */
+.money    { flex-direction: row; align-items: center; border-radius: 16px; padding: 5px 13px; margin-bottom: 8px; align-self: flex-end; }
+.money-val{ -unity-font-style: bold; margin-left: 6px; }
+.modes    { flex-direction: row; align-items: center; }
+
+/* --- centre hint line --- */
+.status-line {
+    position: absolute; bottom: 96px; left: 50%; translate: -50% 0;
+    color: var(--text-muted); font-size: 11px; -unity-text-align: middle-center;
+}
+
+/* ============================================================================
+   Build / Buy dock — bottom glass dock (full-width, pinned to the bottom edge):
+   header (tabs · search · room filter · close), body (category rail + thumbnail
+   grid), footer (colour swatches · tools). Data-driven from GameCatalog.
+   ============================================================================ */
+
+.build-dock {
+    position: absolute;
+    left: 14px; right: 14px; bottom: 14px;
+    height: 344px;
+    padding: 12px 14px;
+    flex-direction: column;
+}
+
+/* --- header --- */
+.dock-header { flex-direction: row; align-items: center; margin-bottom: 10px; }
+
+.tab {
+    -unity-font-style: bold;
+    font-size: 14px;
+    padding: 6px 18px;
+    margin-right: 6px;
+    border-radius: 13px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-width: 0;
+    color: var(--text-muted);
+    transition-duration: 0.08s;
+}
+.tab:hover  { background-color: rgba(255, 255, 255, 0.14); }
+.tab--on    { background-color: var(--accent-dim); color: var(--accent); }
+.tab--soon  { opacity: 0.4; }               /* Build tab — coming next (TASK-011) */
+
+.dock-sep { width: 1px; height: 22px; background-color: var(--border); margin: 0 12px; }
+
+.search-field { width: 190px; margin-right: 12px; }
+.search-field > .unity-base-text-field__input {
+    background-color: rgba(0, 0, 0, 0.32);
+    border-width: 1px; border-color: var(--border); border-radius: 13px;
+    padding: 5px 12px; color: var(--text);
+}
+
+/* --- room filter chips --- */
+.room-filter { flex-direction: row; align-items: center; }
+.room-chip {
+    font-size: 11px;
+    padding: 4px 11px;
+    margin-right: 5px;
+    border-radius: 11px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-width: 1px; border-color: var(--border);
+    color: var(--text-muted);
+    transition-duration: 0.08s;
+}
+.room-chip:hover { background-color: rgba(255, 255, 255, 0.12); }
+.room-chip--on   { background-color: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* --- body: rail + grid --- */
+.dock-body { flex-direction: row; flex-grow: 1; }
+
+.category-rail {
+    width: 150px;
+    margin-right: 12px;
+    padding-right: 4px;
+}
+.cat-btn {
+    flex-direction: row;
+    align-items: center;
+    -unity-text-align: middle-left;
+    width: 100%;
+    padding: 6px 10px;
+    margin-bottom: 3px;
+    border-radius: var(--radius);
+    background-color: transparent;
+    border-width: 0;
+    color: var(--text-muted);
+    transition-duration: 0.08s;
+}
+.cat-btn:hover { background-color: rgba(255, 255, 255, 0.07); color: var(--text); }
+.cat-btn--on   { background-color: var(--accent-dim); color: var(--accent); -unity-font-style: bold; }
+
+.grid-holder { flex-grow: 1; }
+
+.catalog-grid {
+    flex-grow: 1;
+    background-color: rgba(0, 0, 0, 0.24);
+    border-radius: var(--radius);
+    border-width: 1px; border-color: var(--border);
+    padding: 4px;
+}
+
+/* thumbnail cells: N equal columns per virtualized row */
+.grid-row { flex-direction: row; align-items: stretch; }
+
+.grid-cell {
+    flex-grow: 1; flex-basis: 0;
+    flex-direction: column;
+    align-items: center; justify-content: flex-start;
+    margin: 4px;
+    padding: 5px;
+    border-radius: var(--radius);
+    background-color: rgba(255, 255, 255, 0.03);
+    border-width: 1px; border-color: transparent;
+    transition-duration: 0.08s;
+}
+.grid-cell:hover { background-color: rgba(255, 255, 255, 0.09); }
+.grid-cell--sel  { border-color: var(--accent); background-color: var(--accent-dim); }
+
+.grid-thumb {
+    width: 100%;
+    flex-grow: 1;
+    min-height: 46px;
+    border-radius: 4px;
+    -unity-background-scale-mode: scale-to-fit;
+    background-color: rgb(70, 80, 100);
+}
+.grid-label { font-size: 11px; margin-top: 4px; -unity-text-align: middle-center; white-space: nowrap; overflow: hidden; }
+.grid-price { font-size: 10px; color: var(--text-muted); }
+
+/* --- footer: swatches + tools --- */
+.dock-footer { flex-direction: row; align-items: center; margin-top: 10px; }
+.dock-foot-label { font-size: 10px; -unity-font-style: bold; color: var(--text-muted); letter-spacing: 1px; margin-right: 8px; }
+
+.swatch-bar { flex-direction: row; align-items: center; }
+.swatch {
+    width: 22px; height: 22px; border-radius: 11px;
+    margin-right: 5px; padding: 0;
+    border-width: 2px; border-color: rgba(255, 255, 255, 0.20);
+    transition-duration: 0.08s;
+}
+.swatch:hover { border-color: rgba(255, 255, 255, 0.55); }
+.swatch--on   { border-color: var(--accent); }
+
+.status--foot { margin-top: 0; margin-right: 12px; -unity-text-align: middle-right; max-width: 460px; }
+
+.btn--danger { border-color: rgba(226, 86, 90, 0.5); color: var(--bad); }
+.btn--danger:hover { background-color: rgba(226, 86, 90, 0.18); }
+
+/* ============================================================================
+   Debug menu (GameDebugMenu) — the dev menu in the game's own glass style:
+   GRID visual-debug toggles + RENDER tunables (TASK-016, tune before bake).
+   ============================================================================ */
+
+.debug-menu {
+    position: absolute;
+    top: 70px; left: 16px;
+    width: 360px;
+    max-height: 80%;
+    padding: 12px 14px;
+    flex-direction: column;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.debug-title { -unity-font-style: bold; font-size: 14px; letter-spacing: 2px; }
+
+.debug-section { margin-top: 12px; margin-bottom: 4px; }
+
+.debug-note { color: var(--text-muted); font-size: 11px; white-space: normal; margin: 2px 0 4px 0; }
+
+.debug-toggle { margin: 2px 0; }
+.debug-toggle > .unity-toggle__label { color: var(--text); min-width: 210px; }
+
+.debug-slider { margin: 2px 0; }
+.debug-slider > .unity-base-field__label { color: var(--text-muted); min-width: 150px; font-size: 11px; }
+
+.debug-simlist { margin: 4px 0; }
+.debug-sim { color: var(--text-muted); font-size: 11px; margin: 1px 0; }

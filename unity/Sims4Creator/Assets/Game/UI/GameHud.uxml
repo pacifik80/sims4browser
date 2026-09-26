@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <Style src="project://database/Assets/Game/UI/GameTheme.uss" />
+
+    <!-- inZOI-style shell: floating glass clusters at the edges, clear centre. All zones are present;
+         ones without a system yet (camera modes, money, extra modes) are placeholder slots. Root ignores
+         picking so the open centre passes clicks to the world; each cluster intercepts its own. -->
+    <ui:VisualElement name="root" class="game-root" picking-mode="Ignore">
+
+        <!-- TOP-LEFT: location -->
+        <ui:VisualElement name="zone-location" class="zone zone--tl glass loc-pill">
+            <ui:VisualElement name="loc-icon" class="icon-img icon-img--sm" />
+            <ui:Label name="loc-name" class="loc-name" text="Home Lot" />
+        </ui:VisualElement>
+
+        <!-- TOP-CENTRE: camera / view (placeholder cluster) -->
+        <ui:VisualElement name="zone-view" class="zone zone--tc glass pill row">
+            <ui:Button class="icon-btn icon-btn--ghost view-slot"><ui:VisualElement class="icon-img" /></ui:Button>
+            <ui:Button class="icon-btn icon-btn--ghost view-slot"><ui:VisualElement class="icon-img" /></ui:Button>
+            <ui:Button class="icon-btn icon-btn--ghost view-slot"><ui:VisualElement class="icon-img" /></ui:Button>
+            <ui:Button class="icon-btn icon-btn--ghost view-slot"><ui:VisualElement class="icon-img" /></ui:Button>
+        </ui:VisualElement>
+
+        <!-- TOP-RIGHT: logo + debug + menu -->
+        <ui:VisualElement name="zone-logo" class="zone zone--tr row">
+            <ui:Label class="logo" text="SIMLIFE" />
+            <ui:Button name="btn-debug" class="icon-btn glass" tooltip="Grid debug (F3)"><ui:Label class="debug-glyph" text="DBG" /></ui:Button>
+            <ui:Button name="btn-menu" class="icon-btn glass"><ui:VisualElement name="menu-icon" class="icon-img" /></ui:Button>
+        </ui:VisualElement>
+
+        <!-- RIGHT EDGE: Sim switcher (portraits built in code) -->
+        <ui:VisualElement name="zone-switcher" class="zone zone--r glass switcher">
+            <ui:VisualElement name="portrait-list" class="portrait-list" />
+            <ui:Label class="switcher-more" text="•••" />
+        </ui:VisualElement>
+
+        <!-- BOTTOM-LEFT: time + transport (speed) -->
+        <ui:VisualElement name="zone-time" class="zone zone--bl glass time-cluster">
+            <ui:VisualElement class="time-head">
+                <ui:VisualElement name="daynight-icon" class="icon-img icon-img--sm" />
+                <ui:Label name="clock" class="clock" text="Day 1   08:00" />
+            </ui:VisualElement>
+            <ui:VisualElement class="transport">
+                <ui:Button name="speed-0" class="icon-btn icon-btn--sm"><ui:VisualElement name="speed-0-img" class="icon-img icon-img--sm" /></ui:Button>
+                <ui:Button name="speed-1" class="icon-btn icon-btn--sm"><ui:VisualElement name="speed-1-img" class="icon-img icon-img--sm" /></ui:Button>
+                <ui:Button name="speed-2" class="icon-btn icon-btn--sm"><ui:VisualElement name="speed-2-img" class="icon-img icon-img--sm" /></ui:Button>
+                <ui:Button name="speed-3" class="icon-btn icon-btn--sm"><ui:VisualElement name="speed-3-img" class="icon-img icon-img--sm" /></ui:Button>
+                <ui:Button name="speed-4" class="icon-btn icon-btn--sm"><ui:VisualElement name="speed-4-img" class="icon-img icon-img--sm" /></ui:Button>
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- BOTTOM-CENTRE: the controlled Sim (portrait, mood, action, needs, queue) -->
+        <ui:VisualElement name="zone-focus" class="zone zone--bc glass focus-card">
+            <ui:VisualElement name="focus-portrait" class="portrait portrait--lg">
+                <ui:Label name="focus-initial" class="portrait-initial" text="" />
+            </ui:VisualElement>
+            <ui:VisualElement class="focus-mid">
+                <ui:Label name="focus-name" class="focus-name" text="—" />
+                <ui:VisualElement name="mood-chip" class="mood-chip">
+                    <ui:VisualElement name="mood-icon" class="icon-img icon-img--sm" />
+                    <ui:Label name="mood-text" class="mood-text" text="Neutral" />
+                </ui:VisualElement>
+                <ui:Label name="focus-action" class="focus-action" text="idle" />
+                <ui:VisualElement name="need-strip" class="need-strip" />
+            </ui:VisualElement>
+            <ui:VisualElement name="action-queue" class="action-queue">
+                <ui:VisualElement class="slot" />
+                <ui:VisualElement class="slot" />
+                <ui:VisualElement class="slot" />
+                <ui:VisualElement class="slot" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- BOTTOM-RIGHT: money (placeholder) + modes -->
+        <ui:VisualElement name="zone-modes" class="zone zone--br">
+            <ui:VisualElement class="glass money">
+                <ui:VisualElement name="money-icon" class="icon-img icon-img--sm" />
+                <ui:Label class="money-val" text="§ 0" />
+            </ui:VisualElement>
+            <ui:VisualElement class="glass pill modes">
+                <ui:Button name="btn-build" class="icon-btn"><ui:VisualElement name="build-icon" class="icon-img" /></ui:Button>
+                <ui:Button name="btn-cas" class="icon-btn"><ui:VisualElement name="cas-icon" class="icon-img" /></ui:Button>
+                <ui:Button class="icon-btn icon-btn--ghost mode-slot"><ui:VisualElement class="icon-img" /></ui:Button>
+                <ui:Button class="icon-btn icon-btn--ghost mode-slot"><ui:VisualElement class="icon-img" /></ui:Button>
+                <ui:Button class="icon-btn icon-btn--ghost mode-slot"><ui:VisualElement class="icon-img" /></ui:Button>
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- centre hint -->
+        <ui:Label name="status" class="status-line" text="Click a Sim to possess." />
+
+    </ui:VisualElement>
+</ui:UXML>

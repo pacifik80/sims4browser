@@ -68,6 +68,43 @@ public sealed class BlendGeometryResolver
         return value;
     }
 
+    /// <summary>
+    /// Resolve a SINGLE SMOD (slider) into its BGEO morph(s) at the given weight — independent of any
+    /// SimInfo's modifier list. Used to drive a chosen body-slider SMOD directly (synthetic Sims carry
+    /// no modifiers). Returns empty when the SMOD or its BGEO can't be loaded.
+    /// </summary>
+    public async Task<IReadOnlyList<Ts4SimBlendGeometryMorph>> ResolveSmodMorphsAsync(
+        uint smodType, ulong smodInstance, float weight, CancellationToken cancellationToken)
+    {
+        var sink = new List<Ts4SimBlendGeometryMorph>();
+        if (!float.IsFinite(weight) || Math.Abs(weight) > MaxAbsModifierWeight) return sink;
+
+        var smodResources = await indexStore.GetResourcesByFullInstanceAsync(smodInstance, cancellationToken).ConfigureAwait(false);
+        var smodResource = smodResources.FirstOrDefault(r => r.Key.Type == smodType);
+        if (smodResource is null) return sink;
+
+        byte[] smodBytes;
+        try
+        {
+            smodBytes = await resourceCatalogService.GetResourceBytesAsync(
+                smodResource.PackagePath, smodResource.Key, raw: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch { return sink; }
+
+        Ts4SimModifierResource smod;
+        try { smod = Ts4SimModifierResource.Parse(smodBytes); } catch { return sink; }
+
+        var bgeoCache = new Dictionary<(uint Type, ulong Instance), Ts4BlendGeometryResource?>();
+        foreach (var bgeoKey in smod.BgeoKeys)
+        {
+            if (bgeoKey.Instance == 0) continue;
+            var bgeo = await ResolveBgeoAsync(bgeoKey, bgeoCache, cancellationToken).ConfigureAwait(false);
+            if (bgeo is null) continue;
+            sink.Add(new Ts4SimBlendGeometryMorph(bgeo, weight, smod.Region));
+        }
+        return sink;
+    }
+
     internal async Task<IReadOnlyList<Ts4SimBlendGeometryMorph>> ResolveAsync(
         Ts4SimInfo simInfo,
         CancellationToken cancellationToken)

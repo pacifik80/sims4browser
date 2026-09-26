@@ -430,6 +430,10 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
             }
         }
 
+        // Embedded chunk FIRST: for Build/Buy models the MLOD embedded in the MODL root is LOD0 (the
+        // highest detail); the separate package entries at LOD-encoded groups (0x00010000...) are the
+        // LOWER LODs. (Verified on the base-game sofa: embedded = lod0, group 00010000 = an 80-vert prop
+        // LOD.) The indexed fallback stays as the safety net for models with no readable embedded MLOD.
         var embeddedFallback = await TryEmbeddedModelLodFallbackAsync(modelResource, root, diagnostics, cancellationToken, progress, preferredMtstStateNameHash).ConfigureAwait(false);
         if (embeddedFallback.Success)
         {
@@ -679,19 +683,29 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     continue;
                 }
 
-                Ts4VrtfChunk vrtf;
+                Ts4VrtfChunk? vrtf = null;
                 ReportProgress(progress, $"Building {meshLabel}: resolving vertex format...", meshStart + (meshSpan * 0.18));
                 var vrtfChunk = rcol.ResolveChunk(mesh.VertexFormatReference);
                 if (vrtfChunk is not null)
                 {
                     vrtf = Ts4VrtfChunk.Parse(vrtfChunk.Data.Span);
                 }
-                else if (mesh.IsShadowCaster)
+                else
+                {
+                    // The VRTF is frequently a SHARED package-level resource referenced via a Delayed
+                    // external key rather than an embedded chunk (this skipped the sofa's main mesh).
+                    vrtf = await TryResolveExternalVrtfAsync(rcol, mesh.VertexFormatReference, modelLodResource, cancellationToken).ConfigureAwait(false);
+                    if (vrtf is not null)
+                    {
+                        diagnostics.Add($"Mesh 0x{mesh.Name:X8}: vertex format resolved from an external VRTF resource.");
+                    }
+                }
+                if (vrtf is null && mesh.IsShadowCaster)
                 {
                     vrtf = Ts4VrtfChunk.CreateShadowDefault();
                     diagnostics.Add($"Mesh 0x{mesh.Name:X8} uses the default shadow vertex format because no VRTF chunk was linked.");
                 }
-                else
+                if (vrtf is null)
                 {
                     diagnostics.Add($"Skipped mesh 0x{mesh.Name:X8}: vertex format could not be resolved.");
                     continue;
@@ -730,19 +744,37 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                     }
                     materialStrategies.Add(materialInfo.DecodeStrategy);
                     materialVisualPayloadKinds.Add(materialInfo.VisualPayloadKind);
+                    // Window/door GLASS: EA's glass shader (family "SkyDark", hash 0x3FABBC7C)
+                    // decodes as an AlphaCutout surface but exposes no portable alpha TEXTURE, so
+                    // ShouldRenderMaterialTransparent leaves it opaque. Glass transparency is
+                    // intrinsic to the shader, not a texture mask — force a see-through surface at a
+                    // low opacity so the pane fades and lets light through. Frames use family "Bloom"
+                    // and are never SkyDark, so this can't catch a frame.
+                    var isGlass = string.Equals(materialInfo.ShaderFamily, "SkyDark", StringComparison.OrdinalIgnoreCase);
+                    // Mirrors use the reflective/refractive shader family "RefractionNormalMapScale"
+                    // (textureless — the surface look comes from reflection, not a diffuse map).
+                    var isMirror = string.Equals(materialInfo.ShaderFamily, "RefractionNormalMapScale", StringComparison.OrdinalIgnoreCase);
+                    var baseColor = materialInfo.ApproximateBaseColor is { Length: >= 3 } color
+                        ? new CanonicalColor(color[0], color[1], color[2], color.Length >= 4 ? color[3] : 1f)
+                        : null;
+                    if (isGlass)
+                    {
+                        // Near-white, faintly cool, low-sat glass tint at 20% opacity (the (0.5,0.5,*)
+                        // decode gray is a shader-default artifact, not the glass colour). The alpha
+                        // drives the MTL `d` dissolve → HDRP alpha-blend on the Unity side.
+                        baseColor = new CanonicalColor(0.85f, 0.90f, 0.93f, 0.20f);
+                    }
                     materials.Add(new CanonicalMaterial(
                         materialInfo.Name,
                         materialInfo.Textures,
                         materialInfo.ShaderName,
-                        materialInfo.IsTransparent,
-                        materialInfo.AlphaMode,
+                        materialInfo.IsTransparent || isGlass,
+                        isGlass && !materialInfo.IsTransparent ? "alpha-blend" : materialInfo.AlphaMode,
                         materialInfo.AlphaTextureSlot,
                         materialInfo.LayeredTextureSlots,
                         materialInfo.Approximation,
                         materialInfo.SourceKind,
-                        materialInfo.ApproximateBaseColor is { Length: >= 3 } color
-                            ? new CanonicalColor(color[0], color[1], color[2], color.Length >= 4 ? color[3] : 1f)
-                            : null,
+                        baseColor,
                         ViewportTintColor: null,
                         Variants: materialInfo.Variants?
                             .Select(variant => new CanonicalMaterialVariant(
@@ -750,7 +782,8 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                                 variant.VariantName,
                                 variant.IsDefault,
                                 variant.Textures))
-                            .ToArray()));
+                            .ToArray(),
+                        IsMirror: isMirror));
                 }
 
                 ReportProgress(progress, $"Building {meshLabel}: decoding vertices...", meshStart + (meshSpan * 0.62));
@@ -945,9 +978,46 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         };
     }
 
+    // Shared, byte-identical, object-AGNOSTIC textures that the game reuses as a secondary
+    // material pass across many unrelated Build/Buy objects (wear/grunge, a global specular).
+    // They are NEVER an object's real albedo. Several colorMap7 objects (e.g. toilets, beds) pair
+    // their true colored diffuse with one of these in a separate MTST material entry whose extra
+    // texture count would otherwise out-score the real one — so a material whose DIFFUSE ROLE is
+    // one of these must lose the per-state primary-albedo selection.
+    private static readonly HashSet<ulong> SharedNonAlbedoTextureInstances = new()
+    {
+        0xA4D80FB45AE9066BUL, // shared grunge/wear map
+        0x024D61A8BB6F8A35UL, // shared global specular
+    };
+
+    // The texture that would be exported as the material's diffuse/base colour (mirrors the
+    // exporter's FindDiffuseTexture selection): BaseColor semantic, else a diffuse/albedo slot,
+    // else the first texture.
+    private static CanonicalTexture? PrimaryDiffuseTexture(Ts4MaterialInfo materialInfo)
+    {
+        if (materialInfo.Textures.Count == 0)
+        {
+            return null;
+        }
+        return materialInfo.Textures.FirstOrDefault(static t => t.Semantic == CanonicalTextureSemantic.BaseColor)
+            ?? materialInfo.Textures.FirstOrDefault(static t =>
+                (t.Slot?.IndexOf("diffuse", StringComparison.OrdinalIgnoreCase) >= 0)
+                || (t.Slot?.IndexOf("albedo", StringComparison.OrdinalIgnoreCase) >= 0)
+                || (t.Slot?.IndexOf("basecolor", StringComparison.OrdinalIgnoreCase) >= 0))
+            ?? materialInfo.Textures[0];
+    }
+
     private static int ScoreMaterialCandidate(Ts4MaterialInfo materialInfo)
     {
         var score = materialInfo.Textures.Count * 100;
+
+        // Never let a shared non-albedo (grunge/global-spec) diffuse win the primary material of an
+        // MTST state over the object's real colored albedo entry.
+        if (PrimaryDiffuseTexture(materialInfo)?.SourceKey is { } diffuseKey
+            && SharedNonAlbedoTextureInstances.Contains(diffuseKey.FullInstance))
+        {
+            score -= 100_000;
+        }
         score += materialInfo.LayeredTextureSlots.Count * 10;
         score += materialInfo.CoverageTier switch
         {
@@ -2795,6 +2865,88 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
         return new Ts4ModelLodResolution(null, diagnostics);
     }
 
+    // Resolve a mesh's VRTF (vertex format) when it is NOT an embedded chunk: Delayed references map
+    // through the RCOL's external key table to a standalone, usually SHARED, VertexFormat resource.
+    // Standalone VRTFs ship as a single-chunk RCOL; some are raw VRTF payloads — try both.
+    private async Task<Ts4VrtfChunk?> TryResolveExternalVrtfAsync(
+        Ts4RcolResource rcol,
+        Ts4ChunkReference reference,
+        ResourceMetadata ownerResource,
+        CancellationToken cancellationToken)
+    {
+        if (reference.IsNull || reference.ReferenceType != Ts4ReferenceType.Delayed)
+        {
+            return null;
+        }
+
+        var key = rcol.ResolveExternalKey(reference);
+        if (key is null)
+        {
+            return null;
+        }
+
+        var record = new ResourceKeyRecord(key.Value.Type, key.Value.Group, key.Value.Instance, "VertexFormat");
+        byte[] bytes = [];
+        try
+        {
+            bytes = await resourceCatalogService.GetResourceBytesAsync(ownerResource.PackagePath, record, raw: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch (KeyNotFoundException)
+        {
+            // fall through to the index-wide lookup
+        }
+
+        if (bytes.Length == 0)
+        {
+            var rows = await indexStore.GetResourcesByFullInstanceAsync(key.Value.Instance, cancellationToken).ConfigureAwait(false);
+            foreach (var row in rows
+                         .Where(r => r.Key.Type == key.Value.Type)
+                         .OrderBy(static r => r.PackagePath, StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    bytes = await resourceCatalogService.GetResourceBytesAsync(row.PackagePath, row.Key, raw: false, cancellationToken).ConfigureAwait(false);
+                    if (bytes.Length > 0)
+                    {
+                        break;
+                    }
+                }
+                catch (KeyNotFoundException)
+                {
+                    // keep scanning
+                }
+            }
+        }
+
+        if (bytes.Length == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var wrapper = Ts4RcolResource.Parse(bytes);
+            var chunk = wrapper.Chunks.FirstOrDefault(static c => c.Tag == "VRTF");
+            if (chunk is not null)
+            {
+                return Ts4VrtfChunk.Parse(chunk.Data.Span);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        {
+            // not an RCOL wrapper — try raw below
+        }
+
+        try
+        {
+            return Ts4VrtfChunk.Parse(bytes);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     private async Task<ResourceMetadata?> TryResolveModelLodResourceByKeyAsync(
         ResourceMetadata ownerResource,
         Ts4ResourceKey key,
@@ -2806,17 +2958,29 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
     {
         var record = new ResourceKeyRecord(key.Type, key.Group, key.Instance, "ModelLOD");
 
+        // Package reads THROW KeyNotFoundException on a missing key. That must be a MISS here, not an
+        // abort: MODL delayed keys routinely reference a group the owner package doesn't carry, and the
+        // useful fallbacks (companions, index scan) come after. Swallowing the throw is what lets the
+        // high-detail LOD resolve at all (it used to die on this first read and export the low LOD).
         ReportProgress(progress, $"Checking local package for {label}...", LerpProgress(start, end, 0.35));
-        var localBytes = await resourceCatalogService.GetResourceBytesAsync(
-            ownerResource.PackagePath,
-            record,
-            raw: false,
-            cancellationToken,
-            CreateReadProgressReporter(
-                progress,
-                LerpProgress(start, end, 0.36),
-                LerpProgress(start, end, 0.50),
-                Path.GetFileName(ownerResource.PackagePath))).ConfigureAwait(false);
+        byte[] localBytes;
+        try
+        {
+            localBytes = await resourceCatalogService.GetResourceBytesAsync(
+                ownerResource.PackagePath,
+                record,
+                raw: false,
+                cancellationToken,
+                CreateReadProgressReporter(
+                    progress,
+                    LerpProgress(start, end, 0.36),
+                    LerpProgress(start, end, 0.50),
+                    Path.GetFileName(ownerResource.PackagePath))).ConfigureAwait(false);
+        }
+        catch (KeyNotFoundException)
+        {
+            localBytes = [];
+        }
         if (localBytes.Length > 0)
         {
             return ownerResource with
@@ -2838,16 +3002,24 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
                 progress,
                 $"Checking companion {Path.GetFileName(companionPackagePath)} for {label}...",
                 LerpProgress(start, end, 0.45 + (companionFraction * 0.30)));
-            var companionBytes = await resourceCatalogService.GetResourceBytesAsync(
-                companionPackagePath,
-                record,
-                raw: false,
-                cancellationToken,
-                CreateReadProgressReporter(
-                    progress,
-                    LerpProgress(start, end, 0.50 + ((companionFraction - (1d / Math.Max(1, companionPackagePaths.Length))) * 0.18)),
-                    LerpProgress(start, end, 0.56 + (companionFraction * 0.18)),
-                    Path.GetFileName(companionPackagePath))).ConfigureAwait(false);
+            byte[] companionBytes;
+            try
+            {
+                companionBytes = await resourceCatalogService.GetResourceBytesAsync(
+                    companionPackagePath,
+                    record,
+                    raw: false,
+                    cancellationToken,
+                    CreateReadProgressReporter(
+                        progress,
+                        LerpProgress(start, end, 0.50 + ((companionFraction - (1d / Math.Max(1, companionPackagePaths.Length))) * 0.18)),
+                        LerpProgress(start, end, 0.56 + (companionFraction * 0.18)),
+                        Path.GetFileName(companionPackagePath))).ConfigureAwait(false);
+            }
+            catch (KeyNotFoundException)
+            {
+                continue; // missing in this companion — keep scanning
+            }
             if (companionBytes.Length > 0)
             {
                 return new ResourceMetadata(
@@ -2885,28 +3057,26 @@ public sealed partial class BuildBuySceneBuildService : ISceneBuildService
 
     private async Task<IReadOnlyList<ResourceMetadata>> FindModelLodResourcesByKeyAsync(ResourceKeyRecord key, CancellationToken cancellationToken)
     {
-        var query = new RawResourceBrowserQuery(
-            new SourceScope(),
-            SearchText: string.Empty,
-            Domain: RawResourceDomain.ThreeDRelated,
-            TypeNameText: "ModelLOD",
-            PackageText: string.Empty,
-            GroupHexText: key.Group.ToString("X8"),
-            InstanceHexText: key.FullInstance.ToString("X16"),
-            PreviewableOnly: false,
-            ExportCapableOnly: false,
-            CompressedKnownOnly: false,
-            LinkFilter: ResourceLinkFilter.Any,
-            Sort: RawResourceSort.Tgi,
-            Offset: 0,
-            WindowSize: 64);
-
-        var results = await indexStore.QueryResourcesAsync(query, cancellationToken).ConfigureAwait(false);
-        return results.Items
+        // Fast path (same as the texture core lookups): direct WHERE instance_hex = ?, filtered in memory.
+        var byInstance = await indexStore.GetResourcesByFullInstanceAsync(key.FullInstance, cancellationToken).ConfigureAwait(false);
+        var exact = byInstance
             .Where(resource => resource.Key.Type == key.Type &&
                                resource.Key.Group == key.Group &&
-                               resource.Key.FullInstance == key.FullInstance &&
                                string.Equals(resource.Key.TypeName, "ModelLOD", StringComparison.Ordinal))
+            .ToArray();
+        if (exact.Length > 0)
+        {
+            return exact;
+        }
+
+        // GROUP-AGNOSTIC fallback: MODL delayed keys often carry group 0 while the shipped MLOD lives
+        // at a LOD-encoded group (0x00010000, 0x00020000, ...). Lowest group = highest detail — this is
+        // what recovers the real HighDetail mesh instead of the embedded low-poly fallback.
+        return byInstance
+            .Where(resource => resource.Key.Type == key.Type &&
+                               string.Equals(resource.Key.TypeName, "ModelLOD", StringComparison.Ordinal))
+            .OrderBy(static resource => resource.Key.Group)
+            .ThenBy(static resource => resource.PackagePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
@@ -3773,9 +3943,18 @@ internal sealed record Ts4MatdChunk(
             }
         }
 
+        // A property whose declared type is a resource key (normalizedPropertyType == 2) carries an
+        // explicit texture reference, not vec4 float data. LooksLikePlausibleHeuristicImageKey exists
+        // only to stop vec4 FLOAT payloads (type 1/4) being misread as keys; applied to a DECLARED key
+        // it false-positives on legitimate instances whose two 32-bit halves both decode to |float| <= 4
+        // (e.g. A224CCCF01E82FC0 ceramic toilet, 01945109BB72AFB5 bed, AA0F6F8D8F5CB960 wicker bin),
+        // silently dropping the DiffuseMap and leaving the material with no albedo. Trust the embedded
+        // image TYPE word for declared keys.
+        var trustDeclaredResourceKey = normalizedPropertyType == 2;
         foreach (var key in ReadPotentialEmbeddedResourceKeys(keyBytes))
         {
-            if (!IsImageType(key.Type) || key.Instance == 0 || !LooksLikePlausibleHeuristicImageKey(key))
+            if (!IsImageType(key.Type) || key.Instance == 0 ||
+                (!trustDeclaredResourceKey && !LooksLikePlausibleHeuristicImageKey(key)))
             {
                 continue;
             }

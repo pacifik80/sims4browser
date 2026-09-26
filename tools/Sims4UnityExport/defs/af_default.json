@@ -1,0 +1,13 @@
+{
+  "age": "Adult",
+  "gender": "Female",
+  "bodyMesh": "betterbody_af",
+  "baseTone": "ea_5545",
+  "detailLayers": [],
+  "eyeColor": "ea_blue",
+
+  "topMesh": "eve_af",
+  "bottomMesh": "eve_af",
+  "feetMesh": "necros_feet",
+  "baseSkin": "obscurus"
+}

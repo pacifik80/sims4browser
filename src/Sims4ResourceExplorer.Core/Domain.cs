@@ -699,7 +699,8 @@ public sealed record CanonicalMaterial(
     CanonicalMaterialSourceKind SourceKind = CanonicalMaterialSourceKind.Unknown,
     CanonicalColor? ApproximateBaseColor = null,
     CanonicalColor? ViewportTintColor = null,
-    IReadOnlyList<CanonicalMaterialVariant>? Variants = null);
+    IReadOnlyList<CanonicalMaterialVariant>? Variants = null,
+    bool IsMirror = false);
 
 public sealed record CanonicalMaterialVariant(
     uint StateNameHash,

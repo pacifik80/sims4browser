@@ -1,0 +1,13 @@
+{
+  "age": "Adult",
+  "gender": "Male",
+  "bodyMesh": "ea_af",
+  "baseTone": "ea_5545",
+  "detailLayers": [],
+  "eyeColor": "ea_blue",
+
+  "topMesh": "ea_af",
+  "bottomMesh": "ea_af",
+  "feetMesh": "ea_af",
+  "baseSkin": "ea_default"
+}

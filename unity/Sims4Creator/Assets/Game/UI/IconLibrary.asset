@@ -1,0 +1,74 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9875fd79c0017584b9045c2b61cfd9ce, type: 3}
+  m_Name: IconLibrary
+  m_EditorClassIdentifier: Sims4Creator.Runtime::Sims4Creator.Game.IconLibrary
+  entries:
+  - name: build-mode
+    image: {fileID: 7388822144124034973, guid: a48248b454188674d978420f0f75bbbf, type: 3}
+  - name: character-edit
+    image: {fileID: 7388822144124034973, guid: 6d1c62ddf6f960c4f9260d7812aa9578, type: 3}
+  - name: control-a-gamepad
+    image: {fileID: 7388822144124034973, guid: 54fb862b55e44f049b3f90cb41a5e8c7, type: 3}
+  - name: control-b-move
+    image: {fileID: 7388822144124034973, guid: 6cec6116584fd784196f1e7ff5c11d09, type: 3}
+  - name: control-c-puppet
+    image: {fileID: 7388822144124034973, guid: 0ec12bae74d773942bcb618a7c3e0a34, type: 3}
+  - name: debug-a-bug
+    image: {fileID: 7388822144124034973, guid: 08bf6fe2ab8497e4a967fa56b19ffd89, type: 3}
+  - name: debug-b-terminal
+    image: {fileID: 7388822144124034973, guid: faf598823b4eef7429d9f39b8c507dc3, type: 3}
+  - name: debug-c-flask
+    image: {fileID: 7388822144124034973, guid: 156ff117049287b49bbf8d7b1a26ef66, type: 3}
+  - name: emote-curious
+    image: {fileID: 7388822144124034973, guid: ecce0878a2b687a4daff9f15f5c9b557, type: 3}
+  - name: emote-disgusted
+    image: {fileID: 7388822144124034973, guid: 705a0dc45a8cde64fbcbf2715ca0fe83, type: 3}
+  - name: emote-flirty
+    image: {fileID: 7388822144124034973, guid: 0b80b1858c1c6154cb75e23087380624, type: 3}
+  - name: emote-happy
+    image: {fileID: 7388822144124034973, guid: 86cadeb4789af8840b1a90638598efcc, type: 3}
+  - name: emote-in-love
+    image: {fileID: 7388822144124034973, guid: c563bcd92c59ea54f907f0e179d1d281, type: 3}
+  - name: emote-indifferent
+    image: {fileID: 7388822144124034973, guid: 717e98a287bdd784d9acff39c7f89fc6, type: 3}
+  - name: emote-sad
+    image: {fileID: 7388822144124034973, guid: 0a29e6b04e514ec43b4fe61946f5520a, type: 3}
+  - name: emote-scared
+    image: {fileID: 7388822144124034973, guid: 1de1f235c2feb5f469299e4f5d1649b3, type: 3}
+  - name: emote-smile
+    image: {fileID: 7388822144124034973, guid: cde18d073ede57349a08b50a3846208a, type: 3}
+  - name: need-bored-fun
+    image: {fileID: 7388822144124034973, guid: cc2d4634bcc246646aa5d3e9429c3fc7, type: 3}
+  - name: need-hungry
+    image: {fileID: 7388822144124034973, guid: 818bd8f581d8b4243a8bb22af37ce4fc, type: 3}
+  - name: need-sleep
+    image: {fileID: 7388822144124034973, guid: 0842c96f261bb1d4daf646356f00d576, type: 3}
+  - name: need-tired
+    image: {fileID: 7388822144124034973, guid: 353939a3d141eee41aecf8bf7c10b936, type: 3}
+  - name: need-toilet
+    image: {fileID: 7388822144124034973, guid: 5c2828a66e633df4b8d8c5c1bc45ea54, type: 3}
+  - name: settings
+    image: {fileID: 7388822144124034973, guid: 18076d64a26afc342b3e3faa46feb08f, type: 3}
+  - name: speed-normal
+    image: {fileID: 7388822144124034973, guid: e1ef3a0426f572d4dbb7cf65cc5f208e, type: 3}
+  - name: speed-pause
+    image: {fileID: 7388822144124034973, guid: ff75694d5998bf74ca4f904e5673ef0c, type: 3}
+  - name: speed-x2
+    image: {fileID: 7388822144124034973, guid: c37ce9999fa369046a082e666d061849, type: 3}
+  - name: speed-x3
+    image: {fileID: 7388822144124034973, guid: 1545127f35f7be24bb91eb465fb38da6, type: 3}
+  - name: speed-x5-max
+    image: {fileID: 7388822144124034973, guid: 981467e84bf9a9f4aa69c00bb9fbff94, type: 3}
+  - name: volume
+    image: {fileID: 7388822144124034973, guid: 9667923f9f86f6146b38c83a15ee0735, type: 3}
+  placeholder: {fileID: 7388822144124034973, guid: 8ab2be0895b90fc45abe82bcbcb5f93b, type: 3}

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <!-- Mirror the working uvinspect template references... -->
+    <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Core\Sims4ResourceExplorer.Core.csproj" />
+    <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Assets\Sims4ResourceExplorer.Assets.csproj" />
+    <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Audio\Sims4ResourceExplorer.Audio.csproj" />
+    <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Packages\Sims4ResourceExplorer.Packages.csproj" />
+    <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Indexing\Sims4ResourceExplorer.Indexing.csproj" />
+    <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Preview\Sims4ResourceExplorer.Preview.csproj" />
+    <!-- ...plus the Export project for IFbxExportService / AssimpFbxExportService. -->
+    <ProjectReference Include="..\..\src\Sims4ResourceExplorer.Export\Sims4ResourceExplorer.Export.csproj" />
+  </ItemGroup>
+</Project>

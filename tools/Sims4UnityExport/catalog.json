@@ -1,0 +1,1416 @@
+{
+ "ageGender": "Adult/Female",
+ "bodyMesh": [
+  {
+   "id": "ea_af",
+   "label": "EA Default",
+   "source": "game"
+  },
+  {
+   "id": "betterbody_af",
+   "label": "Better Body [Female]",
+   "source": "ModsFromDev\\!!!! Better Body\\[BB][Female]*.package",
+   "overrides": {
+    "top": "015A1849:807B99F8:FDC4902930068ACF",
+    "bottom": "015A1849:00D20888:89D45E57C8A23CC6",
+    "feet": "015A1849:00CAC4EC:CA169679E2CD5DF1",
+    "eaTop": "015A1849:00000000:B6DCAB99F33C43EE",
+    "eaBottom": "015A1849:00000000:89D45E57C8A23CC6",
+    "eaFeet": "015A1849:00000000:CA169679E2CD5DF1",
+    "topPackage": "!!!! Better Body\\[BB][Female]Top.package",
+    "bottomPackage": "!!!! Better Body\\[BB][Female]Bottom.package",
+    "feetPackage": "!!!! Better Body\\[BB][Female]FeetDefault.package"
+   }
+  },
+  {
+   "id": "eve_af",
+   "label": "EVE v9.2 (nude body)",
+   "source": "ModsFromDev\\EveV9.2 FOR WW\\SMSims-evev9.2*.package",
+   "overrides": {
+    "top": "015A1849:80844D80:F3805EB0FBEC9C57",
+    "bottom": "015A1849:806BEAD5:C1B1FD567C682A92",
+    "eaTop": "015A1849:00000000:B6DCAB99F33C43EE",
+    "eaBottom": "015A1849:00000000:89D45E57C8A23CC6",
+    "topPackage": "EveV9.2 FOR WW\\SMSims-evev9.2top-ww.package",
+    "bottomPackage": "EveV9.2 FOR WW\\SMSims-evev9.2bottom-ww.package"
+   }
+  },
+  {
+   "id": "helio_busty",
+   "label": "Helio Heavy Boobs (busty top)",
+   "source": "ModsFromDev\\Helio\\Heavy Boobs\\[Helio] HB Nude Default Top.package",
+   "overrides": {
+    "eaTop": "015A1849:00000000:B6DCAB99F33C43EE",
+    "topPackage": "Helio\\Heavy Boobs\\[Helio] HB Nude Default Top.package"
+   }
+  },
+  {
+   "id": "dallasgirl_feet",
+   "label": "DallasGirl Petite Feet",
+   "source": "ModsFromDev\\DallasGirl\\DallasGirl_DEFAULT Petite Feet V2 (AF).package",
+   "overrides": {
+    "eaFeet": "015A1849:00000000:CA169679E2CD5DF1",
+    "feetPackage": "DallasGirl\\DallasGirl_DEFAULT Petite Feet V2 (AF).package"
+   }
+  },
+  {
+   "id": "necros_feet",
+   "label": "Necros Default Feet",
+   "source": "ModsFromDev\\Necros\\Necro_v3_DefaultFeet-AdultFemale.package",
+   "overrides": {
+    "eaFeet": "015A1849:00000000:CA169679E2CD5DF1",
+    "feetPackage": "Necros\\Necro_v3_DefaultFeet-AdultFemale.package"
+   }
+  }
+ ],
+ "baseTone": [
+  {
+   "id": "ea_5545",
+   "label": "EA tone 5545 (warm peach, default AF)",
+   "source": "game",
+   "toneInstance": "0x0000000000005545"
+  },
+  {
+   "id": "ea_3840",
+   "label": "EA tone 3840 (warm tan)",
+   "source": "game",
+   "toneInstance": "0x0000000000003840"
+  },
+  {
+   "id": "ea_2f69",
+   "label": "EA tone 2F69 (warm medium)",
+   "source": "game",
+   "toneInstance": "0x0000000000002F69"
+  },
+  {
+   "id": "ea_afc5",
+   "label": "EA tone AFC5 (warm light)",
+   "source": "game",
+   "toneInstance": "0x000000000000AFC5"
+  },
+  {
+   "id": "ea_77d7",
+   "label": "EA tone 77D7 (pale warm)",
+   "source": "game",
+   "toneInstance": "0x00000000000077D7"
+  }
+ ],
+ "detailLayer": [
+  {
+   "id": "wildguy_relief",
+   "label": "WildGuy HD relief",
+   "source": "ModsFromDev\\WIldGuy\\FBD\\wild_guy FemaleDefaultNudeSkin.package",
+   "package": "WIldGuy\\FBD\\wild_guy FemaleDefaultNudeSkin.package",
+   "textureTgis": [
+    "2BC04EDF:00000000:53F13B3669333A6A",
+    "2BC04EDF:00000000:6B5D4119F5F3E3C2",
+    "2BC04EDF:00000000:38E5BC3422C0E85F"
+   ],
+   "blend": "overlay"
+  },
+  {
+   "id": "eve",
+   "label": "EVE v9.2 skin overlay",
+   "source": "ModsFromDev\\EveV9.2 FOR WW\\SMSims-evev9.2skinoverlay.package",
+   "package": "EveV9.2 FOR WW\\SMSims-evev9.2skinoverlay.package",
+   "textureTgis": [
+    "2BC04EDF:80000000:8AEEEA075B039395",
+    "2BC04EDF:80000000:B630E76932E44AD0",
+    "2BC04EDF:80000000:87A2C095E635470A",
+    "2BC04EDF:80000000:BC68D617CEDDE179"
+   ],
+   "blend": "overlay"
+  },
+  {
+   "id": "psboss",
+   "label": "PsBoss skin overlay",
+   "source": "ModsFromDev\\SkinOverlayByPsBoss\\Skin Overlay by PsBoss.package",
+   "package": "SkinOverlayByPsBoss\\Skin Overlay by PsBoss.package",
+   "textureTgis": [
+    "2BC04EDF:80000000:B8C0AF3F361D5420",
+    "2BC04EDF:80000000:B0756EE72B2BB539",
+    "2BC04EDF:80000000:8FE6BA56EF492FD7"
+   ],
+   "blend": "over"
+  }
+ ],
+ "eyeColor": [
+  {
+   "id": "ea_brown",
+   "label": "Brown",
+   "source": "game",
+   "overlayInstance": "0x0000000000002AD7"
+  },
+  {
+   "id": "ea_darkbrown",
+   "label": "Dark Brown",
+   "source": "game",
+   "overlayInstance": "0x00000000000029BF"
+  },
+  {
+   "id": "ea_blue",
+   "label": "Blue",
+   "source": "game",
+   "overlayInstance": "0x000000000000276D"
+  },
+  {
+   "id": "ea_green",
+   "label": "Green",
+   "source": "game",
+   "overlayInstance": "0x0000000000002AEB"
+  },
+  {
+   "id": "ea_hazelgreen",
+   "label": "Hazel Green",
+   "source": "game",
+   "overlayInstance": "0x0000000000002AD8"
+  },
+  {
+   "id": "ea_gray",
+   "label": "Gray",
+   "source": "game",
+   "overlayInstance": "0x0000000000002AEA"
+  }
+ ],
+ "skinBase": [
+  {
+   "id": "ea_default",
+   "label": "EA Default skin",
+   "source": "game"
+  },
+  {
+   "id": "obscurus",
+   "label": "Obscurus N30 (HD 4K color)",
+   "source": "ModsFromDev\\Obscurus\\obscurus_skin_N30.package",
+   "package": "Obscurus\\obscurus_skin_N30.package",
+   "textureTgis": [
+    "2BC04EDF:80000000:C2D745FBF07C6535"
+   ]
+  },
+  {
+   "id": "psboss",
+   "label": "PsBoss (color overlay)",
+   "source": "ModsFromDev\\SkinOverlayByPsBoss\\Skin Overlay by PsBoss.package",
+   "package": "SkinOverlayByPsBoss\\Skin Overlay by PsBoss.package",
+   "textureTgis": [
+    "2BC04EDF:80000000:B8C0AF3F361D5420"
+   ]
+  }
+ ],
+ "skinNormals": [
+  {
+   "id": "subtle",
+   "label": "Subtle (EA body)",
+   "dst": "00B2D882:E128F27E529532DB",
+   "strength": 1.0
+  },
+  {
+   "id": "medium",
+   "label": "Medium (EA body)",
+   "dst": "00B2D882:6F9BBAB81F6E4D69",
+   "strength": 1.5
+  },
+  {
+   "id": "defined",
+   "label": "Defined (EA body)",
+   "dst": "00B2D882:A149CC12F4602466",
+   "strength": 2.0
+  },
+  {
+   "id": "strong",
+   "label": "Strong (EA body)",
+   "dst": "00B2D882:B65EB17B67DF6C41",
+   "strength": 3.0
+  },
+  {
+   "id": "flat",
+   "label": "Flat (no detail)",
+   "dst": null
+  }
+ ],
+ "bodyMorphs": [
+  {
+   "id": "Belly_Big",
+   "label": "Belly Big",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:E37B382389423F69"
+  },
+  {
+   "id": "Belly_Small",
+   "label": "Belly Small",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:D826236862907A96"
+  },
+  {
+   "id": "Body_Bony",
+   "label": "Body Bony",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:49292716AAD04C13"
+  },
+  {
+   "id": "Body_Fit",
+   "label": "Body Fit",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:5FCC97BB325FDACA"
+  },
+  {
+   "id": "Body_Heavy",
+   "label": "Body Heavy",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:B7777FD7CEF62ACE"
+  },
+  {
+   "id": "Body_Lean",
+   "label": "Body Lean",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:7F122816C9E5BBD9"
+  },
+  {
+   "id": "Brows_Arched",
+   "label": "Brows Arched",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:E8461E1B90E7E89B"
+  },
+  {
+   "id": "Brows_Backward",
+   "label": "Brows Backward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:3C4DAC66862836A5"
+  },
+  {
+   "id": "Brows_Down",
+   "label": "Brows Down",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C0DF1BC0A5A8CBAE"
+  },
+  {
+   "id": "Brows_Far",
+   "label": "Brows Far",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:E94E8FA5B47AC043"
+  },
+  {
+   "id": "Brows_Forward",
+   "label": "Brows Forward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:3BB17CFC98C44AB5"
+  },
+  {
+   "id": "Brows_RotateIn",
+   "label": "Brows RotateIn",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:64A90D08A9E3FB94"
+  },
+  {
+   "id": "Brows_RotateOut",
+   "label": "Brows RotateOut",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:EF28B0B8AE53C453"
+  },
+  {
+   "id": "Brows_Up",
+   "label": "Brows Up",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:ACAFD24FDE624AF5"
+  },
+  {
+   "id": "Cheeks_Backward",
+   "label": "Cheeks Backward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:D44D2AD874AD1773"
+  },
+  {
+   "id": "Cheeks_Down",
+   "label": "Cheeks Down",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:82126DD44F310B64"
+  },
+  {
+   "id": "Cheeks_Forward",
+   "label": "Cheeks Forward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:21BC84673729ACBF"
+  },
+  {
+   "id": "Cheeks_Full",
+   "label": "Cheeks Full",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:90D1A6D456D02327"
+  },
+  {
+   "id": "Cheeks_Gaunt",
+   "label": "Cheeks Gaunt",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:32642FDA8135F13B"
+  },
+  {
+   "id": "Cheeks_JowlDown",
+   "label": "Cheeks JowlDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:7BC38A96E7067CB4"
+  },
+  {
+   "id": "Cheeks_JowlUp",
+   "label": "Cheeks JowlUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:73D41563D4E7EE0F"
+  },
+  {
+   "id": "Cheeks_Prominent",
+   "label": "Cheeks Prominent",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:D44C8AA62A70D846"
+  },
+  {
+   "id": "Cheeks_Round",
+   "label": "Cheeks Round",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:086524350D684868"
+  },
+  {
+   "id": "Cheeks_Sunken",
+   "label": "Cheeks Sunken",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8309840259789040"
+  },
+  {
+   "id": "Cheeks_Up",
+   "label": "Cheeks Up",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:16DB9271AECF071F"
+  },
+  {
+   "id": "Chest_Big",
+   "label": "Chest Big",
+   "kind": "bond",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8D010D847D674F6A"
+  },
+  {
+   "id": "Chest_Droop",
+   "label": "Chest Droop",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:5A266C4AC558BBA0"
+  },
+  {
+   "id": "Chest_Lift",
+   "label": "Chest Lift",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:56B7ED21479B7187"
+  },
+  {
+   "id": "Chest_Small",
+   "label": "Chest Small",
+   "kind": "bond",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:DC78C9BBFC8EF11D"
+  },
+  {
+   "id": "Chin_Backward",
+   "label": "Chin Backward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:9069DBF365ECCCFA"
+  },
+  {
+   "id": "Chin_Down",
+   "label": "Chin Down",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:11490900EC1C455D"
+  },
+  {
+   "id": "Chin_Forward",
+   "label": "Chin Forward",
+   "kind": "bond",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:B36968CE6E332790"
+  },
+  {
+   "id": "Chin_Narrow",
+   "label": "Chin Narrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:B0B635672CC1D594"
+  },
+  {
+   "id": "Chin_Square",
+   "label": "Chin Square",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:B5AF6F8AA418A25E"
+  },
+  {
+   "id": "Chin_Up",
+   "label": "Chin Up",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:F66102D69C1B17AA"
+  },
+  {
+   "id": "Chin_VFlat",
+   "label": "Chin VFlat",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:D79500E7B9CBF166"
+  },
+  {
+   "id": "Chin_VLong",
+   "label": "Chin VLong",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:80EC87E788B43A29"
+  },
+  {
+   "id": "Ears_BendBackward",
+   "label": "Ears BendBackward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A011786CE8CAE110"
+  },
+  {
+   "id": "Ears_BendForward",
+   "label": "Ears BendForward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8542200E5862C1FA"
+  },
+  {
+   "id": "Ears_Big",
+   "label": "Ears Big",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C68CC7B23FC98858"
+  },
+  {
+   "id": "Ears_PointyBackward",
+   "label": "Ears PointyBackward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8524093E0D0B3022"
+  },
+  {
+   "id": "Ears_PointyUp",
+   "label": "Ears PointyUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A03FACDEC8EBF262"
+  },
+  {
+   "id": "Ears_RotateOut",
+   "label": "Ears RotateOut",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C347CAC734316C15"
+  },
+  {
+   "id": "Ears_Small",
+   "label": "Ears Small",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:AD5EF83DD2CEA387"
+  },
+  {
+   "id": "Eyes_Big",
+   "label": "Eyes Big",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:127EE2CC2D559A6F"
+  },
+  {
+   "id": "Eyes_CaruncleDown",
+   "label": "Eyes CaruncleDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:11A31FCA5A61F62E"
+  },
+  {
+   "id": "Eyes_CaruncleUp",
+   "label": "Eyes CaruncleUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:95C7ECA984E5F175"
+  },
+  {
+   "id": "Eyes_Close",
+   "label": "Eyes Close",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:90815B86380C265D"
+  },
+  {
+   "id": "Eyes_CornerDown",
+   "label": "Eyes CornerDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:DE62B22ED0CB3426"
+  },
+  {
+   "id": "Eyes_CornerIn",
+   "label": "Eyes CornerIn",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C78DC82E31765D67"
+  },
+  {
+   "id": "Eyes_CornerOut",
+   "label": "Eyes CornerOut",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8C4EA67E0C254C5A"
+  },
+  {
+   "id": "Eyes_CornerUp",
+   "label": "Eyes CornerUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C78DC42E3176564D"
+  },
+  {
+   "id": "Eyes_Down",
+   "label": "Eyes Down",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:D54D31F112EBB443"
+  },
+  {
+   "id": "Eyes_Far",
+   "label": "Eyes Far",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:128BF2CC2D603FE6"
+  },
+  {
+   "id": "Eyes_Forward",
+   "label": "Eyes Forward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:BBFA09C1149F1A52"
+  },
+  {
+   "id": "Eyes_IrisBig",
+   "label": "Eyes IrisBig",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:131CEB3834AC1666"
+  },
+  {
+   "id": "Eyes_IrisSmall",
+   "label": "Eyes IrisSmall",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:49935E9720DDA449"
+  },
+  {
+   "id": "Eyes_LidLowerDown",
+   "label": "Eyes LidLowerDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:779951678908A507"
+  },
+  {
+   "id": "Eyes_LidLowerUp",
+   "label": "Eyes LidLowerUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:EC9E376D35514AD0"
+  },
+  {
+   "id": "Eyes_LidUpperApexOut",
+   "label": "Eyes LidUpperApexOut",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:E4D3B195770392A4"
+  },
+  {
+   "id": "Eyes_LidUpperDown",
+   "label": "Eyes LidUpperDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:0BD12185B67DE3C8"
+  },
+  {
+   "id": "Eyes_LidUpperFlatWide",
+   "label": "Eyes LidUpperFlatWide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:5B93007FB254CA24"
+  },
+  {
+   "id": "Eyes_LidUpperNarrow",
+   "label": "Eyes LidUpperNarrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:509CD706F9091DE9"
+  },
+  {
+   "id": "Eyes_LidUpperUp",
+   "label": "Eyes LidUpperUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:AE007988CEACD60B"
+  },
+  {
+   "id": "Eyes_RotateDown",
+   "label": "Eyes RotateDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:60367C5372DDAA82"
+  },
+  {
+   "id": "Eyes_RotateUp",
+   "label": "Eyes RotateUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A061AF0A984B17A1"
+  },
+  {
+   "id": "Eyes_Small",
+   "label": "Eyes Small",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:EBD24E0E12D1CF60"
+  },
+  {
+   "id": "Eyes_SocketsClose",
+   "label": "Eyes SocketsClose",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:E6A6064714304955"
+  },
+  {
+   "id": "Eyes_SocketsDown",
+   "label": "Eyes SocketsDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A1AB0DA5006E1ACB"
+  },
+  {
+   "id": "Eyes_SocketsFar",
+   "label": "Eyes SocketsFar",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:146DBD9EAFFCB43E"
+  },
+  {
+   "id": "Eyes_SocketsUp",
+   "label": "Eyes SocketsUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:F4A36695D862F28C"
+  },
+  {
+   "id": "Eyes_Up",
+   "label": "Eyes Up",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:1912CCC21677C6E4"
+  },
+  {
+   "id": "Head_Big",
+   "label": "Head Big",
+   "kind": "bond",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:7736DE7546509603"
+  },
+  {
+   "id": "Head_FaceBackward",
+   "label": "Head FaceBackward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:9B80EB9714D1AF17"
+  },
+  {
+   "id": "Head_FaceDownChild",
+   "label": "Head FaceDownChild",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:FE25A9515943E04A"
+  },
+  {
+   "id": "Head_FaceForward",
+   "label": "Head FaceForward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:EDFF1D39C1E4139B"
+  },
+  {
+   "id": "Head_ForeheadBackward",
+   "label": "Head ForeheadBackward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:6235FF1B09DD7C86"
+  },
+  {
+   "id": "Head_ForeheadForward",
+   "label": "Head ForeheadForward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:2F32E53E902DCFF4"
+  },
+  {
+   "id": "Head_ForeheadNarrow",
+   "label": "Head ForeheadNarrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:21A770C492223398"
+  },
+  {
+   "id": "Head_ForeheadWide",
+   "label": "Head ForeheadWide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:DFC0EF79B9451850"
+  },
+  {
+   "id": "Head_JawSoftMod01",
+   "label": "Head JawSoftMod01",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:6655EB685C5CC3EC"
+  },
+  {
+   "id": "Head_JawSoftMod02",
+   "label": "Head JawSoftMod02",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:6655EB685C5CC3EF"
+  },
+  {
+   "id": "Head_JawSoftMod03",
+   "label": "Head JawSoftMod03",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:6655EB685C5CC3EE"
+  },
+  {
+   "id": "Head_Long",
+   "label": "Head Long",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:F4CF5D4685500CC1"
+  },
+  {
+   "id": "Head_NarrowBone",
+   "label": "Head NarrowBone",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:5C1021152C836194"
+  },
+  {
+   "id": "Head_Short",
+   "label": "Head Short",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C1F4D23FF5DD8917"
+  },
+  {
+   "id": "Head_Small",
+   "label": "Head Small",
+   "kind": "bond",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:ED6DB7400E895D84"
+  },
+  {
+   "id": "Head_WideBone",
+   "label": "Head Wide Bone",
+   "kind": "bond",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8C3B35E2995481A4"
+  },
+  {
+   "id": "Hips_Narrow",
+   "label": "Hips Narrow",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:F95E2E47686C6016"
+  },
+  {
+   "id": "Hips_Wide",
+   "label": "Hips Wide",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:4A9506622D0FEFF6"
+  },
+  {
+   "id": "Jaw_Angled",
+   "label": "Jaw Angled",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:2963CC2C5158E74A"
+  },
+  {
+   "id": "Jaw_CornerIn",
+   "label": "Jaw CornerIn",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:23297F13A5B0A31B"
+  },
+  {
+   "id": "Jaw_CornerOut",
+   "label": "Jaw CornerOut",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:7011F2628B1456B6"
+  },
+  {
+   "id": "Jaw_Down",
+   "label": "Jaw Down",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8D3B32D6AFB7EDFF"
+  },
+  {
+   "id": "Jaw_Flat",
+   "label": "Jaw Flat",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:D0FDBFA22D2ECBD0"
+  },
+  {
+   "id": "Jaw_Narrow",
+   "label": "Jaw Narrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:1F5BCAEAC83B2466"
+  },
+  {
+   "id": "Jaw_Overbite",
+   "label": "Jaw Overbite",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:F4F55900172AB397"
+  },
+  {
+   "id": "Jaw_Underbite",
+   "label": "Jaw Underbite",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:517F15EFB7466E75"
+  },
+  {
+   "id": "Jaw_Up",
+   "label": "Jaw Up",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:FAB06997BE052B88"
+  },
+  {
+   "id": "Jaw_Wide",
+   "label": "Jaw Wide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:0B4CCAD6661FAA86"
+  },
+  {
+   "id": "LowerArm_Big",
+   "label": "LowerArm Big",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:2B7C26950C6D04A6"
+  },
+  {
+   "id": "LowerArm_Small",
+   "label": "LowerArm Small",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:6FBEE34C89678689"
+  },
+  {
+   "id": "LowerLeg_Big",
+   "label": "LowerLeg Big",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:7CC43260017AFE68"
+  },
+  {
+   "id": "LowerLeg_Small",
+   "label": "LowerLeg Small",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:BF52C3291C7056F7"
+  },
+  {
+   "id": "Mouth_Backward",
+   "label": "Mouth Backward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:139FF4020C68A0BD"
+  },
+  {
+   "id": "Mouth_CornersBackward",
+   "label": "Mouth CornersBackward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:F63672323953CDAD"
+  },
+  {
+   "id": "Mouth_CornersForward",
+   "label": "Mouth CornersForward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:4926FD525EBEDD6D"
+  },
+  {
+   "id": "Mouth_CornerTurnDown",
+   "label": "Mouth CornerTurnDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:2094754E4C649F8E"
+  },
+  {
+   "id": "Mouth_CornerTurnUp",
+   "label": "Mouth CornerTurnUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A0860B93D3E080D5"
+  },
+  {
+   "id": "Mouth_CurveDown",
+   "label": "Mouth CurveDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A02BF02904697DFF"
+  },
+  {
+   "id": "Mouth_CurveUp",
+   "label": "Mouth CurveUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:0DEA2CBB976C3B88"
+  },
+  {
+   "id": "Mouth_Down",
+   "label": "Mouth Down",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:458A8D4380CA7F16"
+  },
+  {
+   "id": "Mouth_Forward",
+   "label": "Mouth Forward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:80D88EEF49B898FD"
+  },
+  {
+   "id": "Mouth_LipLowerForward",
+   "label": "Mouth LipLowerForward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:09A2ED9632ACA80D"
+  },
+  {
+   "id": "Mouth_LipLowerPinch",
+   "label": "Mouth LipLowerPinch",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:0F19BE80E51238CE"
+  },
+  {
+   "id": "Mouth_LipLowerPlump",
+   "label": "Mouth LipLowerPlump",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:E3751B80CC41992C"
+  },
+  {
+   "id": "Mouth_LipLowerThin",
+   "label": "Mouth LipLowerThin",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:D9F1CAE7A5AFB993"
+  },
+  {
+   "id": "Mouth_LipUpperPinch",
+   "label": "Mouth LipUpperPinch",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A7ADDA22EF80A9BF"
+  },
+  {
+   "id": "Mouth_LipUpperPlump",
+   "label": "Mouth LipUpperPlump",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8E4A5522E14A98D5"
+  },
+  {
+   "id": "Mouth_LipUpperThin",
+   "label": "Mouth LipUpperThin",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:3E6A80FD10EC7660"
+  },
+  {
+   "id": "Mouth_LipUpperWide",
+   "label": "Mouth LipUpperWide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:221B12FD003ABF48"
+  },
+  {
+   "id": "Mouth_Narrow",
+   "label": "Mouth Narrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:86A511202BCDE09F"
+  },
+  {
+   "id": "Mouth_SweepDown",
+   "label": "Mouth SweepDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:56C58969912360AC"
+  },
+  {
+   "id": "Mouth_SweepUp",
+   "label": "Mouth SweepUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8EFE328E931457A7"
+  },
+  {
+   "id": "Mouth_Up",
+   "label": "Mouth Up",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:8558DC0C4CA8E55D"
+  },
+  {
+   "id": "Mouth_Wide",
+   "label": "Mouth Wide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C7A1E543CA85AC6F"
+  },
+  {
+   "id": "Neck_BackContract",
+   "label": "Neck BackContract",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:7E4CA3C91D847601"
+  },
+  {
+   "id": "Neck_BackExtend",
+   "label": "Neck BackExtend",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:2ABA611B6E5205E3"
+  },
+  {
+   "id": "Neck_Thick",
+   "label": "Neck Thick",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:EA6F0CF0DF060395"
+  },
+  {
+   "id": "Neck_Thin",
+   "label": "Neck Thin",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:C4ED915E204AC107"
+  },
+  {
+   "id": "Nose_Big",
+   "label": "Nose Big",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:59E52BE0CA5542E8"
+  },
+  {
+   "id": "Nose_BridgeWide",
+   "label": "Nose BridgeWide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:60B124A6E32DE800"
+  },
+  {
+   "id": "Nose_BrowBridgeBackward",
+   "label": "Nose BrowBridgeBackward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:C7708230E02991AA"
+  },
+  {
+   "id": "Nose_BrowBridgeDown",
+   "label": "Nose BrowBridgeDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:2120308B369339CF"
+  },
+  {
+   "id": "Nose_BrowBridgeForward",
+   "label": "Nose BrowBridgeForward",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:B3250F987135CC00"
+  },
+  {
+   "id": "Nose_BrowBridgeNarrow",
+   "label": "Nose BrowBridgeNarrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:7C708139BF40E464"
+  },
+  {
+   "id": "Nose_BrowBridgeUp",
+   "label": "Nose BrowBridgeUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:5716B48BED99DF9A"
+  },
+  {
+   "id": "Nose_BrowBridgeWide",
+   "label": "Nose BrowBridgeWide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:5CDA114C3664B8EC"
+  },
+  {
+   "id": "Nose_BumpApexHigh",
+   "label": "Nose BumpApexHigh",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:337556CA1370A504"
+  },
+  {
+   "id": "Nose_BumpApexLow",
+   "label": "Nose BumpApexLow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:32ABDD6FB139B4C6"
+  },
+  {
+   "id": "Nose_BumpDown",
+   "label": "Nose BumpDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:5072AC6B5685471A"
+  },
+  {
+   "id": "Nose_BumpUp",
+   "label": "Nose BumpUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:50A1EA7D82B56DB9"
+  },
+  {
+   "id": "Nose_Down",
+   "label": "Nose Down",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:03A134F7C473740A"
+  },
+  {
+   "id": "Nose_Flat",
+   "label": "Nose Flat",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:F4F9E4F7BCE8C69B"
+  },
+  {
+   "id": "Nose_Long",
+   "label": "Nose Long",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:4B4385F7EDB02D40"
+  },
+  {
+   "id": "Nose_Narrow",
+   "label": "Nose Narrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:D3166AE55AF0FEBB"
+  },
+  {
+   "id": "Nose_NostrilArch",
+   "label": "Nose NostrilArch",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:6ACC3B2BA0C75AC5"
+  },
+  {
+   "id": "Nose_NostrilContract",
+   "label": "Nose NostrilContract",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:E0380B78CA465ABF"
+  },
+  {
+   "id": "Nose_NostrilExpand",
+   "label": "Nose NostrilExpand",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:49A6143BFA0C0D69"
+  },
+  {
+   "id": "Nose_NostrilFlare",
+   "label": "Nose NostrilFlare",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:A0F1B26B5F08D0FD"
+  },
+  {
+   "id": "Nose_NostrilFlat",
+   "label": "Nose NostrilFlat",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:84708C2BAF34AA0C"
+  },
+  {
+   "id": "Nose_NostrilNarrow",
+   "label": "Nose NostrilNarrow",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:BF162022E354952E"
+  },
+  {
+   "id": "Nose_RotateIn",
+   "label": "Nose RotateIn",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:69DD0833C310198A"
+  },
+  {
+   "id": "Nose_RotateOut",
+   "label": "Nose RotateOut",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:F2A794F4745574C5"
+  },
+  {
+   "id": "Nose_Small",
+   "label": "Nose Small",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:1EA47C975B22CF77"
+  },
+  {
+   "id": "Nose_TipFlat",
+   "label": "Nose TipFlat",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:262E6A55CECCD146"
+  },
+  {
+   "id": "Nose_TipLong",
+   "label": "Nose TipLong",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:CF85F1559DB51A09"
+  },
+  {
+   "id": "Nose_TipVScaleDown",
+   "label": "Nose TipVScaleDown",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:393F095B8DBB2527"
+  },
+  {
+   "id": "Nose_TipVScaleUp",
+   "label": "Nose TipVScaleUp",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:CE3264E7A4A2C4F0"
+  },
+  {
+   "id": "Nose_Up",
+   "label": "Nose Up",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:E188DECB8D1E1889"
+  },
+  {
+   "id": "Nose_Wide",
+   "label": "Nose Wide",
+   "kind": "bgeo",
+   "scale": 1.0,
+   "smod": "C5F6763E:00000000:72FA6CF77341F5BB"
+  },
+  {
+   "id": "Shoulders_Narrow",
+   "label": "Shoulders Narrow",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:72A83F2C040A5179"
+  },
+  {
+   "id": "Shoulders_Wide",
+   "label": "Shoulders Wide",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:B1D2AF807FAB89E1"
+  },
+  {
+   "id": "Thighs_Big",
+   "label": "Thighs Big",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:6E092B30E1FD4C02"
+  },
+  {
+   "id": "Thighs_Small",
+   "label": "Thighs Small",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:264950B5B15A6E15"
+  },
+  {
+   "id": "UpperArm_Big",
+   "label": "UpperArm Big",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:2558A6862BC0CA17"
+  },
+  {
+   "id": "UpperArm_Small",
+   "label": "UpperArm Small",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:ED3EB047DC7115A8"
+  },
+  {
+   "id": "Waist_Narrow",
+   "label": "Waist Narrow",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:C26E0E656C57C9F0"
+  },
+  {
+   "id": "Waist_Wide",
+   "label": "Waist Wide",
+   "kind": "dmap",
+   "scale": 0.5,
+   "smod": "C5F6763E:00000000:40182EAFF240F178"
+  }
+ ]
+}

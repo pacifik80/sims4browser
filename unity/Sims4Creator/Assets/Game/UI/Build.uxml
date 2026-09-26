@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <Style src="project://database/Assets/Game/UI/GameTheme.uss" />
+
+    <!-- Build-mode panel. picking-mode Ignore on the root so only the panel intercepts clicks; the open
+         3D area passes through to GameBuildMode's place/select raycast. Hidden until build mode opens. -->
+    <ui:VisualElement name="build-root" class="root" picking-mode="Ignore">
+        <ui:VisualElement name="build-panel" class="sidepanel sidepanel--full">
+
+            <ui:VisualElement class="row">
+                <ui:Label class="panel-title" text="BUILD" />
+                <ui:VisualElement class="spacer" />
+                <ui:Button name="build-back" class="btn" text="◄ Back  (Esc)" />
+            </ui:VisualElement>
+
+            <ui:Label class="panel-title" text="PLACE OBJECT" />
+            <ui:VisualElement name="palette-holder" class="palette-holder" />
+
+            <ui:Button name="build-select" class="btn btn--wide" text="Select / Move mode" />
+            <ui:Label name="build-status" class="status"
+                      text="Pick a type to place, or click an object to select + move." />
+            <ui:Button name="build-delete" class="btn" text="Delete selected" />
+
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>
